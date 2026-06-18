@@ -1,21 +1,34 @@
-//! `lady-hosting` — forge integration for Lady (GitHub only at v1, PLAN.md §7).
+//! `lady-hosting` — forge integration for Lady (PLAN.md §7).
 //!
-//! Provides a [`HostingProvider`] trait + a GitHub implementation over
-//! `reqwest`/`rustls`, GitHub-remote detection, and a [`TokenStore`] abstraction
-//! so hosting-API tokens live in the OS keychain (ADR-0006) — never on disk,
-//! in plaintext, or in logs. The signing/transport credentials for git itself
-//! stay with system git; only hosting-API tokens are stored here.
+//! A forge-agnostic [`HostingProvider`] trait with one implementation per forge
+//! (GitHub, GitLab, Bitbucket, Azure DevOps). [`provider_for`] resolves a git
+//! remote URL — or a self-hosted base from config — to the right provider.
+//!
+//! Tokens live in the OS keychain (ADR-0006) via [`TokenStore`], under a
+//! per-forge key ([`HostingProvider::token_key`]) — never on disk, in
+//! plaintext, or in logs. The transport/signing credentials for git itself stay
+//! with system git; only hosting-API tokens are stored here.
 
 use serde::{Deserialize, Serialize};
+
+mod azure;
+mod bitbucket;
+mod github;
+mod gitlab;
+
+pub use azure::AzureDevOpsClient;
+pub use bitbucket::BitbucketClient;
+pub use github::GitHubClient;
+pub use gitlab::GitLabClient;
 
 /// Errors surfaced by hosting operations.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// No GitHub remote could be detected on the repository.
-    #[error("no GitHub remote found")]
-    NoGitHubRemote,
+    /// No matching forge remote could be detected on the repository.
+    #[error("no supported forge remote found")]
+    NoRemote,
     /// Authentication failed or no token is stored.
-    #[error("not authenticated with GitHub")]
+    #[error("not authenticated")]
     Unauthorized,
     /// The token store (keychain) failed.
     #[error("token store error: {0}")]
@@ -24,50 +37,254 @@ pub enum Error {
     #[error("http error: {0}")]
     Http(String),
     /// The API returned an error payload.
-    #[error("GitHub API error ({status}): {message}")]
+    #[error("API error ({status}): {message}")]
     Api {
         /// HTTP status code.
         status: u16,
         /// Best-effort error message from the API body.
         message: String,
     },
+    /// This operation is not implemented for the resolved provider yet.
+    #[error("operation not supported by this provider")]
+    NotImplemented,
 }
 
 /// Result alias for hosting operations.
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// An owner/repo pair identifying a repository on a forge.
+/// Which forge a provider talks to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ForgeKind {
+    GitHub,
+    GitLab,
+    Bitbucket,
+    AzureDevOps,
+}
+
+impl ForgeKind {
+    /// A short lowercase label (used in UI copy and remote detection).
+    pub fn label(self) -> &'static str {
+        match self {
+            ForgeKind::GitHub => "GitHub",
+            ForgeKind::GitLab => "GitLab",
+            ForgeKind::Bitbucket => "Bitbucket",
+            ForgeKind::AzureDevOps => "Azure DevOps",
+        }
+    }
+
+    /// The keychain key under which this forge's token is stored (ADR-0006).
+    pub fn token_key(self) -> &'static str {
+        match self {
+            ForgeKind::GitHub => "github-token",
+            ForgeKind::GitLab => "gitlab-token",
+            ForgeKind::Bitbucket => "bitbucket-token",
+            ForgeKind::AzureDevOps => "azure-token",
+        }
+    }
+}
+
+/// A repository identifier on a forge. `owner`/`repo` for GitHub/GitLab/
+/// Bitbucket; Azure DevOps additionally carries `project` (the slug is
+/// org=`owner` / project / repo).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepoSlug {
-    /// The repository owner (user or org).
+    /// The owner (user / org / Azure organization).
     pub owner: String,
     /// The repository name.
     pub repo: String,
+    /// Azure DevOps project (the middle path segment); `None` elsewhere.
+    #[serde(default)]
+    pub project: Option<String>,
 }
 
-/// Parse a GitHub remote URL (https or ssh) into a [`RepoSlug`]. Returns `None`
-/// for non-GitHub or unparseable remotes.
-pub fn parse_github_remote(url: &str) -> Option<RepoSlug> {
+impl RepoSlug {
+    /// A simple owner/repo slug (no Azure project).
+    pub fn new(owner: impl Into<String>, repo: impl Into<String>) -> Self {
+        RepoSlug {
+            owner: owner.into(),
+            repo: repo.into(),
+            project: None,
+        }
+    }
+}
+
+/// Details for opening a pull / merge request.
+#[derive(Clone, Debug, Serialize)]
+pub struct NewPullRequest {
+    /// The branch with the changes (source).
+    pub head: String,
+    /// The branch to merge into (target).
+    pub base: String,
+    /// Title.
+    pub title: String,
+    /// Body / description (markdown).
+    pub body: String,
+    /// Whether to open as a draft.
+    pub draft: bool,
+}
+
+/// Details for creating a remote repository (PH4-005).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NewRepo {
+    /// Repository name.
+    pub name: String,
+    /// Whether the repo is private.
+    pub private: bool,
+    /// Optional description.
+    pub description: String,
+}
+
+/// The created remote repository's URLs (PH4-005).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoInfo {
+    /// URL to clone from (https).
+    pub clone_url: String,
+    /// URL to view in a browser.
+    pub web_url: String,
+}
+
+/// A forge-agnostic hosting provider. One implementation per forge; resolved
+/// from a remote by [`provider_for`].
+#[async_trait::async_trait]
+pub trait HostingProvider: Send + Sync {
+    /// Which forge this provider talks to.
+    fn kind(&self) -> ForgeKind;
+
+    /// The keychain key for this forge's token (ADR-0006).
+    fn token_key(&self) -> &'static str {
+        self.kind().token_key()
+    }
+
+    /// Detect this provider's repo slug among the repository's remote URLs.
+    fn detect_slug(&self, remote_urls: &[String]) -> Option<RepoSlug>;
+
+    /// Verify `token` and return the authenticated user's login/handle.
+    async fn get_login(&self, token: &str) -> Result<String>;
+
+    /// Open a pull / merge request, returning its web URL.
+    async fn create_pull_request(
+        &self,
+        token: &str,
+        slug: &RepoSlug,
+        pr: &NewPullRequest,
+    ) -> Result<String>;
+
+    /// Create a remote repository, returning its clone + web URLs (PH4-005).
+    async fn create_repo(&self, token: &str, repo: &NewRepo) -> Result<RepoInfo>;
+}
+
+// ── Remote-URL parsing & provider resolution ────────────────────────────────────
+
+/// Extract the host from a git remote URL (https or scp-like ssh).
+pub fn remote_host(url: &str) -> Option<String> {
+    let u = url.trim();
+    if let Some((_, after)) = u.split_once("://") {
+        // scheme://[user@]host[:port]/path
+        let authority = after.split('/').next()?;
+        let authority = authority.rsplit('@').next()?; // drop any userinfo
+        let host = authority.split(':').next()?; // drop any port
+        return (!host.is_empty()).then(|| host.to_string());
+    }
+    // scp-like: [user@]host:path
+    if let Some((left, _)) = u.split_once(':') {
+        let host = left.rsplit('@').next()?;
+        return host.contains('.').then(|| host.to_string());
+    }
+    None
+}
+
+/// The path segments after the host (no leading/trailing slash, `.git` stripped
+/// from the last one).
+pub(crate) fn path_segments(url: &str) -> Vec<String> {
     let u = url.trim().trim_end_matches('/');
     let u = u.strip_suffix(".git").unwrap_or(u);
-    // Only github.com is supported at v1 (enterprise is Fast-follow).
-    let idx = u.find("github.com")?;
-    let rest = &u[idx + "github.com".len()..];
-    // After the host comes ':' (ssh) or '/' (https), then owner/repo.
-    let rest = rest.trim_start_matches([':', '/']);
-    let mut parts = rest.split('/');
-    let owner = parts.next()?.trim();
-    let repo = parts.next()?.trim();
-    if owner.is_empty() || repo.is_empty() {
-        return None;
+    // Everything after the host: take the path portion.
+    let path = if let Some((_, after)) = u.split_once("://") {
+        after.split_once('/').map(|(_, p)| p).unwrap_or("")
+    } else if let Some((_, after)) = u.split_once(':') {
+        after // scp-like `host:owner/repo`
+    } else {
+        ""
+    };
+    path.split('/')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect()
+}
+
+/// A configured self-hosted forge: map a `host` to its `kind` and API `base`.
+#[derive(Clone, Debug)]
+pub struct ForgeConfig {
+    /// The remote host (e.g. `gitlab.mycorp.com`).
+    pub host: String,
+    /// Which forge software it runs.
+    pub kind: ForgeKind,
+    /// The API base URL (e.g. `https://gitlab.mycorp.com/api/v4`).
+    pub api_base: String,
+}
+
+/// Build a provider of `kind` against `api_base`.
+fn provider_of(kind: ForgeKind, api_base: &str) -> Box<dyn HostingProvider> {
+    match kind {
+        ForgeKind::GitHub => Box::new(GitHubClient::with_base_url(api_base)),
+        ForgeKind::GitLab => Box::new(GitLabClient::with_base_url(api_base)),
+        ForgeKind::Bitbucket => Box::new(BitbucketClient::with_base_url(api_base)),
+        ForgeKind::AzureDevOps => Box::new(AzureDevOpsClient::with_base_url(api_base)),
     }
-    Some(RepoSlug {
-        owner: owner.to_string(),
-        repo: repo.to_string(),
+}
+
+/// Resolve a remote URL to a hosting provider. `extra` self-hosted configs are
+/// tried first (by exact host match), then the public hosts.
+pub fn provider_for(remote_url: &str, extra: &[ForgeConfig]) -> Option<Box<dyn HostingProvider>> {
+    let host = remote_host(remote_url)?;
+
+    if let Some(cfg) = extra.iter().find(|c| c.host == host) {
+        return Some(provider_of(cfg.kind, &cfg.api_base));
+    }
+
+    let kind = match host.as_str() {
+        "github.com" => ForgeKind::GitHub,
+        "gitlab.com" => ForgeKind::GitLab,
+        "bitbucket.org" => ForgeKind::Bitbucket,
+        h if h == "dev.azure.com"
+            || h == "ssh.dev.azure.com"
+            || h.ends_with(".visualstudio.com") =>
+        {
+            ForgeKind::AzureDevOps
+        }
+        _ => return None,
+    };
+    Some(match kind {
+        ForgeKind::GitHub => Box::new(GitHubClient::new()),
+        ForgeKind::GitLab => Box::new(GitLabClient::new()),
+        ForgeKind::Bitbucket => Box::new(BitbucketClient::new()),
+        ForgeKind::AzureDevOps => Box::new(AzureDevOpsClient::new()),
     })
 }
 
-/// Detect the first GitHub repository among a list of remote URLs.
+// ── Generic slug helpers (shared by the simple owner/repo forges) ────────────────
+
+/// owner = first path segment, repo = last path segment (handles GitLab
+/// subgroups by collapsing the middle into the repo name's group path is left
+/// to per-forge logic; here owner/repo are the outer bounds).
+pub(crate) fn owner_repo_slug(url: &str) -> Option<RepoSlug> {
+    let segs = path_segments(url);
+    if segs.len() < 2 {
+        return None;
+    }
+    Some(RepoSlug::new(segs.first()?.clone(), segs.last()?.clone()))
+}
+
+/// Parse a GitHub remote URL into a [`RepoSlug`] (back-compat helper).
+pub fn parse_github_remote(url: &str) -> Option<RepoSlug> {
+    let host = remote_host(url)?;
+    if host != "github.com" {
+        return None;
+    }
+    owner_repo_slug(url)
+}
+
+/// Detect the first GitHub repository among a list of remote URLs (back-compat).
 pub fn detect_github_slug(remote_urls: &[String]) -> Option<RepoSlug> {
     remote_urls.iter().find_map(|u| parse_github_remote(u))
 }
@@ -126,303 +343,99 @@ impl TokenStore for KeyringStore {
     }
 }
 
-// ── GitHub client ──────────────────────────────────────────────────────────────
-
-/// The authenticated GitHub user (only the fields Lady needs).
-#[derive(Clone, Debug, Deserialize)]
-pub struct GitHubUser {
-    /// The account's login handle.
-    pub login: String,
-}
-
-/// Details for opening a pull request (PH3-012).
-#[derive(Clone, Debug, Serialize)]
-pub struct NewPullRequest {
-    /// The branch with the changes.
-    pub head: String,
-    /// The branch to merge into.
-    pub base: String,
-    /// PR title.
-    pub title: String,
-    /// PR body (markdown).
-    pub body: String,
-    /// Whether to open as a draft.
-    pub draft: bool,
-}
-
-/// A minimal hosting provider surface.
-pub trait HostingProvider {
-    /// Detect this provider's repo slug among the repo's remote URLs.
-    fn detect(&self, remote_urls: &[String]) -> Option<RepoSlug>;
-}
-
-/// A GitHub REST API client (reqwest + rustls). `base_url` is overridable so
-/// tests can point it at a mock server.
-pub struct GitHubClient {
-    base_url: String,
-    http: reqwest::Client,
-}
-
-impl Default for GitHubClient {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl GitHubClient {
-    /// A client against the public GitHub API.
-    pub fn new() -> Self {
-        Self::with_base_url("https://api.github.com")
-    }
-
-    /// A client against a custom base URL (for tests / GitHub Enterprise).
-    pub fn with_base_url(base_url: impl Into<String>) -> Self {
-        GitHubClient {
-            base_url: base_url.into(),
-            http: reqwest::Client::builder()
-                .user_agent("Lady")
-                .build()
-                .expect("build reqwest client"),
-        }
-    }
-
-    /// Verify `token` and return the authenticated user (`GET /user`).
-    pub async fn get_user(&self, token: &str) -> Result<GitHubUser> {
-        let url = format!("{}/user", self.base_url);
-        let resp = self
-            .http
-            .get(&url)
-            .bearer_auth(token)
-            .header("Accept", "application/vnd.github+json")
-            .send()
-            .await
-            .map_err(|e| Error::Http(e.to_string()))?;
-        let status = resp.status();
-        if status == reqwest::StatusCode::UNAUTHORIZED {
-            return Err(Error::Unauthorized);
-        }
-        if !status.is_success() {
-            return Err(Error::Api {
-                status: status.as_u16(),
-                message: resp.text().await.unwrap_or_default(),
-            });
-        }
-        resp.json::<GitHubUser>()
-            .await
-            .map_err(|e| Error::Http(e.to_string()))
-    }
-
-    /// Open a pull request on `slug` (`POST /repos/{owner}/{repo}/pulls`),
-    /// returning its HTML URL (PH3-012).
-    pub async fn create_pull_request(
-        &self,
-        token: &str,
-        slug: &RepoSlug,
-        pr: &NewPullRequest,
-    ) -> Result<String> {
-        let url = format!("{}/repos/{}/{}/pulls", self.base_url, slug.owner, slug.repo);
-        let resp = self
-            .http
-            .post(&url)
-            .bearer_auth(token)
-            .header("Accept", "application/vnd.github+json")
-            .json(pr)
-            .send()
-            .await
-            .map_err(|e| Error::Http(e.to_string()))?;
-        let status = resp.status();
-        if status == reqwest::StatusCode::UNAUTHORIZED {
-            return Err(Error::Unauthorized);
-        }
-        if !status.is_success() {
-            // GitHub returns `{ "message": "...", "errors": [...] }`.
-            let body = resp.text().await.unwrap_or_default();
-            let message = serde_json::from_str::<serde_json::Value>(&body)
-                .ok()
-                .and_then(|v| v.get("message").and_then(|m| m.as_str()).map(String::from))
-                .unwrap_or(body);
-            return Err(Error::Api {
-                status: status.as_u16(),
-                message,
-            });
-        }
-        let body: serde_json::Value = resp.json().await.map_err(|e| Error::Http(e.to_string()))?;
-        body.get("html_url")
-            .and_then(|u| u.as_str())
-            .map(String::from)
-            .ok_or_else(|| Error::Http("PR response missing html_url".to_string()))
-    }
-}
-
-impl HostingProvider for GitHubClient {
-    fn detect(&self, remote_urls: &[String]) -> Option<RepoSlug> {
-        detect_github_slug(remote_urls)
-    }
+/// Shared helper: extract `{ "message": ... }` from a JSON error body, falling
+/// back to the raw body. Used by the per-forge clients.
+pub(crate) fn api_error_message(body: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| {
+            v.get("message")
+                .and_then(|m| m.as_str())
+                .map(String::from)
+                // GitLab uses `{ "message": {...} }` or `{ "error": "..." }`.
+                .or_else(|| v.get("error").and_then(|m| m.as_str()).map(String::from))
+        })
+        .unwrap_or_else(|| body.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    /// In-memory token store for tests (mocks the keychain).
-    #[derive(Default)]
-    struct MemStore(Mutex<std::collections::HashMap<String, String>>);
-    impl TokenStore for MemStore {
-        fn get(&self, key: &str) -> Result<Option<String>> {
-            Ok(self.0.lock().unwrap().get(key).cloned())
-        }
-        fn set(&self, key: &str, value: &str) -> Result<()> {
-            self.0.lock().unwrap().insert(key.into(), value.into());
-            Ok(())
-        }
-        fn delete(&self, key: &str) -> Result<()> {
-            self.0.lock().unwrap().remove(key);
-            Ok(())
-        }
+    #[test]
+    fn remote_host_handles_https_and_ssh() {
+        assert_eq!(
+            remote_host("https://github.com/o/r.git").as_deref(),
+            Some("github.com")
+        );
+        assert_eq!(
+            remote_host("git@github.com:o/r.git").as_deref(),
+            Some("github.com")
+        );
+        assert_eq!(
+            remote_host("ssh://git@gitlab.com/o/r.git").as_deref(),
+            Some("gitlab.com")
+        );
+        assert_eq!(
+            remote_host("https://user@bitbucket.org/o/r").as_deref(),
+            Some("bitbucket.org")
+        );
+        assert_eq!(
+            remote_host("https://dev.azure.com/org/proj/_git/repo").as_deref(),
+            Some("dev.azure.com")
+        );
     }
 
     #[test]
-    fn parses_https_and_ssh_github_remotes() {
-        let want = RepoSlug {
-            owner: "octocat".into(),
-            repo: "hello".into(),
-        };
-        assert_eq!(
-            parse_github_remote("https://github.com/octocat/hello.git"),
-            Some(want.clone())
-        );
-        assert_eq!(
-            parse_github_remote("git@github.com:octocat/hello.git"),
-            Some(want.clone())
-        );
-        assert_eq!(
-            parse_github_remote("https://github.com/octocat/hello"),
-            Some(want.clone())
-        );
-        assert_eq!(
-            parse_github_remote("ssh://git@github.com/octocat/hello.git"),
-            Some(want)
-        );
-        assert_eq!(parse_github_remote("https://gitlab.com/x/y.git"), None);
-    }
-
-    #[test]
-    fn detects_github_among_remotes() {
-        let remotes = vec![
-            "https://gitlab.com/a/b.git".to_string(),
-            "git@github.com:owner/repo.git".to_string(),
+    fn provider_for_resolves_all_four_public_forges() {
+        let cases = [
+            ("https://github.com/o/r.git", ForgeKind::GitHub),
+            ("git@gitlab.com:o/r.git", ForgeKind::GitLab),
+            ("https://bitbucket.org/o/r.git", ForgeKind::Bitbucket),
+            (
+                "https://dev.azure.com/org/proj/_git/repo",
+                ForgeKind::AzureDevOps,
+            ),
+            (
+                "git@ssh.dev.azure.com:v3/org/proj/repo",
+                ForgeKind::AzureDevOps,
+            ),
+            (
+                "https://myorg.visualstudio.com/proj/_git/repo",
+                ForgeKind::AzureDevOps,
+            ),
         ];
-        let slug = detect_github_slug(&remotes).expect("detect github");
-        assert_eq!(slug.owner, "owner");
-        assert_eq!(slug.repo, "repo");
+        for (url, want) in cases {
+            let p = provider_for(url, &[]).unwrap_or_else(|| panic!("resolve {url}"));
+            assert_eq!(p.kind(), want, "url {url}");
+        }
+        // A non-forge remote resolves to nothing.
+        assert!(provider_for("https://example.com/x/y.git", &[]).is_none());
     }
 
     #[test]
-    fn token_store_abstraction_roundtrips() {
-        let store = MemStore::default();
-        assert_eq!(store.get("github").unwrap(), None);
-        store.set("github", "ghp_secret").unwrap();
-        assert_eq!(store.get("github").unwrap().as_deref(), Some("ghp_secret"));
-        store.delete("github").unwrap();
-        assert_eq!(store.get("github").unwrap(), None);
+    fn provider_for_resolves_self_hosted_from_config() {
+        let extra = [ForgeConfig {
+            host: "gitlab.mycorp.com".to_string(),
+            kind: ForgeKind::GitLab,
+            api_base: "https://gitlab.mycorp.com/api/v4".to_string(),
+        }];
+        let p = provider_for("https://gitlab.mycorp.com/group/proj.git", &extra)
+            .expect("resolve self-hosted");
+        assert_eq!(p.kind(), ForgeKind::GitLab);
+        // Without the config it would be unknown.
+        assert!(provider_for("https://gitlab.mycorp.com/group/proj.git", &[]).is_none());
     }
 
-    #[tokio::test]
-    async fn get_user_returns_login_on_200_and_unauthorized_on_401() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/user"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "login": "octocat"
-            })))
-            .mount(&server)
-            .await;
-
-        let client = GitHubClient::with_base_url(server.uri());
-        let user = client.get_user("good-token").await.expect("get_user 200");
-        assert_eq!(user.login, "octocat");
-
-        // A fresh server with a 401 for the unauthorized path.
-        let server401 = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/user"))
-            .respond_with(ResponseTemplate::new(401))
-            .mount(&server401)
-            .await;
-        let client401 = GitHubClient::with_base_url(server401.uri());
-        let err = client401.get_user("bad").await.unwrap_err();
-        assert!(
-            matches!(err, Error::Unauthorized),
-            "401 → Unauthorized, got {err:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn create_pull_request_returns_url_on_success() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/repos/octocat/hello/pulls"))
-            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
-                "html_url": "https://github.com/octocat/hello/pull/42"
-            })))
-            .mount(&server)
-            .await;
-
-        let client = GitHubClient::with_base_url(server.uri());
-        let slug = RepoSlug {
-            owner: "octocat".into(),
-            repo: "hello".into(),
-        };
-        let pr = NewPullRequest {
-            head: "feature".into(),
-            base: "main".into(),
-            title: "Add feature".into(),
-            body: "Body".into(),
-            draft: false,
-        };
-        let url = client
-            .create_pull_request("tok", &slug, &pr)
-            .await
-            .expect("create PR");
-        assert_eq!(url, "https://github.com/octocat/hello/pull/42");
-    }
-
-    #[tokio::test]
-    async fn create_pull_request_surfaces_api_error_message() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/repos/octocat/hello/pulls"))
-            .respond_with(ResponseTemplate::new(422).set_body_json(serde_json::json!({
-                "message": "A pull request already exists for octocat:feature."
-            })))
-            .mount(&server)
-            .await;
-
-        let client = GitHubClient::with_base_url(server.uri());
-        let slug = RepoSlug {
-            owner: "octocat".into(),
-            repo: "hello".into(),
-        };
-        let pr = NewPullRequest {
-            head: "feature".into(),
-            base: "main".into(),
-            title: "t".into(),
-            body: "b".into(),
-            draft: false,
-        };
-        let err = client
-            .create_pull_request("tok", &slug, &pr)
-            .await
-            .unwrap_err();
-        match err {
-            Error::Api { status, message } => {
-                assert_eq!(status, 422);
-                assert!(message.contains("already exists"), "message: {message}");
-            }
-            other => panic!("expected Api error, got {other:?}"),
-        }
+    #[test]
+    fn per_forge_token_keys_are_distinct() {
+        let keys = [
+            ForgeKind::GitHub.token_key(),
+            ForgeKind::GitLab.token_key(),
+            ForgeKind::Bitbucket.token_key(),
+            ForgeKind::AzureDevOps.token_key(),
+        ];
+        let set: std::collections::HashSet<_> = keys.iter().collect();
+        assert_eq!(set.len(), 4, "token keys must be distinct: {keys:?}");
     }
 }

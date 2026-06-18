@@ -39,6 +39,7 @@ lady-license = { path = "crates/lady-license" }
 base64 = "0.22"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 rand = "0.8"
+async-trait = "0.1"
 reqwest = { version = "0.12", default-features = false, features = [
     "json",
     "rustls-tls",

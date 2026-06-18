@@ -972,10 +972,12 @@ fn save_settings(mut settings: Settings) -> Result<(), String> {
 /// Keychain key under which the GitHub hosting-API token is stored (ADR-0006).
 const GITHUB_TOKEN_KEY: &str = "github-token";
 
-/// Managed hosting state: a GitHub client + the OS-keychain token store.
+/// Managed hosting state: the OS-keychain token store, a GitHub client for the
+/// GitHub-specific auth UI, and any self-hosted forge configs for resolution.
 pub struct Hosting {
     store: Box<dyn lady_hosting::TokenStore>,
     client: lady_hosting::GitHubClient,
+    self_hosted: Vec<lady_hosting::ForgeConfig>,
 }
 
 /// Connection status for the GitHub account (no token is ever returned).
@@ -993,9 +995,10 @@ async fn github_auth_start(
     token: String,
     hosting: State<'_, Hosting>,
 ) -> Result<GithubStatus, String> {
-    let user = hosting
+    use lady_hosting::HostingProvider;
+    let login = hosting
         .client
-        .get_user(&token)
+        .get_login(&token)
         .await
         .map_err(|e| e.to_string())?;
     hosting
@@ -1004,7 +1007,7 @@ async fn github_auth_start(
         .map_err(|e| e.to_string())?;
     Ok(GithubStatus {
         connected: true,
-        login: Some(user.login),
+        login: Some(login),
     })
 }
 
@@ -1022,10 +1025,11 @@ async fn github_auth_status(hosting: State<'_, Hosting>) -> Result<GithubStatus,
         });
     };
     // Best-effort: confirm validity + fetch the login.
-    match hosting.client.get_user(&token).await {
-        Ok(user) => Ok(GithubStatus {
+    use lady_hosting::HostingProvider;
+    match hosting.client.get_login(&token).await {
+        Ok(login) => Ok(GithubStatus {
             connected: true,
-            login: Some(user.login),
+            login: Some(login),
         }),
         Err(lady_hosting::Error::Unauthorized) => Ok(GithubStatus {
             connected: false,
@@ -1058,9 +1062,9 @@ fn github_detect(
     Ok(lady_hosting::detect_github_slug(&urls))
 }
 
-/// Open a pull request for the active repo's GitHub remote (PH3-012). Returns
-/// the PR's HTML URL. Errors clearly on no-auth / no-GitHub-remote / API
-/// failures (e.g. a PR already exists).
+/// Open a pull / merge request for the active repo's forge remote, resolved by
+/// the remote URL (PH3-012 / PH4-001). Returns the PR's web URL. Errors clearly
+/// on no-auth / no-supported-remote / API failures (e.g. a PR already exists).
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 async fn github_create_pr(
@@ -1073,14 +1077,28 @@ async fn github_create_pr(
     engine: State<'_, GixEngine>,
     hosting: State<'_, Hosting>,
 ) -> Result<String, String> {
+    let urls = engine.list_remote_urls(&repo).map_err(|e| e.to_string())?;
+    // Resolve the forge from the first supported remote.
+    let provider = urls
+        .iter()
+        .find_map(|u| lady_hosting::provider_for(u, &hosting.self_hosted))
+        .ok_or_else(|| "No supported forge remote found on this repository.".to_string())?;
+    let slug = provider.detect_slug(&urls).ok_or_else(|| {
+        format!(
+            "Could not parse a {} repository from the remotes.",
+            provider.kind().label()
+        )
+    })?;
     let token = hosting
         .store
-        .get(GITHUB_TOKEN_KEY)
+        .get(provider.token_key())
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| "Not connected to GitHub — connect in Settings first.".to_string())?;
-    let urls = engine.list_remote_urls(&repo).map_err(|e| e.to_string())?;
-    let slug = lady_hosting::detect_github_slug(&urls)
-        .ok_or_else(|| "No GitHub remote found on this repository.".to_string())?;
+        .ok_or_else(|| {
+            format!(
+                "Not connected to {} — connect in Settings first.",
+                provider.kind().label()
+            )
+        })?;
     let pr = lady_hosting::NewPullRequest {
         head,
         base,
@@ -1088,8 +1106,7 @@ async fn github_create_pr(
         body,
         draft,
     };
-    hosting
-        .client
+    provider
         .create_pull_request(&token, &slug, &pr)
         .await
         .map_err(|e| e.to_string())
@@ -1188,8 +1205,9 @@ pub fn run() {
     tauri::Builder::default()
         .manage(GixEngine::new())
         .manage(Hosting {
-            store: Box::new(lady_hosting::KeyringStore::new("Lady-GitHub")),
+            store: Box::new(lady_hosting::KeyringStore::new("Lady-Hosting")),
             client: lady_hosting::GitHubClient::new(),
+            self_hosted: Vec::new(),
         })
         .invoke_handler(tauri::generate_handler![
             app_info,

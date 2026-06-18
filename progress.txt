@@ -1,57 +1,22 @@
-# Phase 3 — Advanced git + ship (Core Parity release line)
+# Phase 4 — Fast-follow hosting + niche
 
-Branch: ralph/phase-3-advanced-ship (from main).
+Branch: phase-4-fast-follow (from main; Phase 3 merged).
 
 Loop verification per story: cargo fmt --all --check, cargo clippy --all-targets -- -D warnings,
-cargo test, cargo deny check, npm run build. UI stories also note a manual window check here.
+cargo test, cargo deny check, npm run build. Hosting providers tested vs wiremock (never live).
+UI stories also note a manual window check here.
 
 ## Status
-- [x] PH3-001 Conflict model + resolve engine (lady-diff::merge)
-- [x] PH3-002 3-pane merge conflict resolver UI
-- [x] PH3-003 Interactive rebase plan model + executor (engine)
-- [x] PH3-004 Interactive rebase UI
-- [x] PH3-005 Commit signing (GPG + SSH)
-- [x] PH3-006 Worktrees
-- [x] PH3-007 Reflog view + restore lost commits
-- [x] PH3-008 Bisect
-- [x] PH3-009 Custom commands (UI builder)
-- [x] PH3-010 External diff/merge tool integration
-- [x] PH3-011 lady-hosting crate + GitHub auth
-- [x] PH3-012 Create GitHub pull request from a branch
-- [x] PH3-013 Licensing gate — trial + offline signed-key verify
-- [x] PH3-014 Core Parity release-readiness gate (Phase 3 EXIT)
+- [x] PH4-001 Generalize HostingProvider for multiple forges
+- [ ] PH4-002 GitLab auth + create merge request
+- [ ] PH4-003 Bitbucket auth + create pull request
+- [ ] PH4-004 Azure DevOps auth + create pull request
+- [ ] PH4-005 Create remote repository (provider-agnostic)
+- [ ] PH4-006 GitHub notifications inbox
+- [ ] PH4-007 Git LFS support
+- [ ] PH4-008 git-flow support
+- [ ] PH4-009 Submodule management
+- [ ] PH4-010 Phase 4 Fast-follow exit gate
 
 ## Manual window checks (noted as stories land)
-- PH3-002: ConflictResolver renders base|ours|theirs panes + editable per-region
-  result + minimap. Auto-surfaces a "Conflicts ⚠" tab when conflict_state != None.
-  Needs a manual `npm run tauri dev` window check: trigger a merge conflict, confirm
-  panes populate, choose sides, Save & next clears the file, finishing returns to
-  Changes. (Not runnable headless in this loop; build + typecheck green.)
-- PH3-004: InteractiveRebase modal opens from the commit panel ("Rebase i from
-  here") and the current-branch row in Refs. Drag-to-reorder rows, per-commit
-  action picker, reword message box. Run → on conflict/stop hands off to the
-  Conflicts tab with Continue/Skip/Abort. Needs a manual window check of drag
-  reorder + a real squash/conflict run. (Build + typecheck green.)
-- PH3-005: Sign (-S) checkbox in the commit box; SignatureBadge in graph rows +
-  the commit details panel. SSH-signing unit test runs on git >= 2.34; this dev
-  box has git 2.33 so the test SKIPS locally (verified) but executes on CI's
-  newer git. GPG path is wired via the same config-honoring -S commit and the
-  %G? verifier — needs a manual check with a real GPG keyring.
-- PH3-010: "Ext diff" button per file in DiffView (launch_difftool, commit-aware)
-  and "Ext merge" in ConflictResolver (launch_mergetool). Honors diff.tool/
-  merge.tool. No tool configured → git's error surfaces in the view. Launching
-  a real GUI tool is manual-only (not unit-tested to avoid hanging on a tool).
-- PH3-012: "PR" button per branch in Refs opens a form (base/title/body prefilled
-  from branch + recent subjects, draft toggle). On success shows the URL with an
-  "Open in browser" button (open_url, http(s)-only). Errors clearly on no-auth /
-  no-GitHub-remote / API failure. create_pull_request tested vs wiremock
-  (success URL + 422 "already exists"). Live PR creation is manual.
-- PH3-014: docs/RELEASE-CHECKLIST.md maps the Core Parity surface to its stories
-  (Phases 1-3) and lists the Fast-follow exclusions (LFS, git-flow, submodule
-  edges, non-GitHub forge PRs). Version bumped to 1.0.0-rc across all crates +
-  tauri.conf.json + ui/package.json.
-
-## RELEASE LINE / Phase 6 note
-PACKAGING, notarization, and auto-update are PHASE 6 — out of scope here. This
-Phase 3 EXIT gate confirms FEATURE-COMPLETENESS for Core Parity (v1.0), not the
-actual ship. AI is Phase 5. Next PRD: Phase 4 (Fast-follow) or Phase 5 (AI).
+(none yet)

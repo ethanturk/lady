@@ -4,7 +4,7 @@ version = "1.0.0-rc"
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "Hosting providers (GitHub at v1): auth + PR creation over reqwest/rustls."
+description = "Hosting providers (GitHub/GitLab/Bitbucket/Azure DevOps): auth + PR/MR + repo create over reqwest/rustls."
 
 [dependencies]
 serde = { workspace = true }
@@ -12,6 +12,8 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 reqwest = { workspace = true }
 keyring = { workspace = true }
+async-trait = { workspace = true }
+base64 = { workspace = true }
 
 [dev-dependencies]
 wiremock = { workspace = true }
