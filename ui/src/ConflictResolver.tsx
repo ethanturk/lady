@@ -265,6 +265,21 @@ const ConflictResolver: Component<{
             Use theirs
           </button>
           <button
+            style={headerBtn}
+            disabled={busy()}
+            title="Open in external merge tool"
+            onClick={() => {
+              const path = current();
+              if (!path) return;
+              setErr(null);
+              invoke("launch_mergetool", { repo: props.repoId, path })
+                .then(() => props.onChanged())
+                .catch((e) => setErr(String(e)));
+            }}
+          >
+            Ext merge
+          </button>
+          <button
             style={{ ...headerBtn, background: allChosen() ? "#1a7f37" : "#eee", color: allChosen() ? "#fff" : "#999" }}
             disabled={busy() || !allChosen()}
             onClick={saveResolution}

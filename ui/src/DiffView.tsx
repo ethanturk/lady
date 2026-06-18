@@ -270,6 +270,7 @@ const FileBlock: Component<{
   onStageLines?: (path: string, hunkIndex: number, lines: number[]) => void;
   onDiscardLines?: (path: string, hunkIndex: number, lines: number[]) => void;
   onDiscardHunk?: (path: string, hunkIndex: number) => void;
+  onExternalDiff?: (path: string) => void;
 }> = (props) => {
   const lang = () => langFromPath(props.file.path);
   return (
@@ -282,12 +283,20 @@ const FileBlock: Component<{
           "font-family": "monospace",
           "font-size": "0.8rem",
           "font-weight": 600,
+          display: "flex",
+          "align-items": "center",
         }}
       >
         {props.file.path}
         <span style={{ color: "#888", "font-weight": 400, "margin-left": "0.5rem" }}>
           {props.file.kind}
         </span>
+        <span style={{ flex: "1" }} />
+        <Show when={props.onExternalDiff}>
+          <button style={{ ...actionBtn }} title="Open in external diff tool" onClick={() => props.onExternalDiff!(props.file.path)}>
+            Ext diff
+          </button>
+        </Show>
       </div>
       <Show when={props.file.kind === "Image"}>
         <div style={{ display: "flex", gap: "1rem", padding: "0.6rem", "flex-wrap": "wrap" }}>
@@ -361,6 +370,15 @@ const DiffView: Component<{
   const [loading, setLoading] = createSignal(false);
   const [err, setErr] = createSignal<string | null>(null);
 
+  // Open a file in the user's configured external diff tool (PH3-010). Uses the
+  // commit when this is a commit diff; otherwise the working tree.
+  const externalDiff = (path: string) => {
+    setErr(null);
+    invoke("launch_difftool", { repo: props.repoId, path, commit: props.commit ?? null }).catch((e) =>
+      setErr(String(e)),
+    );
+  };
+
   // A label for the diff header: spec target, else short commit hash.
   const title = () => {
     if (props.spec) return props.spec.value;
@@ -432,6 +450,7 @@ const DiffView: Component<{
               onStageLines={props.onStageLines}
               onDiscardLines={props.onDiscardLines}
               onDiscardHunk={props.onDiscardHunk}
+              onExternalDiff={externalDiff}
             />
           )}
         </For>

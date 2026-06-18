@@ -15,7 +15,7 @@ cargo test, cargo deny check, npm run build. UI stories also note a manual windo
 - [x] PH3-007 Reflog view + restore lost commits
 - [x] PH3-008 Bisect
 - [x] PH3-009 Custom commands (UI builder)
-- [ ] PH3-010 External diff/merge tool integration
+- [x] PH3-010 External diff/merge tool integration
 - [ ] PH3-011 lady-hosting crate + GitHub auth
 - [ ] PH3-012 Create GitHub pull request from a branch
 - [ ] PH3-013 Licensing gate — trial + offline signed-key verify
@@ -37,3 +37,7 @@ cargo test, cargo deny check, npm run build. UI stories also note a manual windo
   box has git 2.33 so the test SKIPS locally (verified) but executes on CI's
   newer git. GPG path is wired via the same config-honoring -S commit and the
   %G? verifier — needs a manual check with a real GPG keyring.
+- PH3-010: "Ext diff" button per file in DiffView (launch_difftool, commit-aware)
+  and "Ext merge" in ConflictResolver (launch_mergetool). Honors diff.tool/
+  merge.tool. No tool configured → git's error surfaces in the view. Launching
+  a real GUI tool is manual-only (not unit-tested to avoid hanging on a tool).

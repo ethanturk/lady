@@ -473,6 +473,27 @@ fn run_custom_command(
     engine.run_custom(&repo, &argv).map_err(|e| e.to_string())
 }
 
+/// Launch the configured external diff tool on `path` (PH3-010).
+#[tauri::command]
+fn launch_difftool(
+    repo: RepoId,
+    path: String,
+    commit: Option<String>,
+    engine: State<GixEngine>,
+) -> Result<(), String> {
+    engine
+        .launch_difftool(&repo, &path, commit.as_deref())
+        .map_err(|e| e.to_string())
+}
+
+/// Launch the configured external merge tool on a conflicted `path` (PH3-010).
+#[tauri::command]
+fn launch_mergetool(repo: RepoId, path: String, engine: State<GixEngine>) -> Result<(), String> {
+    engine
+        .launch_mergetool(&repo, &path)
+        .map_err(|e| e.to_string())
+}
+
 /// The most recent commit subjects (newest first), capped at `limit`.
 #[tauri::command]
 fn recent_messages(
@@ -1003,6 +1024,8 @@ pub fn run() {
             bisect_state,
             parse_placeholders,
             run_custom_command,
+            launch_difftool,
+            launch_mergetool,
             clone_repo,
             load_settings,
             save_settings

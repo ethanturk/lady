@@ -382,6 +382,15 @@ pub trait GitEngine: Send + Sync {
     /// stdout/stderr/exit-code (PH3-009). `argv` is an argument vector (no
     /// shell), built by [`custom::build_argv`] for injection safety.
     fn run_custom(&self, repo: &RepoId, argv: &[String]) -> Result<CommandOutput>;
+
+    /// Launch the user's configured external diff tool (`diff.tool`) on `path`.
+    /// With `commit`, diff that commit against its parent; otherwise the working
+    /// tree (PH3-010). Surfaces git's message when no tool is configured.
+    fn launch_difftool(&self, repo: &RepoId, path: &str, commit: Option<&str>) -> Result<()>;
+
+    /// Launch the user's configured external merge tool (`merge.tool`) on a
+    /// conflicted `path` (PH3-010).
+    fn launch_mergetool(&self, repo: &RepoId, path: &str) -> Result<()>;
 }
 
 /// A [`GitEngine`] backed by [`gix`] for read-only access (ADR-0003).
@@ -1768,6 +1777,28 @@ exit 0\n";
             stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
             exit_code: out.status.code().unwrap_or(-1),
         })
+    }
+
+    fn launch_difftool(&self, repo: &RepoId, path: &str, commit: Option<&str>) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        // `--no-prompt` skips the per-file confirmation (no terminal in the GUI).
+        // diff.tool is honored automatically.
+        let mut args: Vec<String> = vec!["difftool".into(), "--no-prompt".into()];
+        if let Some(c) = commit {
+            args.push(format!("{c}~1"));
+            args.push(c.to_string());
+        }
+        args.push("--".into());
+        args.push(path.to_string());
+        let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+        run_git(&wd, &argref).map(|_| ())
+    }
+
+    fn launch_mergetool(&self, repo: &RepoId, path: &str) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        // merge.tool is honored automatically; `--no-prompt` avoids the
+        // "Hit return to start tool" prompt.
+        run_git(&wd, &["mergetool", "--no-prompt", path]).map(|_| ())
     }
 }
 
