@@ -1,0 +1,11 @@
+[package]
+name = "lady-fixtures"
+version = "1.2.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Deterministic, offline synthetic fixtures (commits, text, repos) for benchmarks and tests. Dev-only helper — never shipped."
+
+[dependencies]
+lady-proto = { workspace = true }
+tempfile = { workspace = true }

@@ -10,6 +10,7 @@ members = [
     "crates/lady-license",
     "crates/lady-ai",
     "crates/lady-mcp",
+    "crates/lady-fixtures",
     "src-tauri",
 ]
 
@@ -39,7 +40,11 @@ lady-diff = { path = "crates/lady-diff" }
 lady-hosting = { path = "crates/lady-hosting" }
 lady-license = { path = "crates/lady-license" }
 lady-ai = { path = "crates/lady-ai" }
+lady-fixtures = { path = "crates/lady-fixtures" }
 base64 = "0.22"
+criterion = { version = "0.5", default-features = false, features = [
+    "cargo_bench_support",
+] }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 rand = "0.8"
 async-trait = "0.1"

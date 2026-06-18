@@ -51,3 +51,26 @@ jobs:
         uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
+
+  bench:
+    name: benchmarks (compile + quick run, no perf gate)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+
+      # Compile every bench so the harness can never silently rot.
+      - name: Compile benches
+        run: cargo bench --no-run -p lady-graph -p lady-diff -p lady-git
+
+      # Run in quick mode. This verifies the benches execute end-to-end; it is
+      # NOT a perf gate — shared CI runners are too noisy to assert budgets, so
+      # measured numbers are recorded by hand in docs/PERF.md on a dev machine.
+      - name: Run benches (quick, non-gating)
+        run: cargo bench -p lady-graph -p lady-diff -p lady-git -- --quick --noplot

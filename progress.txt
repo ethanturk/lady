@@ -1,73 +1,40 @@
-# Phase 5 — AI (GitKraken Git AI parity + superset)
+# Phase 6 — Polish & ship (the GA ship: v1.3.0)
 
-Branch: phase-5-ai (from main; Phase 4 merged).
+Branch: phase-6-polish-ship (from main; Phase 5 merged at 1.2.0).
 
-Loop verification per story: cargo fmt --all --check, cargo clippy --all-targets -- -D warnings,
-cargo test, cargo deny check, npm run build (UI stories). Providers tested vs wiremock with
-recorded fixtures — NEVER live APIs. Redaction + consent tests are MANDATORY (ADR-0009).
-UI stories also note a manual window check here.
+Loop verification per story: cargo fmt --all --check, cargo clippy --all-targets
+-- -D warnings, cargo test, cargo deny check, npm run build (UI stories). No new
+product features — this is packaging + quality + the ship. Secrets (signing
+certs, notarization creds, updater private key) live in CI/keychain, NEVER in the
+repo; only the updater PUBLIC key is committed.
 
 ## Status
-- [x] PH5-001 lady-ai crate + AiProvider trait + task model
-- [x] PH5-002 BYOK key management + consent + per-repo toggle
-- [x] PH5-003 Local Ollama provider (private path)
-- [x] PH5-004 Remote providers (OpenAI, Anthropic, Gemini, Azure, Mistral)
-- [x] PH5-005 Context builder + token budgeting + secret redaction
-- [x] PH5-006 AI commit message generation
-- [x] PH5-007 Commit Composer (split into logical commits)
-- [x] PH5-008 Explain (commit / branch / stash / working changes)
-- [x] PH5-009 AI conflict resolution (review-gated)
-- [x] PH5-010 AI PR title/description, changelog, stash notes
-- [x] PH5-011 MCP server (lady-mcp) exposing repo context
-- [~] PH5-012 Semantic commit search (stretch) — DEFERRED (explicitly optional)
-- [x] PH5-013 Phase 5 AI parity exit gate
+- [x] PH6-001 Performance benchmarks + budgets
+- [x] PH6-002 Large-repo performance passes
+- [ ] PH6-003 Accessibility pass
+- [ ] PH6-004 Theming polish
+- [ ] PH6-005 Packaging — macOS (.dmg/.app, notarized)
+- [ ] PH6-006 Packaging — Windows (.msi/NSIS, Authenticode)
+- [ ] PH6-007 Packaging — Linux (AppImage + Flatpak)
+- [ ] PH6-008 Auto-update (Tauri updater + signed manifests)
+- [ ] PH6-009 Documentation + release notes
+- [ ] PH6-010 Release CI pipeline
+- [ ] PH6-011 Phase 6 GA exit gate (v1.3.0 ship)
 
 ## Notes (as stories land)
-- PH5-001/003/004/005: lady-ai crate. AiProvider trait (async, streaming via
-  StreamSink + cooperative CancelToken), AiRequest/AiResponse/AiTask, ProviderKind
-  registry + AiConfig (serde, per-task model selection). Providers: Ollama (ndjson,
-  no consent gate, friendly "not running" message), OpenAI/Mistral/Azure (shared
-  OpenAI-style chat SSE), Anthropic (Messages SSE), Gemini (streamGenerateContent
-  ?alt=sse) — all wiremock-tested, no live calls. context.rs: commit-style detection
-  (Conventional Commits), tiktoken-rs token counting, deterministic byte/token
-  budgeting (truncation + omission note; map-reduce summarization is a documented
-  follow-up), MANDATORY regex+entropy secret redaction (best-effort per ADR-0009).
-  prompts.rs: per-task prompt assembly + Commit Composer plan parse/validate. deny
-  clean (tiktoken-rs/regex/fancy-regex permissive, no allow-list change needed).
-- PH5-002/006-010 (backend): src-tauri/ai.rs — AiState (keychain "Lady-AI" via
-  lady-hosting TokenStore + cancel-token map); complete_guarded centralizes the
-  consent gate + redaction. Commands cover config/keys/consent/per-repo toggle,
-  commit message, composer (compose+apply, apply path unit-tested → N commits),
-  explain (commit/range/stash/working), conflict (review-gated), PR title/desc,
-  changelog, stash note. Range/stash use system-git via run_custom.
-- PH5-002/006-010 (UI): ui/ai.ts (runAiStream over the ai-stream event + cancel);
-  AiSettings (provider/keys/consent/Ollama models/Azure/per-repo toggle),
-  ChangesView ✨ Generate message + stash note, new ✨ AI tab (Composer/Explain/
-  Changelog), ConflictResolver ✨ Auto-resolve (suggestion panel, apply-on-click),
-  RefsView create-PR ✨ title/description. npm build green.
-- PH5-011: crates/lady-mcp — read-only rmcp server (get_status/get_diff/get_log/
-  get_file_at/blame/search_commits) over lady-git + new engine file_at/
-  search_commits. lib + `lady-mcp <repo>` stdio binary for external assistants
-  (enable/disable + exposed repo via the client's MCP config; no mutating tools).
-  Smoke test: in-memory client (join!'d server+client over a tokio duplex, 20s
-  timeout) lists the 6 tools + get_log returns fixture commits. deny: ignored
-  RUSTSEC-2024-0436 (paste, compile-time-only, transitive via rmcp), licenses ok.
-
-## Manual window checks (Phase 5)
-- AI Settings: provider select, key save/clear, consent checkbox, per-repo toggle,
-  Ollama "List models" (needs Ollama running), Azure endpoint/deployment fields.
-- Generate commit message (commit box), stash note, Composer (propose/edit/apply),
-  Explain + Regenerate, Changelog, Conflict ✨ Auto-resolve, PR ✨ title/description.
-  All need a configured provider; remote needs consent. (Build + typecheck green.)
-- PH5-012 (semantic commit search): DEFERRED. The marked optional stretch; the
-  PRD allows slipping it without blocking the Phase 5 exit. A literal
-  `search_commits` (message grep) already ships via lady-mcp + the engine;
-  embedding-based semantic ranking (vector store + incremental index) is a
-  Fast-follow/Phase 6 candidate.
-- PH5-013 (exit gate): RELEASE-CHECKLIST.md updated with the AI feature table
-  (PH5-001..011 ticked, PH5-012 deferred) + the verified privacy posture. Version
-  bumped to 1.2.0 across all crates + tauri.conf.json + ui/package.json. Whole
-  workspace green: fmt/clippy -D warnings/test/deny + npm build. GitKraken Git AI
-  parity reached (commit messages, Composer, explain, AI conflict resolution, PR
-  title/description, changelog, stash notes, MCP server) + the local-first Ollama
-  path + explicit opt-in. Next: Phase 6 polish & ship.
+- PH6-001/002: new dev-only `lady-fixtures` crate — seeded, offline synthetic
+  generators (xorshift64, no rand): synthetic_commits (graph), synthetic_text
+  (diff), build_synthetic_repo (real repo via system git for log-walk + status).
+  criterion benches (default-features off, cargo_bench_support only → deny stays
+  clean): lady-graph/benches/layout.rs, lady-diff/benches/diff.rs,
+  lady-git/benches/repo_ops.rs. `[lib] bench = false` on the three so `cargo
+  bench` runs only criterion targets (libtest rejects --quick). CI `bench` job
+  compiles + runs --quick (non-gating). docs/PERF.md records budgets + measured
+  numbers (dev machine, Apple Silicon): graph_layout 100→14µs / 10k→1.37ms;
+  text_diff 500→44µs / 20k→2.0ms; walk_log/512→22ms; status→11ms — all inside
+  the §8.9 budgets (60fps frame, <100ms warm refresh, <1s cold open). PH6-002:
+  verified incremental layout (layout_continuation + ActiveLanes), virtualized
+  rows (GraphView/CommitList visibleSlice window) and paged walk_log
+  (WalkLogQuery limit/start, walk_log_graph carries lane state) — no budget
+  misses, no optimization required. Residual: walk_log is linear in limit; UI
+  keeps paging. Whole gate green (fmt/clippy/test/deny).

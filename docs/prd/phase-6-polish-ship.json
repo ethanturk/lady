@@ -14,7 +14,7 @@
         "Results recorded in docs (a short PERF.md or a section) with the measured numbers on the dev machine"
       ],
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §8.9, §10 perf. Establish the measurement before optimizing (PH6-002). Use a seeded synthetic-repo generator in a dev-dependency/test helper so benches are reproducible and offline."
     },
     {
@@ -28,7 +28,7 @@
         "Manual window check on a large repo (e.g. a clone of a big OSS repo): scroll, refresh, open diffs"
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §8.1/§8.9. Mostly verification + targeted fixes — much of this is already incremental from Phase 1. Only optimize what the benches show is over budget."
     },
     {

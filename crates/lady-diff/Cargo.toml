@@ -8,3 +8,15 @@ publish.workspace = true
 [dependencies]
 imara-diff = "0.1"
 lady-proto = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+lady-fixtures = { workspace = true }
+
+# Don't run the lib's unit tests under `cargo bench` (see lady-graph).
+[lib]
+bench = false
+
+[[bench]]
+name = "diff"
+harness = false

@@ -7,3 +7,16 @@ publish.workspace = true
 
 [dependencies]
 lady-proto = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+lady-fixtures = { workspace = true }
+
+# Don't run the lib's unit tests under `cargo bench` — only the criterion
+# benches below (the libtest harness rejects criterion's `--quick` flag).
+[lib]
+bench = false
+
+[[bench]]
+name = "layout"
+harness = false
