@@ -1,7 +1,7 @@
 {
   "project": "Lady",
   "branchName": "ralph/phase-0-foundations",
-  "description": "Phase 0 \u2014 Foundations (per PLAN.md \u00a79). Cargo workspace + CI with cargo-deny license gate (ADR-0004), shared proto types, GitEngine trait, and a gix-backed read engine that can open a repo, list refs, and walk the log to a flat list. EXIT: a small bin prints a repo's refs + first N commits end-to-end, all quality gates green on macOS/Windows/Linux CI. No UI, no mutations, no AI in this PRD. Each story is one context-window-sized commit.",
+  "description": "Phase 0 — Foundations (per PLAN.md §9). Cargo workspace + CI with cargo-deny license gate (ADR-0004), shared proto types, GitEngine trait, and a gix-backed read engine that can open a repo, list refs, and walk the log to a flat list. EXIT: a small bin prints a repo's refs + first N commits end-to-end, all quality gates green on macOS/Windows/Linux CI. No UI, no mutations, no AI in this PRD. Each story is one context-window-sized commit.",
   "userStories": [
     {
       "id": "US-001",
@@ -17,7 +17,7 @@
       ],
       "priority": 1,
       "passes": true,
-      "notes": "Greenfield repo. Keep crate names per PLAN.md \u00a74 (lady-*). Add further workspace members in the story that first needs each crate, not all up front."
+      "notes": "Greenfield repo. Keep crate names per PLAN.md §4 (lady-*). Add further workspace members in the story that first needs each crate, not all up front."
     },
     {
       "id": "US-002",
@@ -32,7 +32,7 @@
       ],
       "priority": 2,
       "passes": true,
-      "notes": "Cannot run GitHub Actions locally in the loop; validate YAML syntax and that the same commands pass locally. PLAN.md \u00a710."
+      "notes": "Cannot run GitHub Actions locally in the loop; validate YAML syntax and that the same commands pass locally. PLAN.md §10."
     },
     {
       "id": "US-003",
@@ -62,7 +62,7 @@
       ],
       "priority": 4,
       "passes": true,
-      "notes": "PLAN.md \u00a74.1 + \u00a72.3. Keep zero git-library deps in lady-proto \u2014 it is the pure contract crate."
+      "notes": "PLAN.md §4.1 + §2.3. Keep zero git-library deps in lady-proto — it is the pure contract crate."
     },
     {
       "id": "US-005",
@@ -76,8 +76,8 @@
         "Crate compiles with method bodies as todo!() or unimplemented!(); clippy -D warnings clean; fmt clean"
       ],
       "priority": 5,
-      "passes": false,
-      "notes": "PLAN.md \u00a74.1. Trait only \u2014 no impl yet. gix is wired in US-006."
+      "passes": true,
+      "notes": "PLAN.md §4.1. Trait only — no impl yet. gix is wired in US-006."
     },
     {
       "id": "US-006",
@@ -86,7 +86,7 @@
       "acceptanceCriteria": [
         "Add a GixEngine struct in lady-git implementing GitEngine, backed by the gix crate",
         "open(path) opens an existing git repo via gix and returns a RepoId; errors cleanly on a non-repo path",
-        "A test helper creates a throwaway repo in a tempdir (tempfile crate) with 2-3 commits using the system git CLI (std::process::Command \u2014 system git is required per ADR-0003)",
+        "A test helper creates a throwaway repo in a tempdir (tempfile crate) with 2-3 commits using the system git CLI (std::process::Command — system git is required per ADR-0003)",
         "Unit test: open() succeeds on the fixture and returns Err on an empty tempdir",
         "cargo deny check still passes with gix added; cargo test passes; clippy -D warnings clean; fmt clean"
       ],
@@ -106,7 +106,7 @@
       ],
       "priority": 7,
       "passes": false,
-      "notes": "Reuse the US-006 fixture helper. PLAN.md \u00a74.1."
+      "notes": "Reuse the US-006 fixture helper. PLAN.md §4.1."
     },
     {
       "id": "US-008",
@@ -121,7 +121,7 @@
       ],
       "priority": 8,
       "passes": false,
-      "notes": "Phase 0 EXIT per PLAN.md \u00a79: open a repo, list refs, walk log to a flat list. After this PRD, start a new PRD with branchName ralph/phase-1-read-only for the graph/diff/blame UI."
+      "notes": "Phase 0 EXIT per PLAN.md §9: open a repo, list refs, walk log to a flat list. After this PRD, start a new PRD with branchName ralph/phase-1-read-only for the graph/diff/blame UI."
     }
   ]
 }

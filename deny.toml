@@ -56,6 +56,9 @@ ignore = []
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# Internal workspace crates are referenced by `{ path = ... }` with no version,
+# which reads as a wildcard. These are first-party, not registry deps — allow them.
+allow-wildcard-paths = true
 allow = []
 deny = []
 

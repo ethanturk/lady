@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/lady-proto"]
+members = ["crates/lady-proto", "crates/lady-git"]
 
 [workspace.package]
 edition = "2021"
@@ -10,3 +10,5 @@ publish = false
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+thiserror = "2"
+lady-proto = { path = "crates/lady-proto" }

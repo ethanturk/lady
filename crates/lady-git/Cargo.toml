@@ -1,0 +1,11 @@
+[package]
+name = "lady-git"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Git engine abstraction (GitEngine trait) over read backends (gix/git2/shell)."
+
+[dependencies]
+lady-proto = { workspace = true }
+thiserror = { workspace = true }
