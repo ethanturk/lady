@@ -1,0 +1,175 @@
+{
+  "project": "Lady",
+  "branchName": "ralph/phase-1-read-only",
+  "description": "Phase 1 \u2014 Read-only foundation (PLAN.md \u00a79; ADR-0001 Tauri, ADR-0005 canvas graph, ADR-0010 SolidJS). Adds the Tauri v2 desktop shell + SolidJS/TS/Vite frontend and the read-only views: open repo, refs, virtualized commit list, commit-graph canvas, diff viewer, blame, file history, repository manager, command palette. EXIT: browse any repo's read views in a real window as well as Fork's. No mutations, no AI. Branches from main (which has Phase 0). Each story = one context-window commit. UI stories rely on build + typecheck + unit tests for loop verification; a manual window check is noted in progress.txt since Tauri windows cannot be verified headless in the loop.",
+  "userStories": [
+    {
+      "id": "PH1-001",
+      "title": "Add Tauri v2 shell + SolidJS/TS/Vite frontend",
+      "description": "As a user, I need a desktop window so Lady has a GUI.",
+      "acceptanceCriteria": [
+        "Add src-tauri/ (Tauri v2 app crate) + ui/ (SolidJS + TypeScript + Vite) per ADR-0001/ADR-0010; the cargo workspace still builds",
+        "tauri.conf.json: app name 'Lady', 1200x800 window, frontendDist -> ui build output, devUrl -> vite dev server",
+        "`npm install` in ui/ then `cargo tauri build` succeeds and launches a window with a placeholder view",
+        "ui/node_modules, ui/dist, src-tauri/target stay git-ignored",
+        "cargo fmt/clippy -D warnings/build clean; cargo deny check passes (Tauri deps are MIT/Apache); npm run build (tsc + vite) passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Prereqs verified present: node v22, npm 10.9, cargo-tauri. ADR-0001, ADR-0010."
+    },
+    {
+      "id": "PH1-002",
+      "title": "Rust<->web command bridge (app_info)",
+      "description": "As a developer, I need the invoke bridge working so the frontend can call Rust.",
+      "acceptanceCriteria": [
+        "#[tauri::command] app_info() -> { name, version } registered in src-tauri",
+        "ui invokes app_info on mount via @tauri-apps/api and renders the result",
+        "A TS type mirrors the app_info payload",
+        "App launches and shows app_info; cargo + npm run build green; clippy -D warnings clean"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Proves the command/event bridge before wiring real data."
+    },
+    {
+      "id": "PH1-003",
+      "title": "open_repo + list_refs commands -> refs view",
+      "description": "As a user, I want to open a repo and see its branches, tags, and HEAD.",
+      "acceptanceCriteria": [
+        "Tauri commands open_repo(path) -> RepoId and list_refs(repo) -> Vec<RefInfo> delegate to lady-git GixEngine",
+        "lady-proto types serialize across the bridge; TS types mirror RefInfo/RefKind",
+        "ui: a path input opens a repo and renders refs grouped (branches / tags / remotes / HEAD)",
+        "Works on the Lady repo; a unit test covers the command layer; cargo + npm run build green; cargo deny passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Reuses lady-git from Phase 0 (ADR-0003)."
+    },
+    {
+      "id": "PH1-004",
+      "title": "walk_log command -> virtualized commit list",
+      "description": "As a user, I want a scrollable list of commits that stays fast on huge repos.",
+      "acceptanceCriteria": [
+        "Command walk_log(repo, { start, limit }) -> Vec<CommitMeta>, paged",
+        "ui renders a virtualized/windowed commit list (short oid + summary + author + relative time); only visible rows in the DOM",
+        "Incremental load on scroll; a large repo (e.g. this one or a synthetic one) scrolls without freezing",
+        "Command logic unit-tested; cargo + npm run build green; cargo deny passes"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "Virtualization per PLAN.md \u00a76 \u2014 never materialize whole history."
+    },
+    {
+      "id": "PH1-005",
+      "title": "lady-graph crate: commit-graph lane layout",
+      "description": "As a developer, I need lane assignment + edge routing so the graph can be drawn.",
+      "acceptanceCriteria": [
+        "New crate crates/lady-graph (workspace member) depending on lady-proto",
+        "fn layout(commits: &[CommitMeta]) -> Vec<GraphRow { oid, lane, edges, refs }> assigns lanes and routes parent/child edges",
+        "Correct for linear history, branch, two-parent merge, and octopus merge; stable/deterministic given the same input",
+        "Unit tests (insta snapshots or explicit asserts) cover each case; cargo test/clippy -D warnings/fmt green; cargo deny passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "PLAN.md \u00a76 hard part \u2014 pure logic, no UI. Build incrementally; keep it streamable."
+    },
+    {
+      "id": "PH1-006",
+      "title": "Commit-graph canvas render (hybrid)",
+      "description": "As a user, I want to see the commit DAG drawn next to the commit list.",
+      "acceptanceCriteria": [
+        "A data path feeds GraphRow to the frontend (command or extension of walk_log)",
+        "Canvas 2D draws lanes + edges; commit row text/refs render as aligned virtualized DOM (hybrid per ADR-0005)",
+        "devicePixelRatio handled (sharp on retina); theme color tokens passed into draw calls; canvas + DOM rows scroll in sync",
+        "Renders the Lady repo's graph in the window; npm run build + cargo build green; cargo deny passes",
+        "Manual window verification noted in progress.txt (cannot verify headless)"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": "ADR-0005 \u2014 signature view; render-target kept swappable behind the row-data interface."
+    },
+    {
+      "id": "PH1-007",
+      "title": "lady-diff crate + diff command",
+      "description": "As a developer, I need a diff engine so the UI can show changes.",
+      "acceptanceCriteria": [
+        "New crate crates/lady-diff using imara-diff; produces FileDiff (hunks, lines, change kind) for a commit (or working file) vs its parent",
+        "Handles add / delete / modify / binary; image files flagged as image (no text diff)",
+        "Tauri command diff(repo, spec) -> FileDiff",
+        "Unit tests on the hunk model; cargo test/clippy/fmt green; cargo deny passes (imara-diff is Apache-2.0)"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": "PLAN.md \u00a74 lady-diff. Partial-staging patch builder is NOT in scope here (Phase 2)."
+    },
+    {
+      "id": "PH1-008",
+      "title": "Diff viewer UI + syntax highlighting",
+      "description": "As a user, I want to read diffs clearly with highlighting.",
+      "acceptanceCriteria": [
+        "ui renders FileDiff with side-by-side AND unified modes (toggle)",
+        "Syntax highlighting for common languages (tree-sitter wasm or a JS highlighter); image diffs show both images",
+        "Added/removed/context lines styled; large diffs virtualized",
+        "npm run build + cargo build green; manual window verification noted in progress.txt"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": "PLAN.md \u00a71 diff viewer (side-by-side, syntax, image diff)."
+    },
+    {
+      "id": "PH1-009",
+      "title": "Blame command + blame view",
+      "description": "As a user, I want to see who last changed each line.",
+      "acceptanceCriteria": [
+        "Command blame(repo, path, at) -> Blame (per-line last commit) via lady-git/gix",
+        "ui blame view: each line shows a gutter with short oid + author + date",
+        "Unit test on the blame mapping; cargo + npm run build green; cargo deny passes"
+      ],
+      "priority": 9,
+      "passes": true,
+      "notes": "PLAN.md \u00a71 blame."
+    },
+    {
+      "id": "PH1-010",
+      "title": "File history command + view",
+      "description": "As a user, I want to see the commits that touched a file.",
+      "acceptanceCriteria": [
+        "Command file_history(repo, path) -> Vec<CommitMeta> (commits affecting the path)",
+        "ui: pick a file -> list its history; click a commit -> show that commit's diff for the file (reuses the diff viewer)",
+        "Command logic unit-tested; cargo + npm run build green"
+      ],
+      "priority": 10,
+      "passes": true,
+      "notes": "PLAN.md \u00a71 file history."
+    },
+    {
+      "id": "PH1-011",
+      "title": "Repository manager (open/clone/add, recent, tabs)",
+      "description": "As a user, I want to manage and switch between repositories.",
+      "acceptanceCriteria": [
+        "ui repository manager: open existing, clone (shell-out `git clone` with progress per ADR-0003), add, and a recent-repos list",
+        "Multiple repos in tabs with custom groups; a star indicator on a tab when its repo has uncommitted changes (status check)",
+        "Recent repos + groups persisted to settings (TOML in the platform config dir via the directories crate)",
+        "cargo + npm run build green; cargo deny passes"
+      ],
+      "priority": 11,
+      "passes": true,
+      "notes": "PLAN.md \u00a71 repository manager. Clone uses shell-out git (ADR-0003)."
+    },
+    {
+      "id": "PH1-012",
+      "title": "Command palette (fuzzy quick launch)",
+      "description": "As a user, I want a keyboard palette to jump to actions, branches, and files.",
+      "acceptanceCriteria": [
+        "ui command palette opens on Cmd/Ctrl+P with fuzzy search (nucleo in Rust via a command, or a TS fuzzy lib) over actions, branches, and files",
+        "Selecting an entry runs the action or navigates to the branch/file; fully keyboard-driven",
+        "cargo + npm run build green",
+        "PHASE 1 EXIT: the window browses a repo's graph, diffs, blame, history, and repos as well as Fork's read views \u2014 note this in progress.txt"
+      ],
+      "priority": 12,
+      "passes": true,
+      "notes": "PLAN.md \u00a71 Quick Launch / command palette. After this PRD, the next is a Phase 2 write-ops PRD (new branchName ralph/phase-2-write-ops)."
+    }
+  ]
+}
