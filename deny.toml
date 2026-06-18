@@ -29,6 +29,10 @@ allow = [
     # The LLVM exception is a permissive carve-out for LLVM-compiled code.
     # This does NOT weaken our commercial/closed-source posture. ADR-0004.
     "Apache-2.0 WITH LLVM-exception",
+    # webpki-roots (rustls trust anchors = Mozilla CA bundle, via reqwest/rustls
+    # in lady-hosting). CDLA-Permissive-2.0 is a permissive data license with no
+    # copyleft on our code. ADR-0004 / ADR-0006 (hosting over rustls).
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.8
 

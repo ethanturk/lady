@@ -391,6 +391,10 @@ pub trait GitEngine: Send + Sync {
     /// Launch the user's configured external merge tool (`merge.tool`) on a
     /// conflicted `path` (PH3-010).
     fn launch_mergetool(&self, repo: &RepoId, path: &str) -> Result<()>;
+
+    /// The repository's remote fetch URLs (deduped), for forge detection
+    /// (PH3-011).
+    fn list_remote_urls(&self, repo: &RepoId) -> Result<Vec<String>>;
 }
 
 /// A [`GitEngine`] backed by [`gix`] for read-only access (ADR-0003).
@@ -1799,6 +1803,27 @@ exit 0\n";
         // merge.tool is honored automatically; `--no-prompt` avoids the
         // "Hit return to start tool" prompt.
         run_git(&wd, &["mergetool", "--no-prompt", path]).map(|_| ())
+    }
+
+    fn list_remote_urls(&self, repo: &RepoId) -> Result<Vec<String>> {
+        let wd = self.workdir(repo)?;
+        // `remote.<name>.url` config entries → the fetch URLs. `--get-regexp`
+        // exits non-zero when there are no matches; treat that as "no remotes".
+        let out = run_git_raw(&wd, &["config", "--get-regexp", r"^remote\..*\.url$"])?;
+        if !out.status.success() {
+            return Ok(Vec::new());
+        }
+        let mut urls = Vec::new();
+        for line in String::from_utf8_lossy(&out.stdout).lines() {
+            // "remote.origin.url <url>" → take the value after the first space.
+            if let Some((_, url)) = line.split_once(' ') {
+                let url = url.trim().to_string();
+                if !url.is_empty() && !urls.contains(&url) {
+                    urls.push(url);
+                }
+            }
+        }
+        Ok(urls)
     }
 }
 

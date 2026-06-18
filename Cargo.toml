@@ -6,6 +6,7 @@ members = [
     "crates/lady-cli",
     "crates/lady-graph",
     "crates/lady-diff",
+    "crates/lady-hosting",
     "src-tauri",
 ]
 
@@ -32,4 +33,12 @@ lady-proto = { path = "crates/lady-proto" }
 lady-git = { path = "crates/lady-git" }
 lady-graph = { path = "crates/lady-graph" }
 lady-diff = { path = "crates/lady-diff" }
+lady-hosting = { path = "crates/lady-hosting" }
 base64 = "0.22"
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "rustls-tls",
+] }
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+wiremock = "0.6"

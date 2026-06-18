@@ -190,6 +190,18 @@ export interface RebaseStep {
 /** Mirrors lady_proto::SignatureStatus. */
 export type SignatureStatus = "Good" | "Bad" | "Untrusted" | "None";
 
+/** Mirrors lady_hosting::RepoSlug. */
+export interface RepoSlug {
+  owner: string;
+  repo: string;
+}
+
+/** Mirrors the GithubStatus DTO. */
+export interface GithubStatus {
+  connected: boolean;
+  login: string | null;
+}
+
 /** Mirrors lady_proto::Worktree. */
 export interface Worktree {
   path: string;

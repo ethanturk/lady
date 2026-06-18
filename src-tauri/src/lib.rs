@@ -952,9 +952,104 @@ fn save_settings(settings: Settings) -> Result<(), String> {
     std::fs::write(&path, body).map_err(|e| e.to_string())
 }
 
+// ── Hosting (GitHub) — PH3-011 / PH3-012 ────────────────────────────────────────
+
+/// Keychain key under which the GitHub hosting-API token is stored (ADR-0006).
+const GITHUB_TOKEN_KEY: &str = "github-token";
+
+/// Managed hosting state: a GitHub client + the OS-keychain token store.
+pub struct Hosting {
+    store: Box<dyn lady_hosting::TokenStore>,
+    client: lady_hosting::GitHubClient,
+}
+
+/// Connection status for the GitHub account (no token is ever returned).
+#[derive(Serialize)]
+pub struct GithubStatus {
+    pub connected: bool,
+    pub login: Option<String>,
+}
+
+/// Authenticate with GitHub using a personal access token: validate it via
+/// `GET /user`, store it in the keychain, and return the login. The token is
+/// never written to disk or logs (ADR-0006).
+#[tauri::command]
+async fn github_auth_start(
+    token: String,
+    hosting: State<'_, Hosting>,
+) -> Result<GithubStatus, String> {
+    let user = hosting
+        .client
+        .get_user(&token)
+        .await
+        .map_err(|e| e.to_string())?;
+    hosting
+        .store
+        .set(GITHUB_TOKEN_KEY, &token)
+        .map_err(|e| e.to_string())?;
+    Ok(GithubStatus {
+        connected: true,
+        login: Some(user.login),
+    })
+}
+
+/// Whether a GitHub token is stored, and the login it resolves to.
+#[tauri::command]
+async fn github_auth_status(hosting: State<'_, Hosting>) -> Result<GithubStatus, String> {
+    let token = hosting
+        .store
+        .get(GITHUB_TOKEN_KEY)
+        .map_err(|e| e.to_string())?;
+    let Some(token) = token else {
+        return Ok(GithubStatus {
+            connected: false,
+            login: None,
+        });
+    };
+    // Best-effort: confirm validity + fetch the login.
+    match hosting.client.get_user(&token).await {
+        Ok(user) => Ok(GithubStatus {
+            connected: true,
+            login: Some(user.login),
+        }),
+        Err(lady_hosting::Error::Unauthorized) => Ok(GithubStatus {
+            connected: false,
+            login: None,
+        }),
+        // Network hiccup — a token exists but we couldn't verify it now.
+        Err(_) => Ok(GithubStatus {
+            connected: true,
+            login: None,
+        }),
+    }
+}
+
+/// Forget the stored GitHub token.
+#[tauri::command]
+async fn github_sign_out(hosting: State<'_, Hosting>) -> Result<(), String> {
+    hosting
+        .store
+        .delete(GITHUB_TOKEN_KEY)
+        .map_err(|e| e.to_string())
+}
+
+/// Detect the GitHub repo (owner/name) from the repo's remotes, if any.
+#[tauri::command]
+fn github_detect(
+    repo: RepoId,
+    engine: State<GixEngine>,
+) -> Result<Option<lady_hosting::RepoSlug>, String> {
+    let urls = engine.list_remote_urls(&repo).map_err(|e| e.to_string())?;
+    Ok(lady_hosting::detect_github_slug(&urls))
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(GixEngine::new())
+        .manage(Hosting {
+            store: Box::new(lady_hosting::KeyringStore::new("Lady-GitHub")),
+            client: lady_hosting::GitHubClient::new(),
+        })
         .invoke_handler(tauri::generate_handler![
             app_info,
             open_repo,
@@ -1026,6 +1121,10 @@ pub fn run() {
             run_custom_command,
             launch_difftool,
             launch_mergetool,
+            github_auth_start,
+            github_auth_status,
+            github_sign_out,
+            github_detect,
             clone_repo,
             load_settings,
             save_settings
