@@ -509,6 +509,12 @@ impl GixEngine {
             .ok_or_else(|| Error::Git("repository has no worktree (bare)".to_string()))
     }
 
+    /// The repository's working-directory path (public accessor for hosts that
+    /// key per-repo state by path, e.g. the AI per-repo toggle, PH5-002).
+    pub fn workdir_path(&self, id: &RepoId) -> Result<PathBuf> {
+        self.workdir(id)
+    }
+
     /// Map a rebase process result + the post-run repo state to a
     /// [`RebaseOutcome`]: completed, stopped on conflict, stopped for an `edit`
     /// step, or a hard error (git's message surfaced).

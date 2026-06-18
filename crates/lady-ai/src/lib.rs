@@ -375,6 +375,35 @@ fn require_key(kind: ProviderKind, api_key: Option<String>) -> Result<String> {
         .ok_or_else(|| Error::NoKey(kind.label().to_string()))
 }
 
+/// Trust-critical entry point (ADR-0009): run `req` against `provider` of
+/// `kind`, enforcing the consent gate and the secret-redaction pass before any
+/// **remote** send. The gate is checked here so every feature flows through the
+/// same place — no remote call can bypass consent.
+///
+/// - Remote provider without recorded consent → [`Error::ConsentRequired`]
+///   (nothing is sent).
+/// - Remote provider with consent → `system`/`prompt` are redacted in place,
+///   then sent.
+/// - Local provider → sent as-is (no consent, no mandatory redaction).
+pub async fn complete_guarded(
+    provider: &dyn AiProvider,
+    kind: ProviderKind,
+    cfg: &AiConfig,
+    mut req: AiRequest,
+    sink: &mut StreamSink<'_>,
+) -> Result<AiResponse> {
+    if kind.is_remote() {
+        if !cfg.has_consent(kind) {
+            return Err(Error::ConsentRequired(kind.label().to_string()));
+        }
+        let (system, _) = context::redact(&req.system);
+        let (prompt, _) = context::redact(&req.prompt);
+        req.system = system;
+        req.prompt = prompt;
+    }
+    provider.complete(&req, sink).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -461,6 +490,94 @@ mod tests {
             .insert(AiTask::CommitMessage.id().to_string(), "o1".to_string());
         assert_eq!(cfg.model_for(AiTask::CommitMessage), "o1");
         assert_eq!(cfg.model_for(AiTask::Explain), "gpt-4o");
+    }
+
+    #[tokio::test]
+    async fn guard_blocks_remote_until_consented() {
+        let p = FakeProvider {
+            canned: "ok".into(),
+            remote: true,
+        };
+        let cfg = AiConfig::default();
+        let mut cb = |_d: &str| {};
+        let mut sink = StreamSink::new(&mut cb, CancelToken::new());
+        // No consent → blocked, nothing sent.
+        let err = complete_guarded(
+            &p,
+            ProviderKind::OpenAi,
+            &cfg,
+            AiRequest::new(AiTask::CommitMessage, "m"),
+            &mut sink,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, Error::ConsentRequired(_)));
+
+        // After consent → allowed.
+        let cfg = AiConfig {
+            consented: vec![ProviderKind::OpenAi],
+            ..Default::default()
+        };
+        let mut cb = |_d: &str| {};
+        let mut sink = StreamSink::new(&mut cb, CancelToken::new());
+        let resp = complete_guarded(
+            &p,
+            ProviderKind::OpenAi,
+            &cfg,
+            AiRequest::new(AiTask::CommitMessage, "m"),
+            &mut sink,
+        )
+        .await
+        .expect("allowed after consent");
+        assert_eq!(resp.text, "ok");
+    }
+
+    #[tokio::test]
+    async fn guard_redacts_before_remote_send() {
+        // A provider that records exactly what it received.
+        struct Recorder {
+            seen: std::sync::Mutex<String>,
+        }
+        #[async_trait::async_trait]
+        impl AiProvider for Recorder {
+            fn id(&self) -> &str {
+                "rec"
+            }
+            fn context_window(&self) -> usize {
+                8192
+            }
+            fn is_remote(&self) -> bool {
+                true
+            }
+            async fn complete(
+                &self,
+                req: &AiRequest,
+                _sink: &mut StreamSink<'_>,
+            ) -> Result<AiResponse> {
+                *self.seen.lock().unwrap() = req.prompt.clone();
+                Ok(AiResponse::default())
+            }
+        }
+        let rec = Recorder {
+            seen: std::sync::Mutex::new(String::new()),
+        };
+        let cfg = AiConfig {
+            consented: vec![ProviderKind::OpenAi],
+            ..Default::default()
+        };
+        let mut req = AiRequest::new(AiTask::CommitMessage, "m");
+        req.prompt = "key sk-abcdefghijklmnopqrstuvwxyz123456 end".into();
+        let mut cb = |_d: &str| {};
+        let mut sink = StreamSink::new(&mut cb, CancelToken::new());
+        complete_guarded(&rec, ProviderKind::OpenAi, &cfg, req, &mut sink)
+            .await
+            .expect("ok");
+        let seen = rec.seen.lock().unwrap().clone();
+        assert!(
+            !seen.contains("sk-abcdefghij"),
+            "secret reached provider: {seen}"
+        );
+        assert!(seen.contains("[REDACTED]"));
     }
 
     #[test]

@@ -26,6 +26,7 @@ lady-graph = { workspace = true }
 lady-diff = { workspace = true }
 lady-hosting = { workspace = true }
 lady-license = { workspace = true }
+lady-ai = { workspace = true }
 directories = { workspace = true }
 toml = { workspace = true }
 

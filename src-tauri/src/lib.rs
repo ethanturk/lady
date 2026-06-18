@@ -7,6 +7,8 @@ use lady_proto::{
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+mod ai;
+
 #[derive(Serialize)]
 pub struct AppInfo {
     pub name: String,
@@ -1029,6 +1031,13 @@ pub struct Settings {
     pub custom_commands: Vec<lady_proto::CustomCommand>,
     #[serde(default)]
     pub license: Option<String>,
+    /// AI configuration (provider, models, consent) — keys live in the keychain,
+    /// never here (ADR-0008). Owned by the `ai_*` commands.
+    #[serde(default)]
+    pub ai: lady_ai::AiConfig,
+    /// Absolute repo paths with AI explicitly enabled. Default off (ADR-0009).
+    #[serde(default)]
+    pub ai_repos: Vec<String>,
 }
 
 /// Path to `settings.toml` in the platform config dir (via `directories`).
@@ -1038,8 +1047,7 @@ fn settings_file() -> Result<std::path::PathBuf, String> {
     Ok(dirs.config_dir().join("settings.toml"))
 }
 
-#[tauri::command]
-fn load_settings_inner() -> Settings {
+pub(crate) fn load_settings_inner() -> Settings {
     settings_file()
         .ok()
         .and_then(|p| std::fs::read_to_string(p).ok())
@@ -1047,7 +1055,7 @@ fn load_settings_inner() -> Settings {
         .unwrap_or_default()
 }
 
-fn write_settings(settings: &Settings) -> Result<(), String> {
+pub(crate) fn write_settings(settings: &Settings) -> Result<(), String> {
     let path = settings_file()?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -1063,9 +1071,13 @@ fn load_settings() -> Result<Settings, String> {
 
 #[tauri::command]
 fn save_settings(mut settings: Settings) -> Result<(), String> {
-    // The license is owned by the licensing commands; preserve whatever is on
-    // disk so a recents/commands save can never clobber it (ADR-0007).
-    settings.license = load_settings_inner().license;
+    // The license is owned by the licensing commands and the AI config/toggle by
+    // the ai_* commands; preserve whatever is on disk so a recents/commands save
+    // can never clobber them (ADR-0007/0008/0009).
+    let on_disk = load_settings_inner();
+    settings.license = on_disk.license;
+    settings.ai = on_disk.ai;
+    settings.ai_repos = on_disk.ai_repos;
     write_settings(&settings)
 }
 
@@ -1416,6 +1428,7 @@ pub fn run() {
             store: Box::new(lady_hosting::KeyringStore::new("Lady-Hosting")),
             self_hosted: Vec::new(),
         })
+        .manage(ai::AiState::new())
         .invoke_handler(tauri::generate_handler![
             app_info,
             open_repo,
@@ -1511,7 +1524,27 @@ pub fn run() {
             license_activate,
             clone_repo,
             load_settings,
-            save_settings
+            save_settings,
+            ai::ai_get_config,
+            ai::ai_set_config,
+            ai::ai_set_key,
+            ai::ai_delete_key,
+            ai::ai_has_key,
+            ai::ai_grant_consent,
+            ai::ai_revoke_consent,
+            ai::ai_set_repo_enabled,
+            ai::ai_repo_enabled,
+            ai::ai_ollama_models,
+            ai::ai_cancel,
+            ai::ai_commit_message,
+            ai::ai_compose_commits,
+            ai::ai_apply_commit_plan,
+            ai::ai_explain,
+            ai::ai_resolve_conflict,
+            ai::ai_pr_title,
+            ai::ai_pr_description,
+            ai::ai_changelog,
+            ai::ai_stash_note
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

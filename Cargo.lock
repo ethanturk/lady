@@ -2889,6 +2889,7 @@ name = "lady-app"
 version = "1.1.0"
 dependencies = [
  "directories",
+ "lady-ai",
  "lady-diff",
  "lady-git",
  "lady-graph",
