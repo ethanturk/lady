@@ -1,14 +1,17 @@
-import { createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, Show } from "solid-js";
 import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import type {
   FfMode,
+  ForgeKind,
+  HostingInfo,
   MergeOutcome,
   RebaseOutcome,
   RefInfo,
   RefKind,
   RepoId,
 } from "./commands";
+import { requestNoun } from "./commands";
 
 interface RefsViewProps {
   repoId: RepoId;
@@ -42,6 +45,16 @@ const RefsView: Component<RefsViewProps> = (props) => {
   const [newTag, setNewTag] = createSignal("");
   const [ffMode, setFfMode] = createSignal<FfMode>("Auto");
   const [mergeMessage, setMergeMessage] = createSignal("");
+
+  // The active repo's forge, for PR/MR labelling (PH4-002).
+  const [forge, setForge] = createSignal<ForgeKind | null>(null);
+  createEffect(() => {
+    invoke<HostingInfo>("hosting_status", { repo: props.repoId })
+      .then((s) => setForge(s.kind))
+      .catch(() => setForge(null));
+  });
+  const noun = () => requestNoun(forge());
+  const nounTitle = () => noun().replace(/\b\w/g, (c) => c.toUpperCase());
 
   // Create-PR form state (PH3-012).
   const [prBranch, setPrBranch] = createSignal<string | null>(null);
@@ -276,7 +289,7 @@ const RefsView: Component<RefsViewProps> = (props) => {
             onClick={(e) => e.stopPropagation()}
           >
             <div style={{ "font-weight": 600, "margin-bottom": "0.5rem" }}>
-              Create pull request — {prBranch()}
+              Create {noun()} — {prBranch()}
             </div>
             <Show when={err()}>
               <p style={{ color: "crimson", "font-size": "0.82rem", "white-space": "pre-wrap" }}>{err()}</p>
@@ -310,14 +323,14 @@ const RefsView: Component<RefsViewProps> = (props) => {
                       disabled={prBusy()}
                       style={{ background: "#1a7f37", color: "#fff", border: "none", "border-radius": "3px", padding: "0.3rem 0.9rem", cursor: "pointer" }}
                     >
-                      {prBusy() ? "Creating…" : "Create PR"}
+                      {prBusy() ? "Creating…" : `Create ${nounTitle()}`}
                     </button>
                   </div>
                 </div>
               }
             >
               <div>
-                <p style={{ color: "#1a7f37", "font-size": "0.85rem" }}>Pull request created.</p>
+                <p style={{ color: "#1a7f37", "font-size": "0.85rem" }}>{nounTitle()} created.</p>
                 <p style={{ "font-family": "monospace", "font-size": "0.8rem", "word-break": "break-all" }}>{prUrl()}</p>
                 <div style={{ display: "flex", gap: "0.5rem", "justify-content": "flex-end" }}>
                   <button onClick={() => setPrBranch(null)}>Close</button>
@@ -404,7 +417,7 @@ const RefsView: Component<RefsViewProps> = (props) => {
                 <span style={{ color: "#888" }}>{r.target.slice(0, 8)}</span>
                 <button
                   style={smallBtn}
-                  title="Create a GitHub pull request from this branch"
+                  title={`Create a ${noun()} from this branch`}
                   onClick={() => openPrForm(r.name)}
                 >
                   PR

@@ -196,16 +196,34 @@ export type LicenseStatus =
   | { kind: "Expired" }
   | { kind: "Licensed"; licensee: string };
 
+/** Mirrors lady_hosting::ForgeKind. */
+export type ForgeKind = "GitHub" | "GitLab" | "Bitbucket" | "AzureDevOps";
+
+/** Human label per forge (UI copy). */
+export const FORGE_LABEL: Record<ForgeKind, string> = {
+  GitHub: "GitHub",
+  GitLab: "GitLab",
+  Bitbucket: "Bitbucket",
+  AzureDevOps: "Azure DevOps",
+};
+
+/** Whether a forge calls them "merge requests" (GitLab) vs "pull requests". */
+export const requestNoun = (kind: ForgeKind | null): string =>
+  kind === "GitLab" ? "merge request" : "pull request";
+
 /** Mirrors lady_hosting::RepoSlug. */
 export interface RepoSlug {
   owner: string;
   repo: string;
+  project?: string | null;
 }
 
-/** Mirrors the GithubStatus DTO. */
-export interface GithubStatus {
+/** Mirrors the HostingInfo DTO (forge-aware connection status). */
+export interface HostingInfo {
+  kind: ForgeKind | null;
   connected: boolean;
   login: string | null;
+  slug: RepoSlug | null;
 }
 
 /** Mirrors lady_proto::Worktree. */

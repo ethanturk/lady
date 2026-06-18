@@ -969,97 +969,126 @@ fn save_settings(mut settings: Settings) -> Result<(), String> {
 
 // ── Hosting (GitHub) — PH3-011 / PH3-012 ────────────────────────────────────────
 
-/// Keychain key under which the GitHub hosting-API token is stored (ADR-0006).
-const GITHUB_TOKEN_KEY: &str = "github-token";
-
-/// Managed hosting state: the OS-keychain token store, a GitHub client for the
-/// GitHub-specific auth UI, and any self-hosted forge configs for resolution.
+/// Managed hosting state: the OS-keychain token store + any self-hosted forge
+/// configs for resolution.
 pub struct Hosting {
     store: Box<dyn lady_hosting::TokenStore>,
-    client: lady_hosting::GitHubClient,
     self_hosted: Vec<lady_hosting::ForgeConfig>,
 }
 
-/// Connection status for the GitHub account (no token is ever returned).
+/// Connection status for the active repo's forge (no token is ever returned).
 #[derive(Serialize)]
-pub struct GithubStatus {
+pub struct HostingInfo {
+    /// The detected forge (`None` when no supported remote).
+    pub kind: Option<lady_hosting::ForgeKind>,
+    /// Whether a valid token is stored for that forge.
     pub connected: bool,
+    /// The authenticated login/handle, when known.
     pub login: Option<String>,
+    /// The detected repo slug on that forge.
+    pub slug: Option<lady_hosting::RepoSlug>,
 }
 
-/// Authenticate with GitHub using a personal access token: validate it via
-/// `GET /user`, store it in the keychain, and return the login. The token is
-/// never written to disk or logs (ADR-0006).
+/// A resolved provider plus the repo's remote URLs.
+type ResolvedProvider = (Box<dyn lady_hosting::HostingProvider>, Vec<String>);
+
+/// Resolve the hosting provider for `repo` from its remotes (forge-agnostic).
+fn provider_for_repo(
+    repo: &RepoId,
+    engine: &GixEngine,
+    hosting: &Hosting,
+) -> Result<Option<ResolvedProvider>, String> {
+    let urls = engine.list_remote_urls(repo).map_err(|e| e.to_string())?;
+    let provider = urls
+        .iter()
+        .find_map(|u| lady_hosting::provider_for(u, &hosting.self_hosted));
+    Ok(provider.map(|p| (p, urls)))
+}
+
+/// Connection status for the active repo's forge (PH4-001/002/003/004).
 #[tauri::command]
-async fn github_auth_start(
-    token: String,
+async fn hosting_status(
+    repo: RepoId,
+    engine: State<'_, GixEngine>,
     hosting: State<'_, Hosting>,
-) -> Result<GithubStatus, String> {
-    use lady_hosting::HostingProvider;
-    let login = hosting
-        .client
+) -> Result<HostingInfo, String> {
+    let Some((provider, urls)) = provider_for_repo(&repo, &engine, &hosting)? else {
+        return Ok(HostingInfo {
+            kind: None,
+            connected: false,
+            login: None,
+            slug: None,
+        });
+    };
+    let kind = provider.kind();
+    let slug = provider.detect_slug(&urls);
+    let Some(token) = hosting
+        .store
+        .get(provider.token_key())
+        .map_err(|e| e.to_string())?
+    else {
+        return Ok(HostingInfo {
+            kind: Some(kind),
+            connected: false,
+            login: None,
+            slug,
+        });
+    };
+    // Best-effort: confirm validity + fetch the login.
+    let (connected, login) = match provider.get_login(&token).await {
+        Ok(login) => (true, Some(login)),
+        Err(lady_hosting::Error::Unauthorized) => (false, None),
+        Err(_) => (true, None), // network hiccup; token exists
+    };
+    Ok(HostingInfo {
+        kind: Some(kind),
+        connected,
+        login,
+        slug,
+    })
+}
+
+/// Connect to the active repo's forge with a token: validate it, then store it
+/// under that forge's keychain key (ADR-0006). Never logs the token.
+#[tauri::command]
+async fn hosting_connect(
+    repo: RepoId,
+    token: String,
+    engine: State<'_, GixEngine>,
+    hosting: State<'_, Hosting>,
+) -> Result<HostingInfo, String> {
+    let (provider, urls) = provider_for_repo(&repo, &engine, &hosting)?
+        .ok_or_else(|| "No supported forge remote found on this repository.".to_string())?;
+    let login = provider
         .get_login(&token)
         .await
         .map_err(|e| e.to_string())?;
     hosting
         .store
-        .set(GITHUB_TOKEN_KEY, &token)
+        .set(provider.token_key(), &token)
         .map_err(|e| e.to_string())?;
-    Ok(GithubStatus {
+    Ok(HostingInfo {
+        kind: Some(provider.kind()),
         connected: true,
         login: Some(login),
+        slug: provider.detect_slug(&urls),
     })
 }
 
-/// Whether a GitHub token is stored, and the login it resolves to.
+/// Forget the stored token for the active repo's forge.
 #[tauri::command]
-async fn github_auth_status(hosting: State<'_, Hosting>) -> Result<GithubStatus, String> {
-    let token = hosting
-        .store
-        .get(GITHUB_TOKEN_KEY)
-        .map_err(|e| e.to_string())?;
-    let Some(token) = token else {
-        return Ok(GithubStatus {
-            connected: false,
-            login: None,
-        });
-    };
-    // Best-effort: confirm validity + fetch the login.
-    use lady_hosting::HostingProvider;
-    match hosting.client.get_login(&token).await {
-        Ok(login) => Ok(GithubStatus {
-            connected: true,
-            login: Some(login),
-        }),
-        Err(lady_hosting::Error::Unauthorized) => Ok(GithubStatus {
-            connected: false,
-            login: None,
-        }),
-        // Network hiccup — a token exists but we couldn't verify it now.
-        Err(_) => Ok(GithubStatus {
-            connected: true,
-            login: None,
-        }),
-    }
-}
-
-/// Forget the stored GitHub token.
-#[tauri::command]
-async fn github_sign_out(hosting: State<'_, Hosting>) -> Result<(), String> {
-    hosting
-        .store
-        .delete(GITHUB_TOKEN_KEY)
-        .map_err(|e| e.to_string())
-}
-
-/// Detect the GitHub repo (owner/name) from the repo's remotes, if any.
-#[tauri::command]
-fn github_detect(
+async fn hosting_sign_out(
     repo: RepoId,
-    engine: State<GixEngine>,
-) -> Result<Option<lady_hosting::RepoSlug>, String> {
-    let urls = engine.list_remote_urls(&repo).map_err(|e| e.to_string())?;
-    Ok(lady_hosting::detect_github_slug(&urls))
+    engine: State<'_, GixEngine>,
+    hosting: State<'_, Hosting>,
+) -> Result<(), String> {
+    if let Some((provider, _)) = provider_for_repo(&repo, &engine, &hosting)? {
+        hosting
+            .store
+            .delete(provider.token_key())
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 /// Open a pull / merge request for the active repo's forge remote, resolved by
@@ -1206,7 +1235,6 @@ pub fn run() {
         .manage(GixEngine::new())
         .manage(Hosting {
             store: Box::new(lady_hosting::KeyringStore::new("Lady-Hosting")),
-            client: lady_hosting::GitHubClient::new(),
             self_hosted: Vec::new(),
         })
         .invoke_handler(tauri::generate_handler![
@@ -1280,10 +1308,9 @@ pub fn run() {
             run_custom_command,
             launch_difftool,
             launch_mergetool,
-            github_auth_start,
-            github_auth_status,
-            github_sign_out,
-            github_detect,
+            hosting_status,
+            hosting_connect,
+            hosting_sign_out,
             github_create_pr,
             open_url,
             license_status,

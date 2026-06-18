@@ -8,7 +8,7 @@ UI stories also note a manual window check here.
 
 ## Status
 - [x] PH4-001 Generalize HostingProvider for multiple forges
-- [ ] PH4-002 GitLab auth + create merge request
+- [x] PH4-002 GitLab auth + create merge request
 - [ ] PH4-003 Bitbucket auth + create pull request
 - [ ] PH4-004 Azure DevOps auth + create pull request
 - [ ] PH4-005 Create remote repository (provider-agnostic)
