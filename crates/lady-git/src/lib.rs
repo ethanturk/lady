@@ -515,6 +515,41 @@ impl GixEngine {
         self.workdir(id)
     }
 
+    /// Read a file's contents at a revision (`<rev>:<path>`), as lossy UTF-8.
+    /// `None` when the path does not exist at that rev (PH5-011 get_file_at).
+    pub fn file_at(&self, id: &RepoId, rev: &str, path: &str) -> Result<Option<String>> {
+        let wd = self.workdir(id)?;
+        Ok(cat_blob(&wd, &format!("{rev}:{path}"))
+            .map(|b| String::from_utf8_lossy(&b).into_owned()))
+    }
+
+    /// Commits whose summary contains `query` (case-insensitive), newest first,
+    /// capped at `limit` (0 = no cap). A simple message-grep walk (PH5-011
+    /// search_commits); semantic search is PH5-012.
+    pub fn search_commits(
+        &self,
+        id: &RepoId,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<CommitMeta>> {
+        let needle = query.to_lowercase();
+        let all = self.walk_log(
+            id,
+            GraphQuery {
+                start: None,
+                limit: 0,
+            },
+        )?;
+        let mut hits: Vec<CommitMeta> = all
+            .into_iter()
+            .filter(|c| c.summary.to_lowercase().contains(&needle))
+            .collect();
+        if limit > 0 {
+            hits.truncate(limit);
+        }
+        Ok(hits)
+    }
+
     /// Map a rebase process result + the post-run repo state to a
     /// [`RebaseOutcome`]: completed, stopped on conflict, stopped for an `edit`
     /// step, or a hard error (git's message surfaced).

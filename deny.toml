@@ -82,6 +82,10 @@ ignore = [
     "RUSTSEC-2025-0081", # unic-char-property
     "RUSTSEC-2025-0098", # unic-ucd-version
     "RUSTSEC-2025-0100", # unic-ucd-ident
+    # --- paste: unmaintained, pulled transitively by rmcp (lady-mcp, PH5-011) ---
+    # A compile-time-only proc-macro helper (token pasting); no runtime surface.
+    # Tracked: drop when rmcp removes the dependency. RUSTSEC-2024-0436.
+    "RUSTSEC-2024-0436", # paste
 ]
 
 # ---------------------------------------------------------------------------

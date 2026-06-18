@@ -256,6 +256,15 @@ const AiSettings: Component<{ repoId: RepoId }> = (props) => {
         </Show>
       </Show>
 
+      <h3 style={{ margin: "1.2rem 0 0.3rem", "font-size": "0.95rem" }}>MCP server</h3>
+      <p style={{ "font-size": "0.78rem", color: "var(--fg-muted, #888)", margin: "0 0 0.6rem" }}>
+        Expose this repo's context (status, diff, log, file-at-rev, blame,
+        commit search) to an external assistant (Claude/Cursor) via the{" "}
+        <code>lady-mcp</code> server. It is read-only — no mutating tools. Add an
+        MCP entry that runs <code>lady-mcp &lt;repo-path&gt;</code>; remove it to
+        disable.
+      </p>
+
       <Show when={notice()}>
         <p style={{ color: "#1a7f37", "font-size": "0.8rem", margin: "0.2rem 0" }}>{notice()}</p>
       </Show>

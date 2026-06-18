@@ -9,16 +9,16 @@ UI stories also note a manual window check here.
 
 ## Status
 - [x] PH5-001 lady-ai crate + AiProvider trait + task model
-- [ ] PH5-002 BYOK key management + consent + per-repo toggle
+- [x] PH5-002 BYOK key management + consent + per-repo toggle
 - [x] PH5-003 Local Ollama provider (private path)
 - [x] PH5-004 Remote providers (OpenAI, Anthropic, Gemini, Azure, Mistral)
 - [x] PH5-005 Context builder + token budgeting + secret redaction
-- [ ] PH5-006 AI commit message generation
-- [ ] PH5-007 Commit Composer (split into logical commits)
-- [ ] PH5-008 Explain (commit / branch / stash / working changes)
-- [ ] PH5-009 AI conflict resolution (review-gated)
-- [ ] PH5-010 AI PR title/description, changelog, stash notes
-- [ ] PH5-011 MCP server (lady-mcp) exposing repo context
+- [x] PH5-006 AI commit message generation
+- [x] PH5-007 Commit Composer (split into logical commits)
+- [x] PH5-008 Explain (commit / branch / stash / working changes)
+- [x] PH5-009 AI conflict resolution (review-gated)
+- [x] PH5-010 AI PR title/description, changelog, stash notes
+- [x] PH5-011 MCP server (lady-mcp) exposing repo context
 - [ ] PH5-012 Semantic commit search (stretch)
 - [ ] PH5-013 Phase 5 AI parity exit gate
 
@@ -34,3 +34,28 @@ UI stories also note a manual window check here.
   follow-up), MANDATORY regex+entropy secret redaction (best-effort per ADR-0009).
   prompts.rs: per-task prompt assembly + Commit Composer plan parse/validate. deny
   clean (tiktoken-rs/regex/fancy-regex permissive, no allow-list change needed).
+- PH5-002/006-010 (backend): src-tauri/ai.rs — AiState (keychain "Lady-AI" via
+  lady-hosting TokenStore + cancel-token map); complete_guarded centralizes the
+  consent gate + redaction. Commands cover config/keys/consent/per-repo toggle,
+  commit message, composer (compose+apply, apply path unit-tested → N commits),
+  explain (commit/range/stash/working), conflict (review-gated), PR title/desc,
+  changelog, stash note. Range/stash use system-git via run_custom.
+- PH5-002/006-010 (UI): ui/ai.ts (runAiStream over the ai-stream event + cancel);
+  AiSettings (provider/keys/consent/Ollama models/Azure/per-repo toggle),
+  ChangesView ✨ Generate message + stash note, new ✨ AI tab (Composer/Explain/
+  Changelog), ConflictResolver ✨ Auto-resolve (suggestion panel, apply-on-click),
+  RefsView create-PR ✨ title/description. npm build green.
+- PH5-011: crates/lady-mcp — read-only rmcp server (get_status/get_diff/get_log/
+  get_file_at/blame/search_commits) over lady-git + new engine file_at/
+  search_commits. lib + `lady-mcp <repo>` stdio binary for external assistants
+  (enable/disable + exposed repo via the client's MCP config; no mutating tools).
+  Smoke test: in-memory client (join!'d server+client over a tokio duplex, 20s
+  timeout) lists the 6 tools + get_log returns fixture commits. deny: ignored
+  RUSTSEC-2024-0436 (paste, compile-time-only, transitive via rmcp), licenses ok.
+
+## Manual window checks (Phase 5)
+- AI Settings: provider select, key save/clear, consent checkbox, per-repo toggle,
+  Ollama "List models" (needs Ollama running), Azure endpoint/deployment fields.
+- Generate commit message (commit box), stash note, Composer (propose/edit/apply),
+  Explain + Regenerate, Changelog, Conflict ✨ Auto-resolve, PR ✨ title/description.
+  All need a configured provider; remote needs consent. (Build + typecheck green.)
