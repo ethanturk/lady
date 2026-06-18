@@ -236,6 +236,18 @@ pub struct AheadBehind {
     pub behind: usize,
 }
 
+/// One entry in the stash stack (`git stash list`). `index` is the position in
+/// the reflog (`stash@{index}`); 0 is the most recent.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StashEntry {
+    /// Position in the stash stack (`stash@{index}`).
+    pub index: usize,
+    /// The stash's subject line (e.g. `On main: WIP`).
+    pub message: String,
+    /// The stash commit's object id.
+    pub oid: Oid,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,6 +311,18 @@ mod tests {
         let json = serde_json::to_string(&blame).expect("serialize Blame");
         let back: Blame = serde_json::from_str(&json).expect("deserialize Blame");
         assert_eq!(blame, back);
+    }
+
+    #[test]
+    fn stash_entry_serde_round_trip() {
+        let entry = StashEntry {
+            index: 2,
+            message: "On main: WIP refactor".to_owned(),
+            oid: Oid::from("e".repeat(40)),
+        };
+        let json = serde_json::to_string(&entry).expect("serialize StashEntry");
+        let back: StashEntry = serde_json::from_str(&json).expect("deserialize StashEntry");
+        assert_eq!(entry, back);
     }
 
     #[test]

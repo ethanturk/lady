@@ -130,7 +130,7 @@
         "Unit tests: save then list shows the entry; pop re-applies and removes it; drop removes without applying; cargo fmt/clippy -D warnings/test green; cargo deny passes; npm run build green; manual window note in progress.txt"
       ],
       "priority": 9,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §1 stash + 'stashes shown inline in the commit list'. Inline graph marker may be a thin follow-up if heavy, but the list + ops are required."
     },
     {

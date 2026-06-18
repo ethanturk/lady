@@ -11,7 +11,7 @@ use std::sync::Mutex;
 
 use lady_proto::{
     AheadBehind, Blame, BlameLine, ChangeKind, CommitMeta, FileDiff, FileDiffKind, FileStatus, Oid,
-    RefInfo, RefKind, RepoId, Signature, WorkingTree,
+    RefInfo, RefKind, RepoId, Signature, StashEntry, WorkingTree,
 };
 
 /// Errors surfaced by a [`GitEngine`].
@@ -212,6 +212,27 @@ pub trait GitEngine: Send + Sync {
     /// How far the current branch is ahead/behind its upstream, or `None` when
     /// there is no upstream configured (nothing to compare against).
     fn ahead_behind(&self, repo: &RepoId) -> Result<Option<AheadBehind>>;
+
+    /// Stash the working-tree changes. With `message` the stash is labelled;
+    /// `include_untracked` also stashes untracked files (`-u`).
+    fn stash_save(
+        &self,
+        repo: &RepoId,
+        message: Option<&str>,
+        include_untracked: bool,
+    ) -> Result<()>;
+
+    /// List the stash stack, most recent first (`stash@{0}`).
+    fn stash_list(&self, repo: &RepoId) -> Result<Vec<StashEntry>>;
+
+    /// Apply `stash@{index}` to the working tree, keeping it in the stack.
+    fn stash_apply(&self, repo: &RepoId, index: usize) -> Result<()>;
+
+    /// Apply `stash@{index}` and drop it from the stack on success.
+    fn stash_pop(&self, repo: &RepoId, index: usize) -> Result<()>;
+
+    /// Drop `stash@{index}` without applying it.
+    fn stash_drop(&self, repo: &RepoId, index: usize) -> Result<()>;
 }
 
 /// A [`GitEngine`] backed by [`gix`] for read-only access (ADR-0003).
@@ -920,6 +941,63 @@ impl GitEngine for GixEngine {
         let behind = nums.next().and_then(|s| s.parse().ok()).unwrap_or(0);
         let ahead = nums.next().and_then(|s| s.parse().ok()).unwrap_or(0);
         Ok(Some(AheadBehind { ahead, behind }))
+    }
+
+    fn stash_save(
+        &self,
+        repo: &RepoId,
+        message: Option<&str>,
+        include_untracked: bool,
+    ) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        let mut args: Vec<&str> = vec!["stash", "push"];
+        if include_untracked {
+            args.push("-u");
+        }
+        if let Some(m) = message {
+            args.push("-m");
+            args.push(m);
+        }
+        run_git(&wd, &args).map(|_| ())
+    }
+
+    fn stash_list(&self, repo: &RepoId) -> Result<Vec<StashEntry>> {
+        let wd = self.workdir(repo)?;
+        // `%gd` is the selector (stash@{N}), %H the commit, %gs the subject.
+        let out = run_git(&wd, &["stash", "list", "--format=%gd%x00%H%x00%gs"])?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        let mut entries = Vec::new();
+        for (index, line) in text.lines().enumerate() {
+            let mut parts = line.split('\u{0}');
+            let _selector = parts.next();
+            let oid = parts.next().unwrap_or("").to_string();
+            let message = parts.next().unwrap_or("").to_string();
+            // The reflog is already newest-first; the line position is the index.
+            entries.push(StashEntry {
+                index,
+                message,
+                oid: Oid::from(oid),
+            });
+        }
+        Ok(entries)
+    }
+
+    fn stash_apply(&self, repo: &RepoId, index: usize) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        let sel = format!("stash@{{{index}}}");
+        run_git(&wd, &["stash", "apply", &sel]).map(|_| ())
+    }
+
+    fn stash_pop(&self, repo: &RepoId, index: usize) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        let sel = format!("stash@{{{index}}}");
+        run_git(&wd, &["stash", "pop", &sel]).map(|_| ())
+    }
+
+    fn stash_drop(&self, repo: &RepoId, index: usize) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        let sel = format!("stash@{{{index}}}");
+        run_git(&wd, &["stash", "drop", &sel]).map(|_| ())
     }
 }
 
@@ -2146,6 +2224,68 @@ mod tests {
             engine.ahead_behind(&id).expect("ahead_behind"),
             None,
             "fixture's main tracks no upstream"
+        );
+    }
+
+    #[test]
+    fn stash_save_list_apply_pop_and_drop() {
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open the fixture repo");
+
+        // Dirty file1.txt, stash it → working tree clean again, one stash entry.
+        std::fs::write(p.join("file1.txt"), "stashed edit\n").expect("write");
+        engine
+            .stash_save(&id, Some("WIP one"), false)
+            .expect("stash save");
+        assert!(
+            !engine.is_dirty(&id).expect("dirty"),
+            "stash cleaned the tree"
+        );
+
+        let list = engine.stash_list(&id).expect("stash list");
+        assert_eq!(list.len(), 1, "one stash saved");
+        assert_eq!(list[0].index, 0);
+        assert!(
+            list[0].message.contains("WIP one"),
+            "message preserved: {}",
+            list[0].message
+        );
+
+        // apply re-applies but keeps the entry.
+        engine.stash_apply(&id, 0).expect("stash apply");
+        assert!(
+            engine.is_dirty(&id).expect("dirty"),
+            "apply restored the edit"
+        );
+        assert_eq!(
+            engine.stash_list(&id).expect("stash list").len(),
+            1,
+            "apply keeps the stash"
+        );
+
+        // drop removes without touching the tree; re-stash then pop to verify pop.
+        engine.stash_drop(&id, 0).expect("stash drop");
+        assert!(
+            engine.stash_list(&id).expect("stash list").is_empty(),
+            "drop removed the stash"
+        );
+
+        // Tree is still dirty from the apply; stash + pop round-trips it back.
+        engine.stash_save(&id, None, false).expect("stash save 2");
+        assert!(
+            !engine.is_dirty(&id).expect("dirty"),
+            "second stash cleaned tree"
+        );
+        engine.stash_pop(&id, 0).expect("stash pop");
+        assert!(
+            engine.is_dirty(&id).expect("dirty"),
+            "pop restored the edit"
+        );
+        assert!(
+            engine.stash_list(&id).expect("stash list").is_empty(),
+            "pop removed the stash"
         );
     }
 }

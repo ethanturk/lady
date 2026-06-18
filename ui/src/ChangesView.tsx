@@ -1,7 +1,7 @@
 import { createEffect, createSignal, For, Show } from "solid-js";
 import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
-import type { ChangeKind, DiffSpec, FileStatus, RepoId, WorkingTree } from "./commands";
+import type { ChangeKind, DiffSpec, FileStatus, RepoId, StashEntry, WorkingTree } from "./commands";
 import DiffView from "./DiffView";
 
 /** A short colored badge for a file's change kind. */
@@ -112,6 +112,8 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
   const [message, setMessage] = createSignal("");
   const [amend, setAmend] = createSignal(false);
   const [recent, setRecent] = createSignal<string[]>([]);
+  const [stashes, setStashes] = createSignal<StashEntry[]>([]);
+  const [stashUntracked, setStashUntracked] = createSignal(false);
 
   const reload = () => {
     setErr(null);
@@ -121,6 +123,9 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
     invoke<string[]>("recent_messages", { repo: props.repoId, limit: 10 })
       .then(setRecent)
       .catch(() => setRecent([]));
+    invoke<StashEntry[]>("stash_list", { repo: props.repoId })
+      .then(setStashes)
+      .catch(() => setStashes([]));
   };
 
   // The DiffSpec for the current selection (staged → index-vs-HEAD).
@@ -209,6 +214,22 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
         setAmend(false);
         afterMutation();
       })
+      .catch((e) => setErr(String(e)));
+  };
+
+  // Stash the working tree, then refresh status + stash list + siblings.
+  const stashSave = () => {
+    invoke("stash_save", {
+      repo: props.repoId,
+      message: null,
+      includeUntracked: stashUntracked(),
+    })
+      .then(afterMutation)
+      .catch((e) => setErr(String(e)));
+  };
+  const stashOp = (cmd: string, index: number) => {
+    invoke(cmd, { repo: props.repoId, index })
+      .then(afterMutation)
       .catch((e) => setErr(String(e)));
   };
 
@@ -323,6 +344,66 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
         </Show>
         <Show when={isClean()}>
           <p style={{ color: "#888", "font-size": "0.85rem" }}>Working tree clean.</p>
+        </Show>
+
+        {/* Stash controls: save the working tree, manage the stack. */}
+        <div style={{ display: "flex", "align-items": "center", gap: "0.5rem", margin: "0.25rem 0" }}>
+          <button style={smallBtn} disabled={isClean()} onClick={stashSave}>
+            Stash changes
+          </button>
+          <label style={{ display: "flex", "align-items": "center", gap: "0.2rem", "font-size": "0.72rem", color: "#555" }}>
+            <input
+              type="checkbox"
+              checked={stashUntracked()}
+              onChange={(e) => setStashUntracked(e.currentTarget.checked)}
+            />
+            include untracked
+          </label>
+        </div>
+
+        <Show when={stashes().length > 0}>
+          {header("Stashes", stashes().length)}
+          <ul style={{ margin: 0, padding: 0, "list-style": "none" }}>
+            <For each={stashes()}>
+              {(s) => (
+                <li
+                  style={{
+                    display: "flex",
+                    "align-items": "center",
+                    gap: "0.4rem",
+                    padding: "0.1rem 0.25rem",
+                    "font-family": "monospace",
+                    "font-size": "0.78rem",
+                  }}
+                >
+                  <span style={{ color: "#8250df" }}>{`stash@{${s.index}}`}</span>
+                  <span
+                    style={{
+                      flex: "1",
+                      overflow: "hidden",
+                      "text-overflow": "ellipsis",
+                      "white-space": "nowrap",
+                    }}
+                    title={s.message}
+                  >
+                    {s.message}
+                  </span>
+                  <button style={smallBtn} onClick={() => stashOp("stash_apply", s.index)}>
+                    Apply
+                  </button>
+                  <button style={smallBtn} onClick={() => stashOp("stash_pop", s.index)}>
+                    Pop
+                  </button>
+                  <button
+                    style={smallBtn}
+                    onClick={() => confirm(`Drop stash@{${s.index}}?`) && stashOp("stash_drop", s.index)}
+                  >
+                    Drop
+                  </button>
+                </li>
+              )}
+            </For>
+          </ul>
         </Show>
 
         <Show when={(wt()?.staged.length ?? 0) > 0}>

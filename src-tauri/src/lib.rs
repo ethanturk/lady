@@ -538,6 +538,41 @@ fn ahead_behind(
     engine.ahead_behind(&repo).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn stash_save(
+    repo: RepoId,
+    message: Option<String>,
+    include_untracked: bool,
+    engine: State<GixEngine>,
+) -> Result<(), String> {
+    engine
+        .stash_save(&repo, message.as_deref(), include_untracked)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn stash_list(
+    repo: RepoId,
+    engine: State<GixEngine>,
+) -> Result<Vec<lady_proto::StashEntry>, String> {
+    engine.stash_list(&repo).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn stash_apply(repo: RepoId, index: usize, engine: State<GixEngine>) -> Result<(), String> {
+    engine.stash_apply(&repo, index).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn stash_pop(repo: RepoId, index: usize, engine: State<GixEngine>) -> Result<(), String> {
+    engine.stash_pop(&repo, index).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn stash_drop(repo: RepoId, index: usize, engine: State<GixEngine>) -> Result<(), String> {
+    engine.stash_drop(&repo, index).map_err(|e| e.to_string())
+}
+
 /// A repository remembered in user settings, with an optional custom group.
 #[derive(Serialize, Deserialize, Default, Clone)]
 pub struct RecentRepo {
@@ -615,6 +650,11 @@ pub fn run() {
             pull,
             push,
             ahead_behind,
+            stash_save,
+            stash_list,
+            stash_apply,
+            stash_pop,
+            stash_drop,
             clone_repo,
             load_settings,
             save_settings

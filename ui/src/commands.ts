@@ -149,6 +149,13 @@ export interface AheadBehind {
   behind: number;
 }
 
+/** Mirrors lady_proto::StashEntry. */
+export interface StashEntry {
+  index: number;
+  message: string;
+  oid: string;
+}
+
 // ── Repository-manager types ───────────────────────────────────────────────────
 
 export interface RecentRepo {

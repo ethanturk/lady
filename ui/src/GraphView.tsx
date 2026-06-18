@@ -11,6 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   CommitGraphRow,
   RepoId,
+  StashEntry,
   WalkLogGraphResult,
   WalkLogQuery,
 } from "./commands";
@@ -100,6 +101,7 @@ const GraphView: Component<{
   const [hasMore, setHasMore] = createSignal(true);
   const [cursor, setCursor] = createSignal<string | undefined>(undefined);
   const [layoutState, setLayoutState] = createSignal<(string | null)[]>([]);
+  const [stashes, setStashes] = createSignal<StashEntry[]>([]);
 
   let listContainer!: HTMLDivElement;
   let canvasEl!: HTMLCanvasElement;
@@ -161,6 +163,17 @@ const GraphView: Component<{
     }
   };
 
+  // Stashes are shown as distinct marker rows above the commits (Fork parity).
+  const loadStashes = () => {
+    invoke<StashEntry[]>("stash_list", { repo: props.repoId })
+      .then(setStashes)
+      .catch(() => setStashes([]));
+  };
+  createEffect(() => {
+    props.repoId;
+    loadStashes();
+  });
+
   onMount(async () => {
     const h = listContainer.clientHeight || 400;
     setViewportH(h);
@@ -174,8 +187,45 @@ const GraphView: Component<{
   };
 
   return (
-    <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
-      {/* Canvas column: graph lanes and edges (redraws on scroll) */}
+    <div style={{ display: "flex", "flex-direction": "column", height: "100%", overflow: "hidden" }}>
+      {/* Stash markers shown inline above the commit graph (Fork parity). */}
+      <Show when={stashes().length > 0}>
+        <div style={{ "flex-shrink": 0, "border-bottom": "1px solid #eee" }}>
+          <For each={stashes()}>
+            {(s) => (
+              <div
+                style={{
+                  display: "flex",
+                  "align-items": "center",
+                  gap: "0.5rem",
+                  padding: "0.2rem 0.5rem",
+                  "font-size": "0.8rem",
+                  background: "#faf6ff",
+                }}
+              >
+                <span style={{ color: "#8250df" }}>⬡</span>
+                <span style={{ "font-family": "monospace", color: "#8250df", "min-width": "8ch" }}>
+                  {`stash@{${s.index}}`}
+                </span>
+                <span
+                  style={{
+                    flex: "1",
+                    overflow: "hidden",
+                    "text-overflow": "ellipsis",
+                    "white-space": "nowrap",
+                  }}
+                  title={s.message}
+                >
+                  {s.message}
+                </span>
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
+
+      <div style={{ display: "flex", flex: "1", "min-height": "0", overflow: "hidden" }}>
+        {/* Canvas column: graph lanes and edges (redraws on scroll) */}
       <canvas
         ref={canvasEl}
         style={{
@@ -275,6 +325,7 @@ const GraphView: Component<{
             Loading…
           </div>
         </Show>
+        </div>
       </div>
     </div>
   );
