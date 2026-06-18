@@ -1,45 +1,36 @@
-# Phase 4 — Fast-follow hosting + niche
+# Phase 5 — AI (GitKraken Git AI parity + superset)
 
-Branch: phase-4-fast-follow (from main; Phase 3 merged).
+Branch: phase-5-ai (from main; Phase 4 merged).
 
 Loop verification per story: cargo fmt --all --check, cargo clippy --all-targets -- -D warnings,
-cargo test, cargo deny check, npm run build. Hosting providers tested vs wiremock (never live).
+cargo test, cargo deny check, npm run build (UI stories). Providers tested vs wiremock with
+recorded fixtures — NEVER live APIs. Redaction + consent tests are MANDATORY (ADR-0009).
 UI stories also note a manual window check here.
 
 ## Status
-- [x] PH4-001 Generalize HostingProvider for multiple forges
-- [x] PH4-002 GitLab auth + create merge request
-- [x] PH4-003 Bitbucket auth + create pull request
-- [x] PH4-004 Azure DevOps auth + create pull request
-- [x] PH4-005 Create remote repository (provider-agnostic)
-- [x] PH4-006 GitHub notifications inbox
-- [x] PH4-007 Git LFS support
-- [x] PH4-008 git-flow support
-- [x] PH4-009 Submodule management
-- [x] PH4-010 Phase 4 Fast-follow exit gate
+- [x] PH5-001 lady-ai crate + AiProvider trait + task model
+- [ ] PH5-002 BYOK key management + consent + per-repo toggle
+- [x] PH5-003 Local Ollama provider (private path)
+- [x] PH5-004 Remote providers (OpenAI, Anthropic, Gemini, Azure, Mistral)
+- [x] PH5-005 Context builder + token budgeting + secret redaction
+- [ ] PH5-006 AI commit message generation
+- [ ] PH5-007 Commit Composer (split into logical commits)
+- [ ] PH5-008 Explain (commit / branch / stash / working changes)
+- [ ] PH5-009 AI conflict resolution (review-gated)
+- [ ] PH5-010 AI PR title/description, changelog, stash notes
+- [ ] PH5-011 MCP server (lady-mcp) exposing repo context
+- [ ] PH5-012 Semantic commit search (stretch)
+- [ ] PH5-013 Phase 5 AI parity exit gate
 
-## Manual window checks (noted as stories land)
-(none yet)
-- PH4-005: Create remote repository — SettingsView "Create remote repository"
-  section (forge dropdown, name/private/description, owner+project for
-  Bitbucket/Azure, add-as-origin). create_repo implemented + wiremock-tested for
-  all four forges; add_remote engine op wires origin. Live creation is manual.
-- PH4-006: GitHub notifications — NotificationsView inbox (list, open, mark read,
-  60s poll) + a tab unread badge (App-level background poll). Needs a manual
-  window check with a connected GitHub account. (Build + typecheck green.)
-- PH4-007: Git LFS — LfsView shows availability, tracked patterns, files
-  (materialized ● / pointer ○) + "Track pattern with LFS". LFS round-trips
-  automatically via the shell-out git tier. Round-trip test runs when git-lfs is
-  installed; SKIPS locally here (git-lfs absent) but runs on CI. Manual window
-  check for the panel.
-- PH4-008: git-flow — GitFlowView panel (init, start/finish feature/release/
-  hotfix). Native semantics via shell-out git (no git-flow binary). Tested:
-  init + feature start/finish merges --no-ff into develop. Manual window check
-  for the panel + a release/hotfix run.
-- PH4-009: Submodules — SubmodulesView panel (status ● up-to-date / ◑ dirty / ○
-  uninit, add/init/update/sync/remove, Open as repo tab). Tested: add + status +
-  update in a tempdir superproject. Manual window check for the panel.
-- PH4-010: Fast-follow exit gate — RELEASE-CHECKLIST.md updated with the Phase 4
-  Fast-follow table (PH4-001..009). Version bumped to 1.1.0 across all crates +
-  tauri.conf.json + ui/package.json. Whole workspace green (fmt/clippy/test/deny/
-  npm). Fast-follow complete. Next major phase: Phase 5 (AI), then Phase 6 polish.
+## Notes (as stories land)
+- PH5-001/003/004/005: lady-ai crate. AiProvider trait (async, streaming via
+  StreamSink + cooperative CancelToken), AiRequest/AiResponse/AiTask, ProviderKind
+  registry + AiConfig (serde, per-task model selection). Providers: Ollama (ndjson,
+  no consent gate, friendly "not running" message), OpenAI/Mistral/Azure (shared
+  OpenAI-style chat SSE), Anthropic (Messages SSE), Gemini (streamGenerateContent
+  ?alt=sse) — all wiremock-tested, no live calls. context.rs: commit-style detection
+  (Conventional Commits), tiktoken-rs token counting, deterministic byte/token
+  budgeting (truncation + omission note; map-reduce summarization is a documented
+  follow-up), MANDATORY regex+entropy secret redaction (best-effort per ADR-0009).
+  prompts.rs: per-task prompt assembly + Commit Composer plan parse/validate. deny
+  clean (tiktoken-rs/regex/fancy-regex permissive, no allow-list change needed).

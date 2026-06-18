@@ -8,6 +8,7 @@ members = [
     "crates/lady-diff",
     "crates/lady-hosting",
     "crates/lady-license",
+    "crates/lady-ai",
     "src-tauri",
 ]
 
@@ -36,6 +37,7 @@ lady-graph = { path = "crates/lady-graph" }
 lady-diff = { path = "crates/lady-diff" }
 lady-hosting = { path = "crates/lady-hosting" }
 lady-license = { path = "crates/lady-license" }
+lady-ai = { path = "crates/lady-ai" }
 base64 = "0.22"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 rand = "0.8"
@@ -47,3 +49,6 @@ reqwest = { version = "0.12", default-features = false, features = [
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 wiremock = "0.6"
+tiktoken-rs = "0.6"
+regex = "1"
+rmcp = { version = "0.2", features = ["server", "transport-io"] }
