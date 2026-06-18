@@ -1,7 +1,7 @@
 {
   "project": "Lady",
   "branchName": "phase-5-ai",
-  "description": "Phase 5 — AI: GitKraken Git AI parity + superset (PLAN.md §9; ADR-0008 BYOK + local Ollama, no backend; ADR-0009 explicit opt-in + redaction; ADR-0011 thin reqwest provider trait). Adds the lady-ai crate and provider abstraction, BYOK key management + consent + per-repo toggle, local Ollama + the remote providers, a context builder with token budgeting + secret redaction, then the user-facing AI features: commit messages, Commit Composer (logical split), explain, review-gated conflict resolution, PR title/description + changelog + stash notes, and an MCP server exposing repo context. Post-release; builds on Phases 1-3 (partial-staging patch builder, 3-pane resolver) and Phase 4 hosting. Branches from main. Each story = one context-window commit. AI is opt-in and gated by explicit consent (ADR-0009); no remote call without consent; redaction tests are MANDATORY. Providers are tested against mocked HTTP (wiremock) with recorded responses — NEVER live APIs in CI (PLAN.md §10). UI stories rely on build + typecheck + unit tests with a manual window check noted.",
+  "description": "Phase 5 — AI: GitKraken Git AI parity + superset (PLAN.md §9; ADR-0008 BYOK + local Ollama, no backend; ADR-0009 explicit opt-in + redaction; ADR-0011 thin reqwest provider trait). Adds the lady-ai crate and provider abstraction, BYOK key management + consent + per-repo toggle, local Ollama + the remote providers, a context builder with token budgeting + secret redaction, then the user-facing AI features: commit messages, Commit Composer (logical split), explain, review-gated conflict resolution, PR/MR title/description + changelog + stash notes, and an MCP server exposing repo context. Post-release; builds on Phases 1-3 (partial-staging patch builder, 3-pane resolver) and Phase 4 (forge-agnostic hosting). Branches from main (Phase 4 complete + merged). Shared infra is already in the workspace from Phases 3-4 — reqwest/rustls, keyring, async-trait, tokio, and wiremock (dev) — so lady-ai mainly adds tiktoken-rs (budgeting), plus rmcp (PH5-011) and an optional vector store (PH5-012); run cargo-deny after adding each and allow-list any new permissive license as needed. Each story = one context-window commit. AI is opt-in and gated by explicit consent (ADR-0009); no remote call without consent; redaction tests are MANDATORY. Providers are tested against mocked HTTP (wiremock) with recorded responses — NEVER live APIs in CI (PLAN.md §10). UI stories rely on build + typecheck + unit tests with a manual window check noted.",
   "userStories": [
     {
       "id": "PH5-001",
@@ -15,7 +15,7 @@
       ],
       "priority": 1,
       "passes": false,
-      "notes": "PLAN.md §5.1, ADR-0011. Trait + types first; concrete providers in PH5-003/004."
+      "notes": "PLAN.md §5.1, ADR-0011. Trait + types first; concrete providers in PH5-003/004. Workspace already provides reqwest/rustls + async-trait + tokio + wiremock (Phases 3-4); add tiktoken-rs in PH5-005. Stream to the UI via Tauri events (reuse the fetch/push-progress emitter pattern from Phase 2)."
     },
     {
       "id": "PH5-002",
@@ -29,7 +29,7 @@
       ],
       "priority": 2,
       "passes": false,
-      "notes": "ADR-0008 + ADR-0009. Trust-critical — never call remote without recorded consent."
+      "notes": "ADR-0008 + ADR-0009. Trust-critical — never call remote without recorded consent. Reuse lady-hosting's TokenStore + KeyringStore (PH3-011/PH4-001) for keychain storage rather than a fresh impl; persist consent + the per-repo toggle + active-provider choice in settings (preserved like the license key, PH3-013)."
     },
     {
       "id": "PH5-003",
@@ -136,7 +136,7 @@
       ],
       "priority": 10,
       "passes": false,
-      "notes": "GitKraken parity: PR titles, changelogs, stash notes. Hooks into Phase 3/4 PR creation + Phase 2 stash."
+      "notes": "GitKraken parity: PR titles, changelogs, stash notes. Hooks into Phase 3/4 PR creation + Phase 2 stash. PR creation is forge-agnostic since PH4-001 (PR vs MR label by remote); the generated text hooks the existing Refs create-PR form and must respect the detected forge's noun."
     },
     {
       "id": "PH5-011",
@@ -149,7 +149,7 @@
       ],
       "priority": 11,
       "passes": false,
-      "notes": "PLAN.md §5.4 — makes Lady an MCP context provider (matches GitKraken MCP)."
+      "notes": "PLAN.md §5.4 — makes Lady an MCP context provider (matches GitKraken MCP). rmcp is a new dep — run cargo-deny after adding and allow-list any new permissive license (cf. the CDLA-Permissive-2.0 add for webpki-roots in PH4-001). get_file_at needs a public 'file at rev' read on lady-git (cat-blob); search_commits can start as a message/grep walk."
     },
     {
       "id": "PH5-012",
@@ -176,7 +176,7 @@
       ],
       "priority": 13,
       "passes": false,
-      "notes": "PLAN.md §9 Phase 5 exit. Remaining after this: Phase 6 polish & ship (packaging/notarization/auto-update/a11y/perf)."
+      "notes": "PLAN.md §9 Phase 5 exit. Remaining after this: Phase 6 polish & ship (packaging/notarization/auto-update/a11y/perf). Version line: workspace is at 1.1.0 after Phase 4; bump to 1.2.0 here."
     }
   ]
 }
