@@ -372,6 +372,17 @@ impl SignatureStatus {
     }
 }
 
+/// Snapshot of an in-progress `git bisect`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BisectState {
+    /// The commit currently checked out for testing (`HEAD`), if bisecting.
+    pub current_oid: Option<Oid>,
+    /// Git's rough estimate of remaining steps.
+    pub remaining_steps_estimate: usize,
+    /// The identified first-bad commit, once bisect converges.
+    pub suspected: Option<Oid>,
+}
+
 /// One entry in a ref's reflog (`git reflog`). Powers recovering lost commits.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReflogEntry {

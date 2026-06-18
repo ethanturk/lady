@@ -419,6 +419,41 @@ fn reflog(
     engine.reflog(&repo, &refname).map_err(|e| e.to_string())
 }
 
+/// Start a bisect bounded by `bad` and `good` (PH3-008).
+#[tauri::command]
+fn bisect_start(
+    repo: RepoId,
+    bad: String,
+    good: String,
+    engine: State<GixEngine>,
+) -> Result<lady_proto::BisectState, String> {
+    engine
+        .bisect_start(&repo, &Oid::from(bad), &Oid::from(good))
+        .map_err(|e| e.to_string())
+}
+
+/// Mark the current bisect commit `good` / `bad` / `skip`.
+#[tauri::command]
+fn bisect_mark(
+    repo: RepoId,
+    mark: String,
+    engine: State<GixEngine>,
+) -> Result<lady_proto::BisectState, String> {
+    engine.bisect_mark(&repo, &mark).map_err(|e| e.to_string())
+}
+
+/// Exit bisect, restoring the original branch.
+#[tauri::command]
+fn bisect_reset(repo: RepoId, engine: State<GixEngine>) -> Result<(), String> {
+    engine.bisect_reset(&repo).map_err(|e| e.to_string())
+}
+
+/// The current bisect state (empty when not bisecting).
+#[tauri::command]
+fn bisect_state(repo: RepoId, engine: State<GixEngine>) -> Result<lady_proto::BisectState, String> {
+    engine.bisect_state(&repo).map_err(|e| e.to_string())
+}
+
 /// The most recent commit subjects (newest first), capped at `limit`.
 #[tauri::command]
 fn recent_messages(
@@ -941,6 +976,10 @@ pub fn run() {
             remove_worktree,
             prune_worktrees,
             reflog,
+            bisect_start,
+            bisect_mark,
+            bisect_reset,
+            bisect_state,
             clone_repo,
             load_settings,
             save_settings

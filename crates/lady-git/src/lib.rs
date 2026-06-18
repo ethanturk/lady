@@ -10,10 +10,10 @@ use std::process::Command;
 use std::sync::Mutex;
 
 use lady_proto::{
-    AheadBehind, ApplyOutcome, Blame, BlameLine, ChangeKind, CommitMeta, ConflictSides,
-    ConflictState, FfMode, FileDiff, FileDiffKind, FileStatus, MergeOutcome, Oid, ParsedConflict,
-    RebaseOutcome, RebaseStep, RefInfo, RefKind, ReflogEntry, RepoId, Signature, SignatureStatus,
-    StashEntry, WorkingTree, Worktree,
+    AheadBehind, ApplyOutcome, BisectState, Blame, BlameLine, ChangeKind, CommitMeta,
+    ConflictSides, ConflictState, FfMode, FileDiff, FileDiffKind, FileStatus, MergeOutcome, Oid,
+    ParsedConflict, RebaseOutcome, RebaseStep, RefInfo, RefKind, ReflogEntry, RepoId, Signature,
+    SignatureStatus, StashEntry, WorkingTree, Worktree,
 };
 
 /// Errors surfaced by a [`GitEngine`].
@@ -361,6 +361,20 @@ pub trait GitEngine: Send + Sync {
     /// The reflog for `refname` (e.g. `HEAD`), newest first, for recovering
     /// lost commits (PH3-007).
     fn reflog(&self, repo: &RepoId, refname: &str) -> Result<Vec<ReflogEntry>>;
+
+    /// Start a bisect bounded by a known-`bad` and known-`good` commit; git
+    /// checks out a midpoint to test (PH3-008). Returns the resulting state.
+    fn bisect_start(&self, repo: &RepoId, bad: &Oid, good: &Oid) -> Result<BisectState>;
+
+    /// Mark the current bisect commit `good`, `bad`, or `skip`; git advances to
+    /// the next commit or reports the first bad one. Returns the new state.
+    fn bisect_mark(&self, repo: &RepoId, mark: &str) -> Result<BisectState>;
+
+    /// Exit bisect, restoring the original branch (`git bisect reset`).
+    fn bisect_reset(&self, repo: &RepoId) -> Result<()>;
+
+    /// The current bisect state (or an empty state when not bisecting).
+    fn bisect_state(&self, repo: &RepoId) -> Result<BisectState>;
 }
 
 /// A [`GitEngine`] backed by [`gix`] for read-only access (ADR-0003).
@@ -434,6 +448,33 @@ impl GixEngine {
         } else {
             msg.to_string()
         }))
+    }
+
+    /// Parse a `git bisect` command's output into a [`BisectState`]: detect the
+    /// "first bad commit" verdict, else the current commit + steps estimate.
+    fn parse_bisect(&self, workdir: &Path, out: &std::process::Output) -> Result<BisectState> {
+        let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
+        text.push_str(&String::from_utf8_lossy(&out.stderr));
+
+        // Converged: "<sha> is the first bad commit".
+        if let Some(line) = text.lines().find(|l| l.contains("is the first bad commit")) {
+            if let Some(sha) = line.split_whitespace().next() {
+                let oid = Oid::from(sha.to_string());
+                return Ok(BisectState {
+                    current_oid: Some(oid.clone()),
+                    remaining_steps_estimate: 0,
+                    suspected: Some(oid),
+                });
+            }
+        }
+
+        // Still bisecting: HEAD is the commit under test; estimate is the
+        // "roughly N steps" figure git prints.
+        Ok(BisectState {
+            current_oid: Some(head_oid(workdir)?),
+            remaining_steps_estimate: num_after(&text, "roughly ").unwrap_or(0),
+            suspected: None,
+        })
     }
 }
 
@@ -1667,6 +1708,55 @@ exit 0\n";
         }
         Ok(entries)
     }
+
+    fn bisect_start(&self, repo: &RepoId, bad: &Oid, good: &Oid) -> Result<BisectState> {
+        let wd = self.workdir(repo)?;
+        let out = run_git(&wd, &["bisect", "start", bad.as_str(), good.as_str()])?;
+        self.parse_bisect(&wd, &out)
+    }
+
+    fn bisect_mark(&self, repo: &RepoId, mark: &str) -> Result<BisectState> {
+        // Only the three sequencer verbs are valid here.
+        let verb = match mark {
+            "good" | "bad" | "skip" => mark,
+            other => return Err(Error::Git(format!("invalid bisect mark: {other}"))),
+        };
+        let wd = self.workdir(repo)?;
+        let out = run_git(&wd, &["bisect", verb])?;
+        self.parse_bisect(&wd, &out)
+    }
+
+    fn bisect_reset(&self, repo: &RepoId) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        run_git(&wd, &["bisect", "reset"]).map(|_| ())
+    }
+
+    fn bisect_state(&self, repo: &RepoId) -> Result<BisectState> {
+        let git_dir = self.repo(repo)?.git_dir().to_path_buf();
+        // Not bisecting → empty state.
+        if !git_dir.join("BISECT_START").exists() {
+            return Ok(BisectState::default());
+        }
+        let wd = self.workdir(repo)?;
+        Ok(BisectState {
+            current_oid: Some(head_oid(&wd)?),
+            remaining_steps_estimate: 0,
+            suspected: None,
+        })
+    }
+}
+
+/// Pull an integer out of `text` immediately following `marker` (skipping any
+/// non-digits in between).
+fn num_after(text: &str, marker: &str) -> Option<usize> {
+    let idx = text.find(marker)?;
+    let rest = &text[idx + marker.len()..];
+    let digits: String = rest
+        .chars()
+        .skip_while(|c| !c.is_ascii_digit())
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    digits.parse().ok()
 }
 
 /// Parse `git worktree list --porcelain` into [`Worktree`]s. Blocks are
@@ -3588,6 +3678,58 @@ mod tests {
         assert_eq!(commits.len(), 2, "two commits in the range");
         assert_eq!(commits[0].summary, "add a.txt", "oldest first");
         assert_eq!(commits[1].summary, "add b.txt");
+    }
+
+    #[test]
+    fn scripted_bisect_converges_to_the_known_bad_commit() {
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open");
+
+        // good_tip is the current (clean) tip. Build a chain; at commit 4 we
+        // introduce bug.txt, which then persists — so commit 4 is "first bad".
+        let good = head_oid(p).expect("good tip");
+        let mut first_bad: Option<Oid> = None;
+        for i in 1..=6 {
+            if i == 4 {
+                std::fs::write(p.join("bug.txt"), "bug\n").expect("write bug");
+            }
+            std::fs::write(p.join(format!("c{i}.txt")), format!("{i}\n")).expect("write");
+            git(p, &["add", "-A"]);
+            git(p, &["commit", "-q", "-m", &format!("c{i}")]);
+            if i == 4 {
+                first_bad = Some(head_oid(p).expect("bad commit"));
+            }
+        }
+        let bad = head_oid(p).expect("bad tip");
+        let first_bad = first_bad.expect("captured first-bad");
+
+        // Drive bisect: mark bad when bug.txt is present at the tested commit.
+        let mut state = engine.bisect_start(&id, &bad, &good).expect("bisect start");
+        let mut guard = 0;
+        while state.suspected.is_none() {
+            guard += 1;
+            assert!(guard < 20, "bisect should converge quickly");
+            let mark = if p.join("bug.txt").exists() {
+                "bad"
+            } else {
+                "good"
+            };
+            state = engine.bisect_mark(&id, mark).expect("bisect mark");
+        }
+
+        assert_eq!(
+            state.suspected.as_ref(),
+            Some(&first_bad),
+            "bisect should pinpoint the commit that introduced bug.txt"
+        );
+
+        engine.bisect_reset(&id).expect("bisect reset");
+        assert!(
+            !p.join(".git").join("BISECT_START").exists(),
+            "reset exits bisect"
+        );
     }
 
     #[test]

@@ -207,6 +207,13 @@ export interface ReflogEntry {
   time: number;
 }
 
+/** Mirrors lady_proto::BisectState. */
+export interface BisectState {
+  current_oid: string | null;
+  remaining_steps_estimate: number;
+  suspected: string | null;
+}
+
 /** Mirrors lady_proto::ConflictState. */
 export type ConflictState = "None" | "Merge" | "Rebase" | "CherryPick" | "Revert";
 
