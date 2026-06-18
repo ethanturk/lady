@@ -33,10 +33,26 @@ body {
   --on-accent: #ffffff;
   --selection: #e6f0ff;
   --error: #cf222e;
-  /* Code/diff panes keep a light surface so syntax highlighting stays
-     readable regardless of theme. */
+  /* Code/diff surface (themed) + the highlight.js token palette. */
   --code-bg: #ffffff;
   --code-fg: #24292e;
+  /* Text on always-light surfaces (e.g. the blame gutter pastels). */
+  --on-light: #24292e;
+  --diff-add-bg: #e6ffec;
+  --diff-del-bg: #ffebe9;
+  --diff-sel-bg: #fff3bf;
+  --hl-comment: #6e7781;
+  --hl-keyword: #cf222e;
+  --hl-string: #0a3069;
+  --hl-number: #0550ae;
+  --hl-built-in: #0550ae;
+  --hl-title: #8250df;
+  --hl-type: #953800;
+  --hl-variable: #953800;
+  --hl-tag: #116329;
+  --hl-meta: #6e7781;
+  --hl-addition: #116329;
+  --hl-deletion: #82071e;
 }
 
 :root[data-theme="dark"] {
@@ -51,8 +67,92 @@ body {
   --on-accent: #ffffff;
   --selection: #0b3a66;
   --error: #f85149;
-  --code-bg: #ffffff;
-  --code-fg: #24292e;
+  --code-bg: #1e1e1e;
+  --code-fg: #d4d4d4;
+  --on-light: #24292e;
+  --diff-add-bg: rgba(63, 185, 80, 0.16);
+  --diff-del-bg: rgba(248, 81, 73, 0.16);
+  --diff-sel-bg: rgba(187, 128, 9, 0.28);
+  --hl-comment: #8b949e;
+  --hl-keyword: #ff7b72;
+  --hl-string: #a5d6ff;
+  --hl-number: #79c0ff;
+  --hl-built-in: #79c0ff;
+  --hl-title: #d2a8ff;
+  --hl-type: #ffa657;
+  --hl-variable: #ffa657;
+  --hl-tag: #7ee787;
+  --hl-meta: #8b949e;
+  --hl-addition: #7ee787;
+  --hl-deletion: #ffa198;
+}
+
+/* ── highlight.js tokens, themed via CSS variables ─────────────────────────── */
+.hljs {
+  color: var(--code-fg);
+  background: transparent;
+}
+.hljs-comment,
+.hljs-quote {
+  color: var(--hl-comment);
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-doctag {
+  color: var(--hl-keyword);
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-char.escape_ {
+  color: var(--hl-string);
+}
+.hljs-number {
+  color: var(--hl-number);
+}
+.hljs-literal,
+.hljs-built_in,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-attr,
+.hljs-attribute {
+  color: var(--hl-built-in);
+}
+.hljs-title,
+.hljs-title.function_,
+.hljs-title.class_,
+.hljs-section {
+  color: var(--hl-title);
+}
+.hljs-type,
+.hljs-class .hljs-title {
+  color: var(--hl-type);
+}
+.hljs-variable,
+.hljs-template-variable,
+.hljs-params {
+  color: var(--hl-variable);
+}
+.hljs-tag,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class {
+  color: var(--hl-tag);
+}
+.hljs-meta {
+  color: var(--hl-meta);
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-strong {
+  font-weight: bold;
+}
+.hljs-addition {
+  color: var(--hl-addition);
+}
+.hljs-deletion {
+  color: var(--hl-deletion);
 }
 
 /* Inputs/buttons/selects inherit the theme rather than the UA's white. */

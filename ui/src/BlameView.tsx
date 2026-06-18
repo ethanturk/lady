@@ -73,7 +73,7 @@ const BlameView: Component<{ repoId: RepoId; initialPath?: string }> = (props) =
                   background: commitColor(line.commit),
                   // Gutter bg is always a light pastel → use dark text in both
                   // themes so it stays readable.
-                  color: "var(--code-fg)",
+                  color: "var(--on-light)",
                   padding: "0 0.4rem",
                   "white-space": "nowrap",
                   "border-right": "1px solid var(--border)",

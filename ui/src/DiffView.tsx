@@ -2,13 +2,14 @@ import { createEffect, createSignal, For, Show } from "solid-js";
 import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import hljs from "highlight.js";
-import "highlight.js/styles/github.css";
+// Syntax token colors are themed via CSS variables in styles.css (no static
+// highlight.js stylesheet, so the diff recolors with the app theme).
 import type { DiffHunk, DiffLine, DiffSpec, FileDiff, RepoId } from "./commands";
 
 type Mode = "unified" | "split";
 
-const ADD_BG = "#e6ffec";
-const DEL_BG = "#ffebe9";
+const ADD_BG = "var(--diff-add-bg)";
+const DEL_BG = "var(--diff-del-bg)";
 
 /** Map a file extension to a highlight.js language id (best-effort). */
 function langFromPath(path: string): string | undefined {
@@ -227,7 +228,7 @@ const HunkBlock: Component<{
               selectable() && (line.kind === "Added" || line.kind === "Deleted");
             const bg = () =>
               isSel(i())
-                ? "#fff3bf"
+                ? "var(--diff-sel-bg)"
                 : line.kind === "Added"
                   ? ADD_BG
                   : line.kind === "Deleted"
