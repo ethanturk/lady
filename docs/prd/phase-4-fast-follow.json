@@ -1,0 +1,138 @@
+{
+  "project": "Lady",
+  "branchName": "phase-4-fast-follow",
+  "description": "Phase 4 — Fast-follow hosting + niche (PLAN.md §9; post-release patches after the v1.0 Core Parity release line). Broadens hosting beyond GitHub to GitLab/Bitbucket/Azure DevOps (auth + MR/PR create + remote-repo create), adds GitHub notifications, and lands the deferred VCS-niche features: Git LFS, git-flow, and full submodule management. Builds on Phase 3's lady-hosting crate + GitHub provider and the shell-out git tier (ADR-0003). No AI (Phase 5). Branches from main (Phase 3 complete + merged). Each story = one context-window commit; mutating/engine methods unit-tested against throwaway tempdir repos; hosting providers tested against mocked HTTP (wiremock), never live APIs (PLAN.md §10). UI stories rely on build + typecheck + unit tests for loop verification with a manual window check noted.",
+  "userStories": [
+    {
+      "id": "PH4-001",
+      "title": "Generalize HostingProvider for multiple forges",
+      "description": "As a developer, I need the hosting layer to support more than GitHub so other forges plug in cleanly.",
+      "acceptanceCriteria": [
+        "lady-hosting: the HostingProvider trait (from Phase 3) is generalized so create_pull_request / create_repo / auth are forge-agnostic; the GitHub impl is refactored onto it with no behavior change",
+        "provider_for(remote_url) resolves github.com / gitlab.com / bitbucket.org / dev.azure.com (and self-hosted base URLs from config) to the right provider",
+        "Per-forge tokens stored in keyring under distinct keys (ADR-0006); never logged",
+        "Unit tests: URL->provider resolution for all four forges + a self-hosted base; existing GitHub PR test still green; cargo fmt/clippy -D warnings/test green; cargo deny passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "PLAN.md §7. Refactor-first so PH4-002..004 are thin additions. Keep GitHub green throughout."
+    },
+    {
+      "id": "PH4-002",
+      "title": "GitLab auth + create merge request",
+      "description": "As a user, I want to open a GitLab MR from my branch.",
+      "acceptanceCriteria": [
+        "GitLab HostingProvider impl: PAT/OAuth auth (token in keyring), detect a GitLab remote, create_merge_request(head, target, title, description) -> MR url",
+        "ui: the branch 'Create Pull Request' action targets GitLab when the remote is GitLab (labelled MR), prefilled from branch + commits",
+        "Errors for no-auth / no-GitLab-remote / API failure; unit test create_merge_request against mocked GitLab API (wiremock); cargo fmt/clippy/test green; cargo deny passes; npm run build green"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "PLAN.md §7. Reuses PH4-001 trait + the Phase 3 PR UI."
+    },
+    {
+      "id": "PH4-003",
+      "title": "Bitbucket auth + create pull request",
+      "description": "As a user, I want to open a Bitbucket PR from my branch.",
+      "acceptanceCriteria": [
+        "Bitbucket HostingProvider impl: app-password/OAuth auth (token in keyring), detect a Bitbucket remote, create_pull_request(...) -> PR url",
+        "ui: branch PR action targets Bitbucket when the remote matches; prefilled form",
+        "Errors handled; unit test against mocked Bitbucket API (wiremock); cargo fmt/clippy/test green; cargo deny passes; npm run build green"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "PLAN.md §7."
+    },
+    {
+      "id": "PH4-004",
+      "title": "Azure DevOps auth + create pull request",
+      "description": "As a user, I want to open an Azure DevOps PR from my branch.",
+      "acceptanceCriteria": [
+        "Azure DevOps HostingProvider impl: PAT auth (token in keyring), detect a dev.azure.com / visualstudio.com remote, create_pull_request(...) -> PR url (org/project/repo aware)",
+        "ui: branch PR action targets Azure DevOps when the remote matches; prefilled form",
+        "Errors handled; unit test against mocked Azure DevOps API (wiremock); cargo fmt/clippy/test green; cargo deny passes; npm run build green"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "PLAN.md §7. Azure DevOps URL/identity shape differs (org/project) — cover in resolution + tests."
+    },
+    {
+      "id": "PH4-005",
+      "title": "Create remote repository (provider-agnostic)",
+      "description": "As a user, I want to create a new remote repo from Lady.",
+      "acceptanceCriteria": [
+        "lady-hosting: create_repo(provider, { name, private, description }) -> { clone_url, web_url } implemented for all four forges",
+        "ui: a 'Create remote repository' action (and an option in the repo manager) that creates the remote and optionally adds it as 'origin' to the current repo",
+        "Errors handled per forge; unit tests against mocked APIs (wiremock) for each; cargo fmt/clippy/test green; cargo deny passes; npm run build green"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "PLAN.md §1 'Create remote repos', §7."
+    },
+    {
+      "id": "PH4-006",
+      "title": "GitHub notifications inbox",
+      "description": "As a user, I want to see my GitHub notifications inside Lady.",
+      "acceptanceCriteria": [
+        "lady-hosting (GitHub): list_notifications() -> Vec<Notification { title, repo, kind, url, unread, updated }>; mark_read(id)",
+        "ui: a notifications inbox view (and a tray/badge unread count) that lists notifications and opens one in the browser; manual refresh + poll interval",
+        "Unit test list/mark against mocked GitHub API (wiremock); cargo fmt/clippy/test green; cargo deny passes; npm run build green; manual window note in progress notes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": "PLAN.md §1 GitHub notifications (Fork parity). GitHub only; other forges out of scope."
+    },
+    {
+      "id": "PH4-007",
+      "title": "Git LFS support",
+      "description": "As a user, I want repos using Git LFS to work correctly.",
+      "acceptanceCriteria": [
+        "lady-git: LFS works through the shell-out git tier (ADR-0003) — clone/fetch/checkout invoke the user's git so smudge/clean filters run; detect git-lfs availability and surface a clear message if missing",
+        "ui: LFS-tracked files indicated (pointer vs materialized) in the tree/diff; a 'Track pattern with LFS' action runs `git lfs track <pattern>`",
+        "Unit/integration test: in a tempdir repo with git-lfs, an LFS-tracked file round-trips (pointer in index, real bytes in working tree); skipped with a clear note if git-lfs is unavailable; cargo fmt/clippy/test green; cargo deny passes; npm run build green"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": "PLAN.md §1 Git LFS (Fast-follow). Lean on the system git + git-lfs install (ADR-0003); do not reimplement the LFS protocol."
+    },
+    {
+      "id": "PH4-008",
+      "title": "git-flow support",
+      "description": "As a user, I want git-flow branch workflows.",
+      "acceptanceCriteria": [
+        "lady-git: git-flow config (init: main/develop + feature/release/hotfix prefixes) persisted; flow ops start/finish for feature, release, hotfix via shell-out git (or git-flow if present)",
+        "ui: a git-flow panel to init and to start/finish flows; finishing a release/hotfix tags + merges per config and refreshes graph/refs",
+        "Unit test: init then start+finish a feature branch in a tempdir repo merges into develop; cargo fmt/clippy/test green; cargo deny passes; npm run build green"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": "PLAN.md §1 git-flow (Fast-follow). Implement the flow semantics directly via git so a git-flow binary is not required."
+    },
+    {
+      "id": "PH4-009",
+      "title": "Submodule management",
+      "description": "As a user, I want to manage submodules including nested and edge cases.",
+      "acceptanceCriteria": [
+        "lady-git via shell-out git: list_submodules(repo) -> status (path, url, sha, initialized, dirty), add/init/update/sync/deinit; handle nested submodules",
+        "ui: a submodules panel listing status with init/update/sync/remove actions; opening a submodule opens it as a repo tab (Phase 1 repo manager)",
+        "Unit test: add + update a submodule in a tempdir superproject and assert status; cargo fmt/clippy/test green; cargo deny passes; npm run build green"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": "PLAN.md §1 submodules + Fast-follow 'submodule edge cases'."
+    },
+    {
+      "id": "PH4-010",
+      "title": "Phase 4 Fast-follow exit gate",
+      "description": "As the team, I want to confirm the Fast-follow set is complete and green.",
+      "acceptanceCriteria": [
+        "docs/RELEASE-CHECKLIST.md updated: the Fast-follow items (GitLab/Bitbucket/Azure DevOps PR/MR + remote-repo create, GitHub notifications, LFS, git-flow, submodules) ticked to their implementing stories",
+        "Whole workspace green: cargo fmt --all --check, cargo clippy --all-targets -- -D warnings, cargo test, cargo deny check, npm run build",
+        "Version bumped (e.g. 1.1.0); notes confirm Fast-follow complete"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": "PLAN.md §9 Phase 4. After this, Phase 5 (AI) is the remaining major phase before Phase 6 polish."
+    }
+  ]
+}

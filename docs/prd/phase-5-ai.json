@@ -1,0 +1,182 @@
+{
+  "project": "Lady",
+  "branchName": "phase-5-ai",
+  "description": "Phase 5 — AI: GitKraken Git AI parity + superset (PLAN.md §9; ADR-0008 BYOK + local Ollama, no backend; ADR-0009 explicit opt-in + redaction; ADR-0011 thin reqwest provider trait). Adds the lady-ai crate and provider abstraction, BYOK key management + consent + per-repo toggle, local Ollama + the remote providers, a context builder with token budgeting + secret redaction, then the user-facing AI features: commit messages, Commit Composer (logical split), explain, review-gated conflict resolution, PR title/description + changelog + stash notes, and an MCP server exposing repo context. Post-release; builds on Phases 1-3 (partial-staging patch builder, 3-pane resolver) and Phase 4 hosting. Branches from main. Each story = one context-window commit. AI is opt-in and gated by explicit consent (ADR-0009); no remote call without consent; redaction tests are MANDATORY. Providers are tested against mocked HTTP (wiremock) with recorded responses — NEVER live APIs in CI (PLAN.md §10). UI stories rely on build + typecheck + unit tests with a manual window check noted.",
+  "userStories": [
+    {
+      "id": "PH5-001",
+      "title": "lady-ai crate + AiProvider trait + task model",
+      "description": "As a developer, I need the AI abstraction so features are provider-agnostic.",
+      "acceptanceCriteria": [
+        "New crate crates/lady-ai: #[async_trait] AiProvider { complete(req) -> AiResponse (streaming), id(), context_window() } over reqwest/rustls (ADR-0011); AiRequest/AiResponse + AiTask enum (CommitMessage|SplitCommits|Explain|ResolveConflict|PrTitle|PrDescription|Changelog|StashNote)",
+        "Provider registry + per-feature model selection config (serde, persisted to settings)",
+        "Streaming + cooperative cancellation supported in the trait shape",
+        "Unit tests with a fake in-crate provider; cargo fmt/clippy -D warnings/test green; cargo deny passes (reqwest/rustls permissive)"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "PLAN.md §5.1, ADR-0011. Trait + types first; concrete providers in PH5-003/004."
+    },
+    {
+      "id": "PH5-002",
+      "title": "BYOK key management + consent + per-repo toggle",
+      "description": "As a user, I control which provider Lady uses and whether my code leaves the machine.",
+      "acceptanceCriteria": [
+        "Keys stored in the OS keychain via keyring (ADR-0008); never on disk plaintext, never logged",
+        "First-use consent flow (ADR-0009): the first action that would call a REMOTE provider shows which provider/model receives data and requires explicit opt-in; no silent default to cloud",
+        "Per-repo AI on/off toggle, default off until configured; ui settings to add/remove provider keys and pick the active provider",
+        "Unit tests: consent gate blocks a remote call until accepted; keychain abstraction get/set/delete (mocked); cargo fmt/clippy/test green; cargo deny passes; npm run build green"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "ADR-0008 + ADR-0009. Trust-critical — never call remote without recorded consent."
+    },
+    {
+      "id": "PH5-003",
+      "title": "Local Ollama provider (private path)",
+      "description": "As a privacy-conscious user, I want AI that never leaves my machine.",
+      "acceptanceCriteria": [
+        "AiProvider impl for a local Ollama endpoint (configurable host); model list + completion with streaming",
+        "Surfaced prominently as the 'never leaves your machine' option (ADR-0009); works with NO consent gate since it is local",
+        "Graceful message when Ollama is not running/installed; unit/integration test against a mocked Ollama HTTP endpoint; cargo fmt/clippy/test green; cargo deny passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "ADR-0008 local-first path. Do the local provider before remote ones so the private default exists first."
+    },
+    {
+      "id": "PH5-004",
+      "title": "Remote providers (OpenAI, Anthropic, Gemini, Azure, Mistral)",
+      "description": "As a user, I want to bring keys for the major cloud providers.",
+      "acceptanceCriteria": [
+        "AiProvider impls for OpenAI, Anthropic, Google Gemini, Azure OpenAI, and Mistral behind the PH5-001 trait, each with streaming + correct auth + endpoint shape",
+        "All remote calls go through the consent gate (PH5-002) and the redaction pass (PH5-005)",
+        "Unit tests per provider against mocked HTTP (wiremock) with recorded response fixtures; NO live API calls in tests; cargo fmt/clippy/test green; cargo deny passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "PLAN.md §5.1, ADR-0008. One story across the five since the trait makes each a thin client; split if any one proves large."
+    },
+    {
+      "id": "PH5-005",
+      "title": "Context builder + token budgeting + secret redaction",
+      "description": "As a developer, I need quality, size-bounded, redacted context fed to the model.",
+      "acceptanceCriteria": [
+        "lady-ai context builder: gather relevant diff/hunks + paths + branch + recent commit messages (style priming); detect Conventional Commits usage",
+        "Token budgeting with tiktoken-rs: rank/chunk hunks, map-reduce summarize large diffs, hard byte cap on payloads",
+        "MANDATORY secret-redaction pass (entropy + regex) before any REMOTE send; best-effort and documented as such (ADR-0009); prompts/responses with code not logged by default",
+        "Unit tests: redaction strips planted secrets; over-budget diffs are truncated/summarized deterministically; cargo fmt/clippy/test green; cargo deny passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "PLAN.md §5.2, ADR-0009. Redaction tests are non-negotiable. Local Ollama may skip redaction but the pipeline still budgets."
+    },
+    {
+      "id": "PH5-006",
+      "title": "AI commit message generation",
+      "description": "As a user, I want a generated commit message for my staged changes.",
+      "acceptanceCriteria": [
+        "An AiTask::CommitMessage flow: staged (or selected) diff -> context builder -> provider -> editable message preview; honors detected commit convention",
+        "ui: a 'Generate message' button in the commit box; streaming preview; user edits before committing; respects the per-repo AI toggle + consent",
+        "Unit test the prompt assembly + that a fake provider's output reaches the preview; cargo fmt/clippy/test green; cargo deny passes; npm run build green"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": "GitKraken parity: commit messages. Reuses Phase 2 staging."
+    },
+    {
+      "id": "PH5-007",
+      "title": "Commit Composer (split into logical commits)",
+      "description": "As a user, I want AI to organize my working changes into logical commits.",
+      "acceptanceCriteria": [
+        "AiTask::SplitCommits: full working diff -> model returns a plan [{ message, hunk_ids }] (structured JSON, validated)",
+        "Apply the plan by staging each group via the Phase 2 partial-staging patch builder, then committing each group with its message; review/confirm before applying (never auto-commit silently)",
+        "ui: a Composer view showing proposed commits + their hunks, editable, with apply/cancel",
+        "Unit test: a known multi-change working tree yields a plan that, applied, produces the expected N commits; cargo fmt/clippy/test green; cargo deny passes; npm run build green"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": "GitKraken Commit Composer — the marquee AI feature. Depends on Phase 2 partial-staging (PLAN.md §5.3)."
+    },
+    {
+      "id": "PH5-008",
+      "title": "Explain (commit / branch / stash / working changes)",
+      "description": "As a user, I want plain-English explanations of changes.",
+      "acceptanceCriteria": [
+        "AiTask::Explain over a target (commit | branch range | stash | working changes); read-only; a 'Regenerate' re-rolls at higher temperature",
+        "ui: an 'Explain' action in commit details, branch context menu, stash list, and the Changes view; streaming output panel",
+        "Unit test prompt assembly per target + fake-provider round-trip; cargo fmt/clippy/test green; cargo deny passes; npm run build green"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": "GitKraken parity: explanations + regenerate."
+    },
+    {
+      "id": "PH5-009",
+      "title": "AI conflict resolution (review-gated)",
+      "description": "As a user, I want AI suggestions to resolve merge conflicts, which I review.",
+      "acceptanceCriteria": [
+        "AiTask::ResolveConflict: per conflict region feed base+ours+theirs+context -> model returns a proposed resolution",
+        "The proposal is shown in the Phase 3 3-pane resolver for the user to accept/edit; NEVER auto-written without explicit confirmation (ADR-0009 spirit + PLAN.md §5.3)",
+        "ui: an 'Auto-resolve with AI' action per conflicted file that populates the result pane as a suggestion",
+        "Unit test: a conflict + fake provider yields a suggestion that lands in the resolver model but is not auto-committed; cargo fmt/clippy/test green; cargo deny passes; npm run build green"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": "GitKraken parity: Auto-resolve with AI. Reuses Phase 3 PH3-001/002 resolver. Always review-gated."
+    },
+    {
+      "id": "PH5-010",
+      "title": "AI PR title/description, changelog, stash notes",
+      "description": "As a user, I want generated PR text, changelogs, and stash notes.",
+      "acceptanceCriteria": [
+        "AiTask flows for PrTitle/PrDescription (summarize a branch's commit range), Changelog (group a range by Conventional-Commit type), and StashNote (summarize working changes when stashing)",
+        "ui: 'Generate' buttons in the Create-PR form (Phase 3/4), a changelog tool, and the stash dialog; editable output",
+        "Unit tests for each flow's prompt + fake-provider output; cargo fmt/clippy/test green; cargo deny passes; npm run build green"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": "GitKraken parity: PR titles, changelogs, stash notes. Hooks into Phase 3/4 PR creation + Phase 2 stash."
+    },
+    {
+      "id": "PH5-011",
+      "title": "MCP server (lady-mcp) exposing repo context",
+      "description": "As an external assistant (Claude/Cursor/etc.), I want Lady's repo context via MCP.",
+      "acceptanceCriteria": [
+        "New crate crates/lady-mcp using rmcp: expose tools/resources get_status, get_diff, get_log, get_file_at, blame, search_commits over the current repo via lady-git/lady-diff",
+        "Configurable enable/disable + the repo(s) exposed; read-only (no mutations) by default",
+        "Smoke test: an MCP client lists the tools and get_log returns commits for a fixture repo; cargo fmt/clippy/test green; cargo deny passes (rmcp permissive)"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": "PLAN.md §5.4 — makes Lady an MCP context provider (matches GitKraken MCP)."
+    },
+    {
+      "id": "PH5-012",
+      "title": "Semantic commit search (stretch)",
+      "description": "As a user, I want to find where something changed by meaning, not just text.",
+      "acceptanceCriteria": [
+        "Embed commit messages + diffs (provider embeddings or a local model) into a vector store (SQLite + brute force, or an hnsw index for v1); incremental index update on new commits",
+        "A search command/ui: natural-language query -> ranked commits (e.g. 'where did we change retry logic')",
+        "Unit test: indexing a fixture + a query returns the expected commit above unrelated ones; cargo fmt/clippy/test green; cargo deny passes; npm run build green",
+        "Clearly marked optional — may slip without blocking the Phase 5 exit"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": "PLAN.md §5.3 superset stretch. Skippable; note in progress if deferred."
+    },
+    {
+      "id": "PH5-013",
+      "title": "Phase 5 AI parity exit gate",
+      "description": "As the team, I want to confirm GitKraken Git AI parity + the local-first + MCP story.",
+      "acceptanceCriteria": [
+        "docs/RELEASE-CHECKLIST.md updated: commit messages, Commit Composer, explain, AI conflict resolution, PR title/description, changelog, stash notes, MCP server — each ticked to its story; the local-first Ollama path and explicit-opt-in privacy verified",
+        "Whole workspace green: cargo fmt --all --check, cargo clippy --all-targets -- -D warnings, cargo test, cargo deny check, npm run build; redaction + consent tests present and passing",
+        "Version bumped (e.g. 1.2.0); notes confirm GitKraken Git AI parity reached and that semantic search (PH5-012) is shipped or explicitly deferred"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": "PLAN.md §9 Phase 5 exit. Remaining after this: Phase 6 polish & ship (packaging/notarization/auto-update/a11y/perf)."
+    }
+  ]
+}
