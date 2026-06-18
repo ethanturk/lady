@@ -16,7 +16,7 @@ use lady_proto::{
     CommitMeta, ConflictSides, ConflictState, FfMode, FileDiff, FileDiffKind, FileStatus,
     FlowConfig, FlowKind, LfsFile, LfsStatus, MergeOutcome, Oid, ParsedConflict, RebaseOutcome,
     RebaseStep, RefInfo, RefKind, ReflogEntry, RepoId, Signature, SignatureStatus, StashEntry,
-    WorkingTree, Worktree,
+    Submodule, WorkingTree, Worktree,
 };
 
 /// Whether `git-lfs` is installed and usable (`git lfs version`). Free function
@@ -437,6 +437,28 @@ pub trait GitEngine: Send + Sync {
     /// into `master` (tagged) and `develop`, then the branch is deleted. Native
     /// git-flow semantics via shell-out git (no git-flow binary required).
     fn flow_finish(&self, repo: &RepoId, kind: FlowKind, name: &str) -> Result<()>;
+
+    /// List submodules with status (`git submodule status --recursive` + URLs
+    /// from `.gitmodules`), nested submodules included (PH4-009).
+    fn list_submodules(&self, repo: &RepoId) -> Result<Vec<Submodule>>;
+
+    /// Add a submodule at `path` from `url` (`git submodule add`).
+    fn add_submodule(&self, repo: &RepoId, url: &str, path: &str) -> Result<()>;
+
+    /// Initialize + check out all submodules (`git submodule update --init
+    /// --recursive`).
+    fn init_submodules(&self, repo: &RepoId) -> Result<()>;
+
+    /// Update submodules to their pinned commits (`git submodule update
+    /// --recursive`).
+    fn update_submodules(&self, repo: &RepoId) -> Result<()>;
+
+    /// Sync submodule URLs from `.gitmodules` into config (`git submodule
+    /// sync --recursive`).
+    fn sync_submodules(&self, repo: &RepoId) -> Result<()>;
+
+    /// Deinitialize the submodule at `path` (`git submodule deinit -f`).
+    fn deinit_submodule(&self, repo: &RepoId, path: &str) -> Result<()>;
 }
 
 /// A [`GitEngine`] backed by [`gix`] for read-only access (ADR-0003).
@@ -1992,6 +2014,63 @@ exit 0\n";
         Ok(branch)
     }
 
+    fn list_submodules(&self, repo: &RepoId) -> Result<Vec<Submodule>> {
+        let wd = self.workdir(repo)?;
+        let urls = submodule_urls(&wd);
+        let out = run_git_raw(&wd, &["submodule", "status", "--recursive"])?;
+        if !out.status.success() {
+            return Ok(Vec::new());
+        }
+        let mut subs = Vec::new();
+        for line in String::from_utf8_lossy(&out.stdout).lines() {
+            if line.is_empty() {
+                continue;
+            }
+            // `<marker><40hex> <path> (<ref>)` — marker: ' ' ok, '-' uninit,
+            // '+' out-of-date, 'U' conflicts.
+            let marker = line.as_bytes()[0] as char;
+            let rest = &line[1..];
+            let mut it = rest.split_whitespace();
+            let sha = it.next().unwrap_or("").to_string();
+            let Some(path) = it.next() else {
+                continue;
+            };
+            subs.push(Submodule {
+                url: urls.get(path).cloned().unwrap_or_default(),
+                path: path.to_string(),
+                sha,
+                initialized: marker != '-',
+                dirty: marker == '+' || marker == 'U',
+            });
+        }
+        Ok(subs)
+    }
+
+    fn add_submodule(&self, repo: &RepoId, url: &str, path: &str) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        run_git(&wd, &["submodule", "add", url, path]).map(|_| ())
+    }
+
+    fn init_submodules(&self, repo: &RepoId) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        run_git(&wd, &["submodule", "update", "--init", "--recursive"]).map(|_| ())
+    }
+
+    fn update_submodules(&self, repo: &RepoId) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        run_git(&wd, &["submodule", "update", "--recursive"]).map(|_| ())
+    }
+
+    fn sync_submodules(&self, repo: &RepoId) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        run_git(&wd, &["submodule", "sync", "--recursive"]).map(|_| ())
+    }
+
+    fn deinit_submodule(&self, repo: &RepoId, path: &str) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        run_git(&wd, &["submodule", "deinit", "-f", path]).map(|_| ())
+    }
+
     fn flow_finish(&self, repo: &RepoId, kind: FlowKind, name: &str) -> Result<()> {
         let cfg = self.flow_config(repo)?;
         let wd = self.workdir(repo)?;
@@ -2034,6 +2113,50 @@ exit 0\n";
         }
         Ok(())
     }
+}
+
+/// Build a `path -> url` map from a superproject's `.gitmodules`.
+fn submodule_urls(workdir: &Path) -> HashMap<String, String> {
+    let out = run_git_raw(
+        workdir,
+        &[
+            "config",
+            "-f",
+            ".gitmodules",
+            "--get-regexp",
+            r"^submodule\..*",
+        ],
+    );
+    let mut name_path: HashMap<String, String> = HashMap::new();
+    let mut name_url: HashMap<String, String> = HashMap::new();
+    if let Ok(out) = out {
+        if out.status.success() {
+            for line in String::from_utf8_lossy(&out.stdout).lines() {
+                // "submodule.<name>.<key> <value>"
+                let Some((key, value)) = line.split_once(' ') else {
+                    continue;
+                };
+                let parts: Vec<&str> = key.splitn(3, '.').collect();
+                if parts.len() != 3 {
+                    continue;
+                }
+                let (name, field) = (parts[1].to_string(), parts[2]);
+                match field {
+                    "path" => {
+                        name_path.insert(name, value.trim().to_string());
+                    }
+                    "url" => {
+                        name_url.insert(name, value.trim().to_string());
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    name_path
+        .into_iter()
+        .filter_map(|(name, path)| name_url.get(&name).map(|url| (path, url.clone())))
+        .collect()
 }
 
 /// Read a single git config value, or `None` when unset.
@@ -4031,6 +4154,49 @@ mod tests {
             "lfs files: {:?}",
             status.files
         );
+    }
+
+    #[test]
+    fn submodule_add_update_and_status() {
+        // A standalone repo to use as the submodule source.
+        let sub_src = tempfile::tempdir().expect("sub src");
+        let sp = sub_src.path();
+        git(sp, &["init", "-q", "-b", "main"]);
+        git(sp, &["config", "user.name", "Sub"]);
+        git(sp, &["config", "user.email", "s@s.com"]);
+        git(sp, &["config", "commit.gpgsign", "false"]);
+        std::fs::write(sp.join("lib.txt"), "lib\n").expect("write");
+        git(sp, &["add", "."]);
+        git(sp, &["commit", "-q", "-m", "sub init"]);
+
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open");
+
+        // Local submodule transport must be explicitly allowed in modern git.
+        git(p, &["config", "protocol.file.allow", "always"]);
+        let url = sp.to_str().expect("sub src path");
+        engine
+            .add_submodule(&id, url, "libs/sub")
+            .expect("add submodule");
+        git(p, &["commit", "-q", "-m", "add submodule"]);
+
+        let subs = engine.list_submodules(&id).expect("list submodules");
+        let sub = subs
+            .iter()
+            .find(|s| s.path == "libs/sub")
+            .expect("submodule listed");
+        assert!(sub.initialized, "added submodule is initialized: {sub:?}");
+        assert_eq!(sub.url, url, "url read from .gitmodules");
+        assert!(!sub.sha.is_empty(), "pinned sha recorded");
+        assert!(
+            p.join("libs/sub/lib.txt").exists(),
+            "submodule content checked out"
+        );
+
+        // Update is a no-op here but must succeed.
+        engine.update_submodules(&id).expect("update submodules");
     }
 
     #[test]

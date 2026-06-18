@@ -284,6 +284,15 @@ export interface LfsStatus {
   files: LfsFile[];
 }
 
+/** Mirrors lady_proto::Submodule. */
+export interface Submodule {
+  path: string;
+  url: string;
+  sha: string;
+  initialized: boolean;
+  dirty: boolean;
+}
+
 /** Mirrors lady_proto::FlowKind. */
 export type FlowKind = "Feature" | "Release" | "Hotfix";
 

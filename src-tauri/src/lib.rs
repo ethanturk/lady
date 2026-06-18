@@ -408,6 +408,54 @@ fn prune_worktrees(repo: RepoId, engine: State<GixEngine>) -> Result<(), String>
     engine.prune_worktrees(&repo).map_err(|e| e.to_string())
 }
 
+/// List submodules with status (PH4-009).
+#[tauri::command]
+fn list_submodules(
+    repo: RepoId,
+    engine: State<GixEngine>,
+) -> Result<Vec<lady_proto::Submodule>, String> {
+    engine.list_submodules(&repo).map_err(|e| e.to_string())
+}
+
+/// Add a submodule at `path` from `url`.
+#[tauri::command]
+fn add_submodule(
+    repo: RepoId,
+    url: String,
+    path: String,
+    engine: State<GixEngine>,
+) -> Result<(), String> {
+    engine
+        .add_submodule(&repo, &url, &path)
+        .map_err(|e| e.to_string())
+}
+
+/// Initialize + check out all submodules.
+#[tauri::command]
+fn init_submodules(repo: RepoId, engine: State<GixEngine>) -> Result<(), String> {
+    engine.init_submodules(&repo).map_err(|e| e.to_string())
+}
+
+/// Update submodules to their pinned commits.
+#[tauri::command]
+fn update_submodules(repo: RepoId, engine: State<GixEngine>) -> Result<(), String> {
+    engine.update_submodules(&repo).map_err(|e| e.to_string())
+}
+
+/// Sync submodule URLs from `.gitmodules`.
+#[tauri::command]
+fn sync_submodules(repo: RepoId, engine: State<GixEngine>) -> Result<(), String> {
+    engine.sync_submodules(&repo).map_err(|e| e.to_string())
+}
+
+/// Deinitialize the submodule at `path`.
+#[tauri::command]
+fn deinit_submodule(repo: RepoId, path: String, engine: State<GixEngine>) -> Result<(), String> {
+    engine
+        .deinit_submodule(&repo, &path)
+        .map_err(|e| e.to_string())
+}
+
 /// Read the persisted git-flow config (PH4-008).
 #[tauri::command]
 fn flow_config(repo: RepoId, engine: State<GixEngine>) -> Result<lady_proto::FlowConfig, String> {
@@ -1437,6 +1485,12 @@ pub fn run() {
             flow_init,
             flow_start,
             flow_finish,
+            list_submodules,
+            add_submodule,
+            init_submodules,
+            update_submodules,
+            sync_submodules,
+            deinit_submodule,
             bisect_start,
             bisect_mark,
             bisect_reset,

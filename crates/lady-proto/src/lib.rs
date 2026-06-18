@@ -413,6 +413,22 @@ pub struct CommandOutput {
     pub exit_code: i32,
 }
 
+/// A submodule's status within a superproject (PH4-009).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Submodule {
+    /// Path relative to the superproject root.
+    pub path: String,
+    /// Configured URL (from `.gitmodules`).
+    pub url: String,
+    /// The recorded commit the superproject pins.
+    pub sha: String,
+    /// Whether the submodule is initialized/checked out.
+    pub initialized: bool,
+    /// Whether the checked-out commit differs from the pinned one, or it has
+    /// conflicts (git's `+` / `U` status markers).
+    pub dirty: bool,
+}
+
 /// A git-flow branch family (PH4-008).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FlowKind {

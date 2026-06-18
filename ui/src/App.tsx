@@ -20,6 +20,7 @@ import SettingsView from "./SettingsView";
 import NotificationsView from "./NotificationsView";
 import LfsView from "./LfsView";
 import GitFlowView from "./GitFlowView";
+import SubmodulesView from "./SubmodulesView";
 import LicenseGate from "./LicenseGate";
 import SignatureBadge from "./SignatureBadge";
 import type { LicenseStatus, SignatureStatus } from "./commands";
@@ -40,7 +41,8 @@ type Tab =
   | "settings"
   | "notifications"
   | "lfs"
-  | "flow";
+  | "flow"
+  | "submodules";
 
 const App: Component = () => {
   const [info, setInfo] = createSignal<AppInfo | null>(null);
@@ -313,6 +315,9 @@ const App: Component = () => {
           <button style={tabStyle("flow")} onClick={() => setTab("flow")}>
             git-flow
           </button>
+          <button style={tabStyle("submodules")} onClick={() => setTab("submodules")}>
+            Submodules
+          </button>
           <button style={tabStyle("settings")} onClick={() => setTab("settings")}>
             Settings
           </button>
@@ -426,6 +431,15 @@ const App: Component = () => {
           </Show>
           <Show when={tab() === "flow"}>
             <GitFlowView repoId={repoId()!} refreshNonce={refreshNonce()} onChanged={refresh} />
+          </Show>
+          <Show when={tab() === "submodules"}>
+            <SubmodulesView
+              repoId={repoId()!}
+              repoPath={active()!.path}
+              refreshNonce={refreshNonce()}
+              onChanged={refresh}
+              onOpen={(path) => openRepoPath?.(path)}
+            />
           </Show>
           <Show when={tab() === "settings"}>
             <SettingsView repoId={repoId()!} />
