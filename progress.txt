@@ -10,7 +10,7 @@ UI stories also note a manual window check here.
 - [x] PH4-001 Generalize HostingProvider for multiple forges
 - [x] PH4-002 GitLab auth + create merge request
 - [x] PH4-003 Bitbucket auth + create pull request
-- [ ] PH4-004 Azure DevOps auth + create pull request
+- [x] PH4-004 Azure DevOps auth + create pull request
 - [ ] PH4-005 Create remote repository (provider-agnostic)
 - [ ] PH4-006 GitHub notifications inbox
 - [ ] PH4-007 Git LFS support
