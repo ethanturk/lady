@@ -12,7 +12,7 @@ cargo test, cargo deny check, npm run build. UI stories also note a manual windo
 - [x] PH3-004 Interactive rebase UI
 - [x] PH3-005 Commit signing (GPG + SSH)
 - [x] PH3-006 Worktrees
-- [ ] PH3-007 Reflog view + restore lost commits
+- [x] PH3-007 Reflog view + restore lost commits
 - [ ] PH3-008 Bisect
 - [ ] PH3-009 Custom commands (UI builder)
 - [ ] PH3-010 External diff/merge tool integration

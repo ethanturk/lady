@@ -408,6 +408,17 @@ fn prune_worktrees(repo: RepoId, engine: State<GixEngine>) -> Result<(), String>
     engine.prune_worktrees(&repo).map_err(|e| e.to_string())
 }
 
+/// The reflog for `refname` (default HEAD), newest first (PH3-007).
+#[tauri::command]
+fn reflog(
+    repo: RepoId,
+    refname: Option<String>,
+    engine: State<GixEngine>,
+) -> Result<Vec<lady_proto::ReflogEntry>, String> {
+    let refname = refname.unwrap_or_else(|| "HEAD".to_string());
+    engine.reflog(&repo, &refname).map_err(|e| e.to_string())
+}
+
 /// The most recent commit subjects (newest first), capped at `limit`.
 #[tauri::command]
 fn recent_messages(
@@ -929,6 +940,7 @@ pub fn run() {
             add_worktree,
             remove_worktree,
             prune_worktrees,
+            reflog,
             clone_repo,
             load_settings,
             save_settings

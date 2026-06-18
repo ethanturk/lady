@@ -12,8 +12,8 @@ use std::sync::Mutex;
 use lady_proto::{
     AheadBehind, ApplyOutcome, Blame, BlameLine, ChangeKind, CommitMeta, ConflictSides,
     ConflictState, FfMode, FileDiff, FileDiffKind, FileStatus, MergeOutcome, Oid, ParsedConflict,
-    RebaseOutcome, RebaseStep, RefInfo, RefKind, RepoId, Signature, SignatureStatus, StashEntry,
-    WorkingTree, Worktree,
+    RebaseOutcome, RebaseStep, RefInfo, RefKind, ReflogEntry, RepoId, Signature, SignatureStatus,
+    StashEntry, WorkingTree, Worktree,
 };
 
 /// Errors surfaced by a [`GitEngine`].
@@ -357,6 +357,10 @@ pub trait GitEngine: Send + Sync {
 
     /// Prune stale worktree administrative entries (`git worktree prune`).
     fn prune_worktrees(&self, repo: &RepoId) -> Result<()>;
+
+    /// The reflog for `refname` (e.g. `HEAD`), newest first, for recovering
+    /// lost commits (PH3-007).
+    fn reflog(&self, repo: &RepoId, refname: &str) -> Result<Vec<ReflogEntry>>;
 }
 
 /// A [`GitEngine`] backed by [`gix`] for read-only access (ADR-0003).
@@ -1606,6 +1610,62 @@ exit 0\n";
     fn prune_worktrees(&self, repo: &RepoId) -> Result<()> {
         let wd = self.workdir(repo)?;
         run_git(&wd, &["worktree", "prune"]).map(|_| ())
+    }
+
+    fn reflog(&self, repo: &RepoId, refname: &str) -> Result<Vec<ReflogEntry>> {
+        let wd = self.workdir(repo)?;
+        // `%H<TAB>%gd<TAB>%gs` with --date=unix: new-oid, "ref@{<unix>}", and
+        // the reflog subject ("action: message"). No reflog → empty stdout.
+        let out = run_git(
+            &wd,
+            &[
+                "reflog",
+                "show",
+                refname,
+                "--date=unix",
+                "--format=%H%x09%gd%x09%gs",
+            ],
+        )?;
+        let text = String::from_utf8_lossy(&out.stdout);
+
+        let mut entries: Vec<ReflogEntry> = Vec::new();
+        for line in text.lines() {
+            let mut parts = line.splitn(3, '\t');
+            let oid = parts.next().unwrap_or("").to_string();
+            let selector = parts.next().unwrap_or("");
+            let subject = parts.next().unwrap_or("");
+
+            // Pull the unix time out of `ref@{<unix>}`.
+            let time = selector
+                .rsplit_once("@{")
+                .and_then(|(_, rest)| rest.strip_suffix('}'))
+                .and_then(|n| n.parse::<i64>().ok())
+                .unwrap_or(0);
+
+            // Split "action: message"; a bare subject is all action.
+            let (action, message) = match subject.split_once(": ") {
+                Some((a, m)) => (a.to_string(), m.to_string()),
+                None => (subject.to_string(), String::new()),
+            };
+
+            entries.push(ReflogEntry {
+                oid: Oid::from(oid),
+                prev_oid: Oid::from(String::new()),
+                action,
+                message,
+                time,
+            });
+        }
+
+        // The previous value of each entry is the next (older) entry's oid.
+        for i in 0..entries.len() {
+            let prev = entries
+                .get(i + 1)
+                .map(|e| e.oid.clone())
+                .unwrap_or_else(|| Oid::from(String::new()));
+            entries[i].prev_oid = prev;
+        }
+        Ok(entries)
     }
 }
 
@@ -3528,6 +3588,42 @@ mod tests {
         assert_eq!(commits.len(), 2, "two commits in the range");
         assert_eq!(commits[0].summary, "add a.txt", "oldest first");
         assert_eq!(commits[1].summary, "add b.txt");
+    }
+
+    #[test]
+    fn reflog_surfaces_dangling_commit_and_allows_branch_recovery() {
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open");
+
+        // Make a commit, then hard-reset past it so it becomes dangling.
+        let lost = add_commit(&engine, &id, p, "lost.txt", "precious\n");
+        git(p, &["reset", "--hard", "HEAD~1"]);
+        assert_ne!(head_oid(p).expect("head"), lost, "commit was reset away");
+
+        // The reflog still records the lost commit.
+        let log = engine.reflog(&id, "HEAD").expect("reflog");
+        assert!(
+            log.iter().any(|e| e.oid == lost),
+            "dangling commit should appear in the reflog: {log:?}"
+        );
+        // The reset entry should be classified by action.
+        assert!(
+            log.iter().any(|e| e.action == "reset"),
+            "a reset action should be present: {log:?}"
+        );
+
+        // Recover it by creating a branch at its oid.
+        engine
+            .create_branch(&id, "recovered", Some(lost.as_str()))
+            .expect("create recovery branch");
+        let recovered_tip = git_out(p, &["rev-parse", "recovered"]);
+        assert_eq!(
+            recovered_tip,
+            lost.as_str(),
+            "branch points at the lost commit"
+        );
     }
 
     #[test]

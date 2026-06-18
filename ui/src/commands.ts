@@ -198,6 +198,15 @@ export interface Worktree {
   locked: boolean;
 }
 
+/** Mirrors lady_proto::ReflogEntry. */
+export interface ReflogEntry {
+  oid: string;
+  prev_oid: string;
+  action: string;
+  message: string;
+  time: number;
+}
+
 /** Mirrors lady_proto::ConflictState. */
 export type ConflictState = "None" | "Merge" | "Rebase" | "CherryPick" | "Revert";
 

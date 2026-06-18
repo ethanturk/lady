@@ -372,6 +372,22 @@ impl SignatureStatus {
     }
 }
 
+/// One entry in a ref's reflog (`git reflog`). Powers recovering lost commits.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReflogEntry {
+    /// The commit the ref pointed at after this entry (the "new" oid).
+    pub oid: Oid,
+    /// The commit the ref pointed at before (the previous entry's oid); empty
+    /// for the oldest entry.
+    pub prev_oid: Oid,
+    /// The action that created the entry (e.g. `commit`, `reset`, `checkout`).
+    pub action: String,
+    /// The remainder of the reflog subject after the action.
+    pub message: String,
+    /// Entry time as Unix seconds.
+    pub time: i64,
+}
+
 /// A linked worktree of a repository (`git worktree list`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Worktree {

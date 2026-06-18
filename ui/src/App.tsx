@@ -13,12 +13,21 @@ import RepoBar from "./RepoBar";
 import ConflictResolver from "./ConflictResolver";
 import InteractiveRebase from "./InteractiveRebase";
 import WorktreesView from "./WorktreesView";
+import ReflogView from "./ReflogView";
 import SignatureBadge from "./SignatureBadge";
 import type { SignatureStatus } from "./commands";
 import CommandPalette from "./CommandPalette";
 import type { PaletteEntry } from "./CommandPalette";
 
-type Tab = "changes" | "commits" | "refs" | "blame" | "history" | "conflicts" | "worktrees";
+type Tab =
+  | "changes"
+  | "commits"
+  | "refs"
+  | "blame"
+  | "history"
+  | "conflicts"
+  | "worktrees"
+  | "reflog";
 
 const App: Component = () => {
   const [info, setInfo] = createSignal<AppInfo | null>(null);
@@ -251,6 +260,9 @@ const App: Component = () => {
           <button style={tabStyle("worktrees")} onClick={() => setTab("worktrees")}>
             Worktrees
           </button>
+          <button style={tabStyle("reflog")} onClick={() => setTab("reflog")}>
+            Reflog
+          </button>
           <Show when={conflictState() !== "None"}>
             <button
               style={{ ...tabStyle("conflicts"), background: tab() === "conflicts" ? "#d1242f" : "#ffe0e0", color: tab() === "conflicts" ? "#fff" : "#d1242f" }}
@@ -338,6 +350,9 @@ const App: Component = () => {
               onChanged={refresh}
               onOpen={(path) => openRepoPath?.(path)}
             />
+          </Show>
+          <Show when={tab() === "reflog"}>
+            <ReflogView repoId={repoId()!} refreshNonce={refreshNonce()} onChanged={refresh} />
           </Show>
           <Show when={tab() === "conflicts"}>
             <ConflictResolver
