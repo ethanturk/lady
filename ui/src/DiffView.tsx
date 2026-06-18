@@ -112,26 +112,6 @@ const monoCell = {
   overflow: "hidden",
 };
 
-const HunkUnified: Component<{ hunk: DiffHunk; lang: string | undefined }> = (
-  props,
-) => (
-  <For each={props.hunk.lines}>
-    {(line) => {
-      const bg =
-        line.kind === "Added" ? ADD_BG : line.kind === "Deleted" ? DEL_BG : "transparent";
-      const sign = line.kind === "Added" ? "+" : line.kind === "Deleted" ? "-" : " ";
-      return (
-        <div style={{ display: "flex", background: bg }}>
-          <span style={{ ...monoCell, color: "#999", "min-width": "1.5ch", padding: "0 0.25rem" }}>
-            {sign}
-          </span>
-          <span style={{ ...monoCell, flex: "1" }} innerHTML={highlight(line.content, props.lang)} />
-        </div>
-      );
-    }}
-  </For>
-);
-
 const HunkSplit: Component<{ hunk: DiffHunk; lang: string | undefined }> = (props) => (
   <For each={splitRows(props.hunk.lines)}>
     {(row) => {
@@ -153,11 +133,143 @@ const HunkSplit: Component<{ hunk: DiffHunk; lang: string | undefined }> = (prop
   </For>
 );
 
+const actionBtn = {
+  border: "1px solid #ccc",
+  background: "#fff",
+  "border-radius": "3px",
+  "font-size": "0.7rem",
+  cursor: "pointer",
+};
+
+/**
+ * One hunk: header (with hunk- and line-level actions) + body. When line
+ * actions are supplied (the unstaged Changes view), each changed line gets a
+ * checkbox so a subset can be staged or discarded.
+ */
+const HunkBlock: Component<{
+  path: string;
+  hunk: DiffHunk;
+  hunkIndex: number;
+  mode: Mode;
+  lang: string | undefined;
+  hunkActionLabel?: string;
+  onHunkAction?: (path: string, hunkIndex: number) => void;
+  onStageLines?: (path: string, hunkIndex: number, lines: number[]) => void;
+  onDiscardLines?: (path: string, hunkIndex: number, lines: number[]) => void;
+  onDiscardHunk?: (path: string, hunkIndex: number) => void;
+}> = (props) => {
+  const [sel, setSel] = createSignal<number[]>([]);
+  const selectable = () => !!(props.onStageLines || props.onDiscardLines);
+  const isSel = (i: number) => sel().includes(i);
+  const toggle = (i: number) =>
+    setSel((prev) => (prev.includes(i) ? prev.filter((x) => x !== i) : [...prev, i]));
+  const clear = () => setSel([]);
+
+  return (
+    <div style={{ "border-top": "1px solid #eee" }}>
+      <div
+        style={{
+          display: "flex",
+          "align-items": "center",
+          gap: "0.4rem",
+          background: "#f0f3f6",
+          color: "#666",
+          "font-family": "monospace",
+          "font-size": "0.75rem",
+          padding: "0.15rem 0.5rem",
+        }}
+      >
+        <span style={{ flex: "1" }}>
+          @@ -{props.hunk.old_start},{props.hunk.old_lines} +{props.hunk.new_start},
+          {props.hunk.new_lines} @@
+        </span>
+        <Show when={sel().length > 0 && props.onStageLines}>
+          <button style={actionBtn} onClick={() => { props.onStageLines!(props.path, props.hunkIndex, sel()); clear(); }}>
+            Stage {sel().length} line{sel().length > 1 ? "s" : ""}
+          </button>
+        </Show>
+        <Show when={sel().length > 0 && props.onDiscardLines}>
+          <button
+            style={actionBtn}
+            onClick={() => {
+              if (!confirm(`Discard ${sel().length} line(s)? This cannot be undone.`)) return;
+              props.onDiscardLines!(props.path, props.hunkIndex, sel());
+              clear();
+            }}
+          >
+            Discard {sel().length} line{sel().length > 1 ? "s" : ""}
+          </button>
+        </Show>
+        <Show when={props.onHunkAction}>
+          <button style={actionBtn} onClick={() => props.onHunkAction!(props.path, props.hunkIndex)}>
+            {props.hunkActionLabel ?? "Stage hunk"}
+          </button>
+        </Show>
+        <Show when={props.onDiscardHunk}>
+          <button
+            style={actionBtn}
+            onClick={() => {
+              if (!confirm("Discard this hunk? This cannot be undone.")) return;
+              props.onDiscardHunk!(props.path, props.hunkIndex);
+            }}
+          >
+            Discard hunk
+          </button>
+        </Show>
+      </div>
+      <Show
+        when={props.mode === "unified"}
+        fallback={<HunkSplit hunk={props.hunk} lang={props.lang} />}
+      >
+        <For each={props.hunk.lines}>
+          {(line, i) => {
+            const canSelect = () =>
+              selectable() && (line.kind === "Added" || line.kind === "Deleted");
+            const bg = () =>
+              isSel(i())
+                ? "#fff3bf"
+                : line.kind === "Added"
+                  ? ADD_BG
+                  : line.kind === "Deleted"
+                    ? DEL_BG
+                    : "transparent";
+            const sign = line.kind === "Added" ? "+" : line.kind === "Deleted" ? "-" : " ";
+            return (
+              <div style={{ display: "flex", background: bg() }}>
+                <Show
+                  when={canSelect()}
+                  fallback={
+                    <span style={{ ...monoCell, color: "#999", "min-width": "1.8ch", padding: "0 0.25rem" }}>
+                      {sign}
+                    </span>
+                  }
+                >
+                  <input
+                    type="checkbox"
+                    checked={isSel(i())}
+                    onChange={() => toggle(i())}
+                    style={{ margin: "0 0.25rem", cursor: "pointer" }}
+                    title={`${sign} select line`}
+                  />
+                </Show>
+                <span style={{ ...monoCell, flex: "1" }} innerHTML={highlight(line.content, props.lang)} />
+              </div>
+            );
+          }}
+        </For>
+      </Show>
+    </div>
+  );
+};
+
 const FileBlock: Component<{
   file: FileDiff;
   mode: Mode;
   hunkActionLabel?: string;
   onHunkAction?: (path: string, hunkIndex: number) => void;
+  onStageLines?: (path: string, hunkIndex: number, lines: number[]) => void;
+  onDiscardLines?: (path: string, hunkIndex: number, lines: number[]) => void;
+  onDiscardHunk?: (path: string, hunkIndex: number) => void;
 }> = (props) => {
   const lang = () => langFromPath(props.file.path);
   return (
@@ -207,41 +319,18 @@ const FileBlock: Component<{
       <Show when={props.file.hunks.length > 0}>
         <For each={props.file.hunks}>
           {(hunk, hunkIndex) => (
-            <div style={{ "border-top": "1px solid #eee" }}>
-              <div
-                style={{
-                  display: "flex",
-                  "align-items": "center",
-                  gap: "0.5rem",
-                  background: "#f0f3f6",
-                  color: "#666",
-                  "font-family": "monospace",
-                  "font-size": "0.75rem",
-                  padding: "0.15rem 0.5rem",
-                }}
-              >
-                <span style={{ flex: "1" }}>
-                  @@ -{hunk.old_start},{hunk.old_lines} +{hunk.new_start},{hunk.new_lines} @@
-                </span>
-                <Show when={props.onHunkAction}>
-                  <button
-                    style={{
-                      border: "1px solid #ccc",
-                      background: "#fff",
-                      "border-radius": "3px",
-                      "font-size": "0.7rem",
-                      cursor: "pointer",
-                    }}
-                    onClick={() => props.onHunkAction!(props.file.path, hunkIndex())}
-                  >
-                    {props.hunkActionLabel ?? "Stage hunk"}
-                  </button>
-                </Show>
-              </div>
-              <Show when={props.mode === "unified"} fallback={<HunkSplit hunk={hunk} lang={lang()} />}>
-                <HunkUnified hunk={hunk} lang={lang()} />
-              </Show>
-            </div>
+            <HunkBlock
+              path={props.file.path}
+              hunk={hunk}
+              hunkIndex={hunkIndex()}
+              mode={props.mode}
+              lang={lang()}
+              hunkActionLabel={props.hunkActionLabel}
+              onHunkAction={props.onHunkAction}
+              onStageLines={props.onStageLines}
+              onDiscardLines={props.onDiscardLines}
+              onDiscardHunk={props.onDiscardHunk}
+            />
           )}
         </For>
       </Show>
@@ -262,6 +351,10 @@ const DiffView: Component<{
   /** When set, each hunk shows this button calling onHunkAction(path, idx). */
   hunkActionLabel?: string;
   onHunkAction?: (path: string, hunkIndex: number) => void;
+  /** When set, changed lines get checkboxes for line-level stage/discard. */
+  onStageLines?: (path: string, hunkIndex: number, lines: number[]) => void;
+  onDiscardLines?: (path: string, hunkIndex: number, lines: number[]) => void;
+  onDiscardHunk?: (path: string, hunkIndex: number) => void;
 }> = (props) => {
   const [files, setFiles] = createSignal<FileDiff[]>([]);
   const [mode, setMode] = createSignal<Mode>("unified");
@@ -336,6 +429,9 @@ const DiffView: Component<{
               mode={mode()}
               hunkActionLabel={props.hunkActionLabel}
               onHunkAction={props.onHunkAction}
+              onStageLines={props.onStageLines}
+              onDiscardLines={props.onDiscardLines}
+              onDiscardHunk={props.onDiscardHunk}
             />
           )}
         </For>

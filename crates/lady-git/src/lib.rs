@@ -125,6 +125,10 @@ pub trait GitEngine: Send + Sync {
     /// forward+cached stages selected hunks, reverse+cached unstages them, and
     /// reverse (no cached) discards them from the working tree.
     fn apply_patch(&self, repo: &RepoId, patch: &str, reverse: bool, cached: bool) -> Result<()>;
+
+    /// Delete untracked `paths` from the working tree via `git clean -fd`
+    /// (DESTRUCTIVE — the caller must confirm first). A no-op when empty.
+    fn discard_untracked(&self, repo: &RepoId, paths: &[String]) -> Result<()>;
 }
 
 /// A [`GitEngine`] backed by [`gix`] for read-only access (ADR-0003).
@@ -610,6 +614,17 @@ impl GitEngine for GixEngine {
         }
         // No file arg → git reads the patch from stdin.
         run_git_stdin(&wd, &args, patch.as_bytes())
+    }
+
+    fn discard_untracked(&self, repo: &RepoId, paths: &[String]) -> Result<()> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let wd = self.workdir(repo)?;
+        // `-f` force, `-d` also remove untracked directories, `-q` quiet.
+        let mut args: Vec<&str> = vec!["clean", "-f", "-d", "-q", "--"];
+        args.extend(paths.iter().map(String::as_str));
+        run_git(&wd, &args).map(|_| ())
     }
 }
 
@@ -1456,6 +1471,115 @@ mod tests {
             .diff_spec(&id, &DiffSpec::IndexVsHead("f.txt".to_string()))
             .expect("staged diff after unstage");
         assert!(staged_empty.is_empty(), "nothing staged after reverse");
+    }
+
+    #[test]
+    fn line_level_stage_and_discard_restore() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let p = dir.path();
+        git(p, &["init", "-q", "-b", "main"]);
+        git(p, &["config", "user.name", "Lady Test"]);
+        git(p, &["config", "user.email", "test@example.com"]);
+        git(p, &["config", "commit.gpgsign", "false"]);
+
+        std::fs::write(p.join("f.txt"), "base\n").expect("write");
+        git(p, &["add", "."]);
+        git(p, &["commit", "-q", "-m", "base"]);
+
+        // Add two new lines after base.
+        std::fs::write(p.join("f.txt"), "base\nADD1\nADD2\n").expect("write");
+
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open");
+
+        let working = engine
+            .diff_spec(&id, &DiffSpec::WorkingVsIndex("f.txt".to_string()))
+            .expect("working diff");
+        let hunks = &working[0].hunks;
+        let added: Vec<usize> = hunks[0]
+            .lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.kind == lady_proto::LineKind::Added)
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(added.len(), 2);
+
+        // Stage only the first added line.
+        let sel = vec![lady_diff::LineSel {
+            hunk: 0,
+            lines: vec![added[0]],
+        }];
+        let patch = lady_diff::build_patch_lines("f.txt", hunks, &sel);
+        engine
+            .apply_patch(&id, &patch, false, true)
+            .expect("stage one line");
+
+        let staged = engine
+            .diff_spec(&id, &DiffSpec::IndexVsHead("f.txt".to_string()))
+            .expect("staged diff");
+        let staged_added: Vec<&str> = staged[0]
+            .hunks
+            .iter()
+            .flat_map(|h| h.lines.iter())
+            .filter(|l| l.kind == lady_proto::LineKind::Added)
+            .map(|l| l.content.as_str())
+            .collect();
+        assert_eq!(staged_added, vec!["ADD1"], "only ADD1 staged");
+
+        // Discard ADD2 from the working tree (reverse, non-cached).
+        // Rebuild the working diff (it changed after staging ADD1).
+        let working2 = engine
+            .diff_spec(&id, &DiffSpec::WorkingVsIndex("f.txt".to_string()))
+            .expect("working diff 2");
+        let h2 = &working2[0].hunks;
+        let add2_idx: Vec<usize> = h2[0]
+            .lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.kind == lady_proto::LineKind::Added)
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(add2_idx.len(), 1, "only ADD2 remains unstaged");
+        let dpatch = lady_diff::build_patch_lines(
+            "f.txt",
+            h2,
+            &[lady_diff::LineSel {
+                hunk: 0,
+                lines: vec![add2_idx[0]],
+            }],
+        );
+        engine
+            .apply_patch(&id, &dpatch, true, false)
+            .expect("discard ADD2 from working tree");
+
+        let on_disk = std::fs::read_to_string(p.join("f.txt")).expect("read");
+        assert!(
+            !on_disk.contains("ADD2"),
+            "ADD2 discarded from working tree"
+        );
+        assert!(on_disk.contains("ADD1"), "ADD1 (staged) still present");
+    }
+
+    #[test]
+    fn discard_untracked_removes_files() {
+        let dir = fixture_repo();
+        let p = dir.path();
+        std::fs::write(p.join("junk.tmp"), "x\n").expect("write");
+
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open");
+        assert!(engine
+            .status(&id)
+            .unwrap()
+            .untracked
+            .contains(&"junk.tmp".to_string()));
+
+        engine
+            .discard_untracked(&id, &["junk.tmp".to_string()])
+            .expect("discard untracked");
+        assert!(!p.join("junk.tmp").exists(), "file deleted");
+        assert!(engine.status(&id).unwrap().untracked.is_empty());
     }
 
     #[test]

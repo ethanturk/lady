@@ -261,6 +261,85 @@ fn unstage_hunks(
         .map_err(|e| e.to_string())
 }
 
+/// Stage selected lines (`lines` = changed-line indices within hunk `hunk`) of
+/// `path` from its unstaged working-vs-index diff.
+#[tauri::command]
+fn stage_lines(
+    repo: RepoId,
+    path: String,
+    hunk: usize,
+    lines: Vec<usize>,
+    engine: State<GixEngine>,
+) -> Result<(), String> {
+    let diffs = engine
+        .diff_spec(&repo, &DiffSpec::WorkingVsIndex(path.clone()))
+        .map_err(|e| e.to_string())?;
+    let Some(file) = diffs.into_iter().next() else {
+        return Ok(());
+    };
+    let sel = vec![lady_diff::LineSel { hunk, lines }];
+    let patch = lady_diff::build_patch_lines(&path, &file.hunks, &sel);
+    engine
+        .apply_patch(&repo, &patch, false, true)
+        .map_err(|e| e.to_string())
+}
+
+/// Discard whole unstaged `hunks` of `path` from the working tree
+/// (DESTRUCTIVE — reverse-applies the working diff, no `--cached`).
+#[tauri::command]
+fn discard_hunks(
+    repo: RepoId,
+    path: String,
+    hunks: Vec<usize>,
+    engine: State<GixEngine>,
+) -> Result<(), String> {
+    let diffs = engine
+        .diff_spec(&repo, &DiffSpec::WorkingVsIndex(path.clone()))
+        .map_err(|e| e.to_string())?;
+    let Some(file) = diffs.into_iter().next() else {
+        return Ok(());
+    };
+    let patch = lady_diff::build_patch(&path, &file.hunks, &hunks);
+    engine
+        .apply_patch(&repo, &patch, true, false)
+        .map_err(|e| e.to_string())
+}
+
+/// Discard selected unstaged `lines` of hunk `hunk` of `path` from the working
+/// tree (DESTRUCTIVE — reverse-applies a line-level patch, no `--cached`).
+#[tauri::command]
+fn discard_lines(
+    repo: RepoId,
+    path: String,
+    hunk: usize,
+    lines: Vec<usize>,
+    engine: State<GixEngine>,
+) -> Result<(), String> {
+    let diffs = engine
+        .diff_spec(&repo, &DiffSpec::WorkingVsIndex(path.clone()))
+        .map_err(|e| e.to_string())?;
+    let Some(file) = diffs.into_iter().next() else {
+        return Ok(());
+    };
+    let sel = vec![lady_diff::LineSel { hunk, lines }];
+    let patch = lady_diff::build_patch_lines(&path, &file.hunks, &sel);
+    engine
+        .apply_patch(&repo, &patch, true, false)
+        .map_err(|e| e.to_string())
+}
+
+/// Delete untracked `paths` from the working tree (DESTRUCTIVE).
+#[tauri::command]
+fn discard_untracked(
+    repo: RepoId,
+    paths: Vec<String>,
+    engine: State<GixEngine>,
+) -> Result<(), String> {
+    engine
+        .discard_untracked(&repo, &paths)
+        .map_err(|e| e.to_string())
+}
+
 /// Clone `url` into `dest` via system git (ADR-0003 shell-out tier), streaming
 /// git's progress lines to the frontend as `clone-progress` events, and open
 /// the result.
@@ -361,6 +440,10 @@ pub fn run() {
             unstage_paths,
             stage_hunks,
             unstage_hunks,
+            stage_lines,
+            discard_hunks,
+            discard_lines,
+            discard_untracked,
             clone_repo,
             load_settings,
             save_settings

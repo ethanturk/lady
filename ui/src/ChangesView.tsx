@@ -164,6 +164,23 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
       .catch((e) => setErr(String(e)));
   };
 
+  // Line-level staging and destructive discards on the unstaged side (PH2-005).
+  const stageLines = (path: string, hunk: number, lines: number[]) => {
+    invoke("stage_lines", { repo: props.repoId, path, hunk, lines })
+      .then(afterMutation)
+      .catch((e) => setErr(String(e)));
+  };
+  const discardLines = (path: string, hunk: number, lines: number[]) => {
+    invoke("discard_lines", { repo: props.repoId, path, hunk, lines })
+      .then(afterMutation)
+      .catch((e) => setErr(String(e)));
+  };
+  const discardHunk = (path: string, hunk: number) => {
+    invoke("discard_hunks", { repo: props.repoId, path, hunks: [hunk] })
+      .then(afterMutation)
+      .catch((e) => setErr(String(e)));
+  };
+
   const untrackedAsFiles = (): FileStatus[] =>
     (wt()?.untracked ?? []).map((path) => ({ path, old_path: null, kind: "Untracked" as const }));
 
@@ -270,6 +287,9 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
             spec={selectedSpec()!}
             hunkActionLabel={selected()!.staged ? "Unstage hunk" : "Stage hunk"}
             onHunkAction={selected()!.staged ? unstageHunk : stageHunk}
+            onStageLines={selected()!.staged ? undefined : stageLines}
+            onDiscardLines={selected()!.staged ? undefined : discardLines}
+            onDiscardHunk={selected()!.staged ? undefined : discardHunk}
           />
         </div>
       </Show>

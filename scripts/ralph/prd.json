@@ -71,7 +71,7 @@
         "Unit test: stage a single added line out of several; discard a single line restores it; cargo fmt/clippy -D warnings/test green; cargo deny passes; npm run build green; manual window note in progress.txt"
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §1 discard hunks/lines + §6.3. Discard is destructive — gate behind explicit confirm; never silently lose work."
     },
     {

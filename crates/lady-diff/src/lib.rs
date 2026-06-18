@@ -43,6 +43,16 @@ pub fn text_diff(old_text: &str, new_text: &str) -> Vec<DiffHunk> {
     build_hunks(&old_lines, &new_lines, &changes, CONTEXT)
 }
 
+/// A per-hunk, per-line selection for line-level partial staging: include only
+/// the changed lines at `lines` (indices into `hunks[hunk].lines`).
+#[derive(Clone, Debug)]
+pub struct LineSel {
+    /// Index into the file's hunk list.
+    pub hunk: usize,
+    /// Indices (into the hunk's `lines`) of the changed lines to include.
+    pub lines: Vec<usize>,
+}
+
 /// Build a unified diff for `path` containing only the `selected` hunks
 /// (indices into `hunks`), suitable for `git apply [--cached]`.
 ///
@@ -55,6 +65,34 @@ pub fn text_diff(old_text: &str, new_text: &str) -> Vec<DiffHunk> {
 /// Note: lines are emitted with a trailing `\n`; files without a final newline
 /// are not specially marked (acceptable for the common case).
 pub fn build_patch(path: &str, hunks: &[DiffHunk], selected: &[usize]) -> String {
+    // Whole-hunk staging = select every changed (non-context) line of the hunk.
+    let sels: Vec<LineSel> = selected
+        .iter()
+        .filter_map(|&hi| {
+            hunks.get(hi).map(|h| LineSel {
+                hunk: hi,
+                lines: h
+                    .lines
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, l)| l.kind != LineKind::Context)
+                    .map(|(i, _)| i)
+                    .collect(),
+            })
+        })
+        .collect();
+    build_patch_lines(path, hunks, &sels)
+}
+
+/// Build a unified diff selecting individual changed lines within hunks.
+///
+/// Within a hunk, an unselected **deleted** line becomes a context line (it is
+/// kept on both sides), and an unselected **added** line is omitted entirely
+/// (it never enters the base). This yields a valid patch that stages/discards
+/// exactly the chosen lines. Hunks that end up with no real change are skipped.
+pub fn build_patch_lines(path: &str, hunks: &[DiffHunk], sels: &[LineSel]) -> String {
+    use std::collections::HashSet;
+
     let mut out = String::new();
     out.push_str(&format!("diff --git a/{path} b/{path}\n"));
     out.push_str(&format!("--- a/{path}\n"));
@@ -62,31 +100,60 @@ pub fn build_patch(path: &str, hunks: &[DiffHunk], selected: &[usize]) -> String
 
     // Running new-vs-old line delta across previously emitted hunks.
     let mut delta: i64 = 0;
-    for &idx in selected {
-        let Some(h) = hunks.get(idx) else { continue };
+    for sel in sels {
+        let Some(h) = hunks.get(sel.hunk) else {
+            continue;
+        };
+        let selected: HashSet<usize> = sel.lines.iter().copied().collect();
 
-        let old_count = h.lines.iter().filter(|l| l.kind != LineKind::Added).count() as u32;
-        let new_count = h
-            .lines
-            .iter()
-            .filter(|l| l.kind != LineKind::Deleted)
-            .count() as u32;
+        let mut body = String::new();
+        let mut old_count: u32 = 0;
+        let mut new_count: u32 = 0;
+        let mut has_change = false;
+        for (i, line) in h.lines.iter().enumerate() {
+            match line.kind {
+                LineKind::Context => {
+                    body.push(' ');
+                    body.push_str(&line.content);
+                    body.push('\n');
+                    old_count += 1;
+                    new_count += 1;
+                }
+                LineKind::Deleted => {
+                    old_count += 1;
+                    if selected.contains(&i) {
+                        body.push('-');
+                        has_change = true;
+                    } else {
+                        // Keep the line: it stays on the new side as context.
+                        body.push(' ');
+                        new_count += 1;
+                    }
+                    body.push_str(&line.content);
+                    body.push('\n');
+                }
+                LineKind::Added => {
+                    if selected.contains(&i) {
+                        body.push('+');
+                        body.push_str(&line.content);
+                        body.push('\n');
+                        new_count += 1;
+                        has_change = true;
+                    }
+                    // Unselected added line: omit (not part of the base or result).
+                }
+            }
+        }
+        if !has_change {
+            continue;
+        }
+
         let new_start = (h.old_start as i64 + delta).max(1) as u32;
-
         out.push_str(&format!(
             "@@ -{},{} +{},{} @@\n",
             h.old_start, old_count, new_start, new_count
         ));
-        for line in &h.lines {
-            let sign = match line.kind {
-                LineKind::Context => ' ',
-                LineKind::Deleted => '-',
-                LineKind::Added => '+',
-            };
-            out.push(sign);
-            out.push_str(&line.content);
-            out.push('\n');
-        }
+        out.push_str(&body);
         delta += new_count as i64 - old_count as i64;
     }
     out
@@ -260,6 +327,33 @@ mod tests {
         let hunks = text_diff("a\nb\n", "a\nB\n");
         let patch = build_patch("x", &hunks, &[]);
         assert_eq!(patch, "diff --git a/x b/x\n--- a/x\n+++ b/x\n");
+    }
+
+    #[test]
+    fn build_patch_lines_selects_one_added_line() {
+        // Append two new lines after a base line.
+        let hunks = text_diff("base\n", "base\nADD1\nADD2\n");
+        assert_eq!(hunks.len(), 1);
+        // Find the two added-line indices within the hunk.
+        let added: Vec<usize> = hunks[0]
+            .lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.kind == LineKind::Added)
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(added.len(), 2);
+
+        // Select only the first added line.
+        let sel = vec![LineSel {
+            hunk: 0,
+            lines: vec![added[0]],
+        }];
+        let patch = build_patch_lines("f", &hunks, &sel);
+        assert!(patch.contains("+ADD1"), "selected line emitted as add");
+        assert!(!patch.contains("ADD2"), "unselected added line omitted");
+        // Old side is just the base context line (count 1); new side adds one.
+        assert!(patch.contains("@@ -1,1 +1,2 @@"));
     }
 
     #[test]
