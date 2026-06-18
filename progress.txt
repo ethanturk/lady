@@ -11,7 +11,7 @@ UI stories also note a manual window check here.
 - [x] PH4-002 GitLab auth + create merge request
 - [x] PH4-003 Bitbucket auth + create pull request
 - [x] PH4-004 Azure DevOps auth + create pull request
-- [ ] PH4-005 Create remote repository (provider-agnostic)
+- [x] PH4-005 Create remote repository (provider-agnostic)
 - [ ] PH4-006 GitHub notifications inbox
 - [ ] PH4-007 Git LFS support
 - [ ] PH4-008 git-flow support
@@ -20,3 +20,7 @@ UI stories also note a manual window check here.
 
 ## Manual window checks (noted as stories land)
 (none yet)
+- PH4-005: Create remote repository — SettingsView "Create remote repository"
+  section (forge dropdown, name/private/description, owner+project for
+  Bitbucket/Azure, add-as-origin). create_repo implemented + wiremock-tested for
+  all four forges; add_remote engine op wires origin. Live creation is manual.

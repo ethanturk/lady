@@ -112,8 +112,12 @@ impl HostingProvider for GitHubClient {
     }
 
     async fn create_repo(&self, token: &str, repo: &NewRepo) -> Result<RepoInfo> {
-        // POST /user/repos creates under the authenticated user (PH4-005).
-        let url = format!("{}/user/repos", self.base_url);
+        // POST /orgs/{org}/repos when an owner org is given, else /user/repos
+        // under the authenticated user (PH4-005).
+        let url = match repo.owner.as_deref() {
+            Some(org) if !org.is_empty() => format!("{}/orgs/{}/repos", self.base_url, org),
+            _ => format!("{}/user/repos", self.base_url),
+        };
         let resp = self
             .http
             .post(&url)
@@ -242,5 +246,34 @@ mod tests {
             }
             other => panic!("expected Api error, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn create_repo_under_user_returns_urls() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/user/repos"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+                "clone_url": "https://github.com/octocat/newrepo.git",
+                "html_url": "https://github.com/octocat/newrepo"
+            })))
+            .mount(&server)
+            .await;
+        let c = GitHubClient::with_base_url(server.uri());
+        let info = c
+            .create_repo(
+                "tok",
+                &NewRepo {
+                    name: "newrepo".into(),
+                    private: true,
+                    description: "d".into(),
+                    owner: None,
+                    project: None,
+                },
+            )
+            .await
+            .expect("create repo");
+        assert_eq!(info.clone_url, "https://github.com/octocat/newrepo.git");
+        assert_eq!(info.web_url, "https://github.com/octocat/newrepo");
     }
 }

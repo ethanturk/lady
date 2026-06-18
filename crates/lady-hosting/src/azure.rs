@@ -209,8 +209,61 @@ impl HostingProvider for AzureDevOpsClient {
     }
 
     async fn create_repo(&self, token: &str, repo: &NewRepo) -> Result<RepoInfo> {
-        let _ = (&self.api_base, &self.http, token, repo); // PH4-005
-        Err(Error::NotImplemented)
+        // Azure repos live in an org/project: POST {org}/{project}/_apis/git/
+        // repositories. `private` is a project-level setting, not per-repo.
+        let org = repo
+            .owner
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| Error::Api {
+                status: 0,
+                message: "Azure DevOps needs an organization (owner) to create a repo".to_string(),
+            })?;
+        let project = repo
+            .project
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| Error::Api {
+                status: 0,
+                message: "Azure DevOps needs a project to create a repo".to_string(),
+            })?;
+        let url = format!(
+            "{}/{}/{}/_apis/git/repositories?api-version={API_VERSION}",
+            self.api_base, org, project
+        );
+        let resp = self
+            .http
+            .post(&url)
+            .basic_auth("", Some(token))
+            .json(&serde_json::json!({ "name": repo.name }))
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+        let status = resp.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(Error::Unauthorized);
+        }
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(Error::Api {
+                status: status.as_u16(),
+                message: api_error_message(&body),
+            });
+        }
+        let body: serde_json::Value = resp.json().await.map_err(|e| Error::Http(e.to_string()))?;
+        Ok(RepoInfo {
+            clone_url: body
+                .get("remoteUrl")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            web_url: body
+                .get("webUrl")
+                .and_then(|v| v.as_str())
+                .or_else(|| body.get("remoteUrl").and_then(|v| v.as_str()))
+                .unwrap_or_default()
+                .to_string(),
+        })
     }
 }
 
@@ -290,6 +343,37 @@ mod tests {
             }
             other => panic!("expected Api error, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn create_repo_in_project_returns_urls() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/myorg/myproj/_apis/git/repositories"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+                "remoteUrl": "https://dev.azure.com/myorg/myproj/_git/newrepo",
+                "webUrl": "https://dev.azure.com/myorg/myproj/_git/newrepo"
+            })))
+            .mount(&server)
+            .await;
+        let c = AzureDevOpsClient::with_base_url(server.uri());
+        let info = c
+            .create_repo(
+                "pat",
+                &NewRepo {
+                    name: "newrepo".into(),
+                    private: true,
+                    description: "d".into(),
+                    owner: Some("myorg".into()),
+                    project: Some("myproj".into()),
+                },
+            )
+            .await
+            .expect("create repo");
+        assert_eq!(
+            info.clone_url,
+            "https://dev.azure.com/myorg/myproj/_git/newrepo"
+        );
     }
 
     #[test]

@@ -226,6 +226,15 @@ export interface HostingInfo {
   slug: RepoSlug | null;
 }
 
+/** Mirrors lady_hosting::RepoInfo (created remote repo URLs). */
+export interface RepoInfo {
+  clone_url: string;
+  web_url: string;
+}
+
+/** All forges, for selectors. */
+export const FORGE_KINDS: ForgeKind[] = ["GitHub", "GitLab", "Bitbucket", "AzureDevOps"];
+
 /** Mirrors lady_proto::Worktree. */
 export interface Worktree {
   path: string;

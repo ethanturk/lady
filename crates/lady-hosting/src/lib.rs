@@ -124,7 +124,7 @@ pub struct NewPullRequest {
 }
 
 /// Details for creating a remote repository (PH4-005).
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct NewRepo {
     /// Repository name.
     pub name: String,
@@ -132,6 +132,13 @@ pub struct NewRepo {
     pub private: bool,
     /// Optional description.
     pub description: String,
+    /// Owning org / workspace. Required for Bitbucket (workspace) and Azure
+    /// (organization); optional for GitHub (an org) and ignored by GitLab.
+    #[serde(default)]
+    pub owner: Option<String>,
+    /// Azure DevOps project (required for Azure); ignored elsewhere.
+    #[serde(default)]
+    pub project: Option<String>,
 }
 
 /// The created remote repository's URLs (PH4-005).
@@ -221,6 +228,17 @@ pub struct ForgeConfig {
     pub kind: ForgeKind,
     /// The API base URL (e.g. `https://gitlab.mycorp.com/api/v4`).
     pub api_base: String,
+}
+
+/// Build the public-host provider for `kind` (PH4-005 create-repo, where there
+/// is no remote URL to resolve from).
+pub fn provider_by_kind(kind: ForgeKind) -> Box<dyn HostingProvider> {
+    match kind {
+        ForgeKind::GitHub => Box::new(GitHubClient::new()),
+        ForgeKind::GitLab => Box::new(GitLabClient::new()),
+        ForgeKind::Bitbucket => Box::new(BitbucketClient::new()),
+        ForgeKind::AzureDevOps => Box::new(AzureDevOpsClient::new()),
+    }
 }
 
 /// Build a provider of `kind` against `api_base`.

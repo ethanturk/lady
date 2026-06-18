@@ -125,8 +125,62 @@ impl HostingProvider for BitbucketClient {
     }
 
     async fn create_repo(&self, token: &str, repo: &NewRepo) -> Result<RepoInfo> {
-        let _ = (&self.base_url, &self.http, token, repo); // PH4-005
-        Err(Error::NotImplemented)
+        // Bitbucket creates under a workspace: POST /repositories/{ws}/{slug}.
+        let workspace = repo
+            .owner
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| Error::Api {
+                status: 0,
+                message: "Bitbucket needs a workspace (owner) to create a repo".to_string(),
+            })?;
+        let url = format!("{}/repositories/{}/{}", self.base_url, workspace, repo.name);
+        let resp = self
+            .http
+            .post(&url)
+            .bearer_auth(token)
+            .json(&serde_json::json!({
+                "scm": "git",
+                "is_private": repo.private,
+                "description": repo.description,
+            }))
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+        let status = resp.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(Error::Unauthorized);
+        }
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(Error::Api {
+                status: status.as_u16(),
+                message: api_error_message(&body),
+            });
+        }
+        let body: serde_json::Value = resp.json().await.map_err(|e| Error::Http(e.to_string()))?;
+        // The https clone link lives in `links.clone[] { name: "https", href }`.
+        let clone_url = body
+            .get("links")
+            .and_then(|l| l.get("clone"))
+            .and_then(|c| c.as_array())
+            .and_then(|arr| {
+                arr.iter()
+                    .find(|e| e.get("name").and_then(|n| n.as_str()) == Some("https"))
+                    .or_else(|| arr.first())
+            })
+            .and_then(|e| e.get("href"))
+            .and_then(|h| h.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let web_url = body
+            .get("links")
+            .and_then(|l| l.get("html"))
+            .and_then(|h| h.get("href"))
+            .and_then(|u| u.as_str())
+            .unwrap_or_default()
+            .to_string();
+        Ok(RepoInfo { clone_url, web_url })
     }
 }
 
@@ -203,5 +257,39 @@ mod tests {
             }
             other => panic!("expected Api error, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn create_repo_under_workspace_returns_urls() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/repositories/team/newrepo"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "links": {
+                    "html": { "href": "https://bitbucket.org/team/newrepo" },
+                    "clone": [
+                        { "name": "https", "href": "https://bitbucket.org/team/newrepo.git" },
+                        { "name": "ssh", "href": "git@bitbucket.org:team/newrepo.git" }
+                    ]
+                }
+            })))
+            .mount(&server)
+            .await;
+        let c = BitbucketClient::with_base_url(server.uri());
+        let info = c
+            .create_repo(
+                "tok",
+                &NewRepo {
+                    name: "newrepo".into(),
+                    private: true,
+                    description: "d".into(),
+                    owner: Some("team".into()),
+                    project: None,
+                },
+            )
+            .await
+            .expect("create repo");
+        assert_eq!(info.clone_url, "https://bitbucket.org/team/newrepo.git");
+        assert_eq!(info.web_url, "https://bitbucket.org/team/newrepo");
     }
 }

@@ -128,8 +128,43 @@ impl HostingProvider for GitLabClient {
     }
 
     async fn create_repo(&self, token: &str, repo: &NewRepo) -> Result<RepoInfo> {
-        let _ = (&self.base_url, &self.http, token, repo); // PH4-005
-        Err(Error::NotImplemented)
+        // POST /projects creates under the authenticated user's namespace.
+        let resp = self
+            .http
+            .post(format!("{}/projects", self.base_url))
+            .header("PRIVATE-TOKEN", token)
+            .json(&serde_json::json!({
+                "name": repo.name,
+                "visibility": if repo.private { "private" } else { "public" },
+                "description": repo.description,
+            }))
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+        let status = resp.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(Error::Unauthorized);
+        }
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(Error::Api {
+                status: status.as_u16(),
+                message: api_error_message(&body),
+            });
+        }
+        let body: serde_json::Value = resp.json().await.map_err(|e| Error::Http(e.to_string()))?;
+        Ok(RepoInfo {
+            clone_url: body
+                .get("http_url_to_repo")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            web_url: body
+                .get("web_url")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+        })
     }
 }
 
@@ -203,5 +238,34 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, Error::Api { status: 409, .. }), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn create_repo_returns_urls() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/projects"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+                "http_url_to_repo": "https://gitlab.com/ada/newproj.git",
+                "web_url": "https://gitlab.com/ada/newproj"
+            })))
+            .mount(&server)
+            .await;
+        let c = GitLabClient::with_base_url(server.uri());
+        let info = c
+            .create_repo(
+                "tok",
+                &NewRepo {
+                    name: "newproj".into(),
+                    private: false,
+                    description: "d".into(),
+                    owner: None,
+                    project: None,
+                },
+            )
+            .await
+            .expect("create repo");
+        assert_eq!(info.clone_url, "https://gitlab.com/ada/newproj.git");
+        assert_eq!(info.web_url, "https://gitlab.com/ada/newproj");
     }
 }

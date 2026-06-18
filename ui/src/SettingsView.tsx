@@ -1,8 +1,9 @@
 import { createSignal, onMount, Show } from "solid-js";
 import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
-import type { HostingInfo, LicenseStatus, RepoId } from "./commands";
-import { FORGE_LABEL } from "./commands";
+import { For } from "solid-js";
+import type { ForgeKind, HostingInfo, LicenseStatus, RepoId, RepoInfo } from "./commands";
+import { FORGE_KINDS, FORGE_LABEL } from "./commands";
 
 /**
  * Settings panel (PH3-011 / PH4): connect/disconnect the active repo's forge
@@ -21,6 +22,45 @@ const SettingsView: Component<{ repoId: RepoId }> = (props) => {
   const [busy, setBusy] = createSignal(false);
 
   const forgeName = () => (status().kind ? FORGE_LABEL[status().kind!] : "forge");
+
+  // Create remote repository (PH4-005).
+  const [crForge, setCrForge] = createSignal<ForgeKind>("GitHub");
+  const [crName, setCrName] = createSignal("");
+  const [crOwner, setCrOwner] = createSignal("");
+  const [crProject, setCrProject] = createSignal("");
+  const [crPrivate, setCrPrivate] = createSignal(true);
+  const [crDesc, setCrDesc] = createSignal("");
+  const [crOrigin, setCrOrigin] = createSignal(true);
+  const [crResult, setCrResult] = createSignal<RepoInfo | null>(null);
+  const [crErr, setCrErr] = createSignal<string | null>(null);
+  const [crBusy, setCrBusy] = createSignal(false);
+
+  // Bitbucket needs a workspace; Azure needs org (owner) + project.
+  const needsOwner = () => crForge() === "Bitbucket" || crForge() === "AzureDevOps";
+  const needsProject = () => crForge() === "AzureDevOps";
+
+  const createRepo = () => {
+    if (!crName().trim()) return;
+    if (needsOwner() && !crOwner().trim()) {
+      setCrErr("This forge needs an owner (workspace/organization).");
+      return;
+    }
+    setCrBusy(true);
+    setCrErr(null);
+    setCrResult(null);
+    invoke<RepoInfo>("create_remote_repo", {
+      forge: crForge(),
+      name: crName().trim(),
+      private: crPrivate(),
+      description: crDesc(),
+      owner: crOwner().trim() || null,
+      project: crProject().trim() || null,
+      addOriginTo: crOrigin() ? props.repoId : null,
+    })
+      .then((info) => setCrResult(info))
+      .catch((e) => setCrErr(String(e)))
+      .finally(() => setCrBusy(false));
+  };
 
   // Licensing (PH3-013).
   const [license, setLicense] = createSignal<LicenseStatus | null>(null);
@@ -152,6 +192,52 @@ const SettingsView: Component<{ repoId: RepoId }> = (props) => {
               : `${status().slug!.owner}/${status().slug!.repo}`}
           </p>
         </Show>
+      </Show>
+
+      {/* Create remote repository (PH4-005) */}
+      <h3 style={{ margin: "1.2rem 0 0.6rem", "font-size": "0.95rem" }}>Create remote repository</h3>
+      <Show when={crErr()}>
+        <p style={{ color: "crimson", "font-size": "0.82rem" }}>{crErr()}</p>
+      </Show>
+      <Show
+        when={crResult()}
+        fallback={
+          <div style={{ display: "flex", "flex-direction": "column", gap: "0.4rem", "max-width": "30rem" }}>
+            <div style={{ display: "flex", gap: "0.4rem", "align-items": "center" }}>
+              <select value={crForge()} onChange={(e) => setCrForge(e.currentTarget.value as ForgeKind)} style={{ "font-size": "0.82rem" }}>
+                <For each={FORGE_KINDS}>{(k) => <option value={k}>{FORGE_LABEL[k]}</option>}</For>
+              </select>
+              <input style={{ flex: "1", padding: "0.3rem 0.5rem", "font-size": "0.85rem" }} placeholder="repo name" value={crName()} onInput={(e) => setCrName(e.currentTarget.value)} />
+            </div>
+            <Show when={needsOwner()}>
+              <input style={{ padding: "0.3rem 0.5rem", "font-size": "0.85rem" }} placeholder={crForge() === "AzureDevOps" ? "organization" : "workspace"} value={crOwner()} onInput={(e) => setCrOwner(e.currentTarget.value)} />
+            </Show>
+            <Show when={needsProject()}>
+              <input style={{ padding: "0.3rem 0.5rem", "font-size": "0.85rem" }} placeholder="project" value={crProject()} onInput={(e) => setCrProject(e.currentTarget.value)} />
+            </Show>
+            <input style={{ padding: "0.3rem 0.5rem", "font-size": "0.85rem" }} placeholder="description (optional)" value={crDesc()} onInput={(e) => setCrDesc(e.currentTarget.value)} />
+            <label style={{ display: "flex", "align-items": "center", gap: "0.3rem", "font-size": "0.82rem" }}>
+              <input type="checkbox" checked={crPrivate()} onChange={() => setCrPrivate((v) => !v)} /> private
+            </label>
+            <label style={{ display: "flex", "align-items": "center", gap: "0.3rem", "font-size": "0.82rem" }}>
+              <input type="checkbox" checked={crOrigin()} onChange={() => setCrOrigin((v) => !v)} /> add as origin to this repo
+            </label>
+            <button onClick={createRepo} disabled={crBusy()} style={{ "align-self": "flex-start", padding: "0.3rem 0.9rem" }}>
+              {crBusy() ? "Creating…" : "Create repository"}
+            </button>
+          </div>
+        }
+      >
+        <div style={{ "font-size": "0.85rem" }}>
+          <p style={{ color: "#1a7f37" }}>Repository created.</p>
+          <p style={{ "font-family": "monospace", "font-size": "0.8rem", "word-break": "break-all" }}>{crResult()!.clone_url}</p>
+          <button onClick={() => invoke("open_url", { url: crResult()!.web_url }).catch((e) => setCrErr(String(e)))} style={{ padding: "0.25rem 0.8rem" }}>
+            Open in browser
+          </button>
+          <button onClick={() => setCrResult(null)} style={{ "margin-left": "0.4rem", padding: "0.25rem 0.8rem" }}>
+            Create another
+          </button>
+        </div>
       </Show>
     </div>
   );

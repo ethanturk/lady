@@ -395,6 +395,10 @@ pub trait GitEngine: Send + Sync {
     /// The repository's remote fetch URLs (deduped), for forge detection
     /// (PH3-011).
     fn list_remote_urls(&self, repo: &RepoId) -> Result<Vec<String>>;
+
+    /// Add a remote `name` pointing at `url` (`git remote add`), e.g. wiring a
+    /// freshly created remote as `origin` (PH4-005).
+    fn add_remote(&self, repo: &RepoId, name: &str, url: &str) -> Result<()>;
 }
 
 /// A [`GitEngine`] backed by [`gix`] for read-only access (ADR-0003).
@@ -1824,6 +1828,11 @@ exit 0\n";
             }
         }
         Ok(urls)
+    }
+
+    fn add_remote(&self, repo: &RepoId, name: &str, url: &str) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        run_git(&wd, &["remote", "add", name, url]).map(|_| ())
     }
 }
 
@@ -3759,6 +3768,19 @@ mod tests {
         assert_eq!(commits.len(), 2, "two commits in the range");
         assert_eq!(commits[0].summary, "add a.txt", "oldest first");
         assert_eq!(commits[1].summary, "add b.txt");
+    }
+
+    #[test]
+    fn add_remote_then_list_remote_urls() {
+        let dir = fixture_repo();
+        let engine = GixEngine::new();
+        let id = engine.open(dir.path()).expect("open");
+        assert!(engine.list_remote_urls(&id).expect("list").is_empty());
+        engine
+            .add_remote(&id, "origin", "https://github.com/o/r.git")
+            .expect("add remote");
+        let urls = engine.list_remote_urls(&id).expect("list after");
+        assert_eq!(urls, vec!["https://github.com/o/r.git".to_string()]);
     }
 
     #[test]

@@ -1075,6 +1075,52 @@ async fn hosting_connect(
     })
 }
 
+/// Create a remote repository on `forge` and return its URLs (PH4-005).
+/// Optionally wires the clone URL as `origin` on `add_origin_to` repo.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+async fn create_remote_repo(
+    forge: lady_hosting::ForgeKind,
+    name: String,
+    private: bool,
+    description: String,
+    owner: Option<String>,
+    project: Option<String>,
+    add_origin_to: Option<RepoId>,
+    engine: State<'_, GixEngine>,
+    hosting: State<'_, Hosting>,
+) -> Result<lady_hosting::RepoInfo, String> {
+    let provider = lady_hosting::provider_by_kind(forge);
+    let token = hosting
+        .store
+        .get(provider.token_key())
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| {
+            format!(
+                "Not connected to {} — connect in Settings first.",
+                forge.label()
+            )
+        })?;
+    let spec = lady_hosting::NewRepo {
+        name,
+        private,
+        description,
+        owner,
+        project,
+    };
+    let info = provider
+        .create_repo(&token, &spec)
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some(repo) = add_origin_to {
+        // Best-effort: wire the new remote as origin.
+        engine
+            .add_remote(&repo, "origin", &info.clone_url)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(info)
+}
+
 /// Forget the stored token for the active repo's forge.
 #[tauri::command]
 async fn hosting_sign_out(
@@ -1311,6 +1357,7 @@ pub fn run() {
             hosting_status,
             hosting_connect,
             hosting_sign_out,
+            create_remote_repo,
             github_create_pr,
             open_url,
             license_status,
