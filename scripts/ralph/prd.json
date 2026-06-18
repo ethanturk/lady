@@ -57,7 +57,7 @@
         "Command logic unit-tested; cargo + npm run build green; cargo deny passes"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "Virtualization per PLAN.md §6 — never materialize whole history."
     },
     {

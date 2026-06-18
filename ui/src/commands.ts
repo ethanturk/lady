@@ -16,3 +16,26 @@ export interface RefInfo {
   /** Hex OID string (mirrors lady_proto::Oid which serializes as string). */
   target: string;
 }
+
+/** Mirrors lady_proto::Signature. */
+export interface Signature {
+  name: string;
+  email: string;
+}
+
+/** Mirrors lady_proto::CommitMeta. */
+export interface CommitMeta {
+  oid: string;
+  parents: string[];
+  author: Signature;
+  committer: Signature;
+  summary: string;
+  /** Unix seconds (committer time). */
+  time: number;
+}
+
+/** Parameters for the walk_log command. */
+export interface WalkLogQuery {
+  start?: string;
+  limit: number;
+}
