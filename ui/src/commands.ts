@@ -171,6 +171,11 @@ export type ApplyOutcome =
   | { kind: "Applied"; value: string }
   | { kind: "Conflicts"; value: string[] };
 
+/** Mirrors lady_proto::RebaseOutcome. */
+export type RebaseOutcome =
+  | { kind: "Rebased" }
+  | { kind: "Conflicts"; value: string[] };
+
 // ── Repository-manager types ───────────────────────────────────────────────────
 
 export interface RecentRepo {

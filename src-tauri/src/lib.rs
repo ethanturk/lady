@@ -1,8 +1,8 @@
 use lady_git::{CommitOpts, DiffSpec, GitEngine, GixEngine, GraphQuery, MergeOpts};
 use lady_graph::layout_continuation;
 use lady_proto::{
-    ApplyOutcome, Blame, CommitMeta, FfMode, FileDiff, MergeOutcome, Oid, RefInfo, RepoId,
-    WorkingTree,
+    ApplyOutcome, Blame, CommitMeta, FfMode, FileDiff, MergeOutcome, Oid, RebaseOutcome, RefInfo,
+    RepoId, WorkingTree,
 };
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -627,6 +627,23 @@ fn sequencer_abort(repo: RepoId, engine: State<GixEngine>) -> Result<(), String>
     engine.sequencer_abort(&repo).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn rebase(
+    repo: RepoId,
+    branch: String,
+    onto: String,
+    engine: State<GixEngine>,
+) -> Result<RebaseOutcome, String> {
+    engine
+        .rebase(&repo, &branch, &onto)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn rebase_abort(repo: RepoId, engine: State<GixEngine>) -> Result<(), String> {
+    engine.rebase_abort(&repo).map_err(|e| e.to_string())
+}
+
 /// A repository remembered in user settings, with an optional custom group.
 #[derive(Serialize, Deserialize, Default, Clone)]
 pub struct RecentRepo {
@@ -714,6 +731,8 @@ pub fn run() {
             cherry_pick,
             revert,
             sequencer_abort,
+            rebase,
+            rebase_abort,
             clone_repo,
             load_settings,
             save_settings

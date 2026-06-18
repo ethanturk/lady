@@ -289,6 +289,16 @@ pub enum ApplyOutcome {
     Conflicts(Vec<String>),
 }
 
+/// Result of a plain rebase attempt.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value")]
+pub enum RebaseOutcome {
+    /// The rebase completed.
+    Rebased,
+    /// Rebase stopped with conflicts; carries the conflicted paths.
+    Conflicts(Vec<String>),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -390,6 +400,20 @@ mod tests {
         for outcome in cases {
             let json = serde_json::to_string(&outcome).expect("serialize ApplyOutcome");
             let back: ApplyOutcome = serde_json::from_str(&json).expect("deserialize ApplyOutcome");
+            assert_eq!(outcome, back);
+        }
+    }
+
+    #[test]
+    fn rebase_outcome_serde_round_trip() {
+        let cases = [
+            RebaseOutcome::Rebased,
+            RebaseOutcome::Conflicts(vec!["conflicted.txt".to_owned()]),
+        ];
+        for outcome in cases {
+            let json = serde_json::to_string(&outcome).expect("serialize RebaseOutcome");
+            let back: RebaseOutcome =
+                serde_json::from_str(&json).expect("deserialize RebaseOutcome");
             assert_eq!(outcome, back);
         }
     }

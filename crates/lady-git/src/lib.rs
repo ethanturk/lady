@@ -11,8 +11,8 @@ use std::sync::Mutex;
 
 use lady_proto::{
     AheadBehind, ApplyOutcome, Blame, BlameLine, ChangeKind, CommitMeta, FfMode, FileDiff,
-    FileDiffKind, FileStatus, MergeOutcome, Oid, RefInfo, RefKind, RepoId, Signature, StashEntry,
-    WorkingTree,
+    FileDiffKind, FileStatus, MergeOutcome, Oid, RebaseOutcome, RefInfo, RefKind, RepoId,
+    Signature, StashEntry, WorkingTree,
 };
 
 /// Errors surfaced by a [`GitEngine`].
@@ -265,6 +265,13 @@ pub trait GitEngine: Send + Sync {
 
     /// Abort an in-progress cherry-pick or revert sequencer.
     fn sequencer_abort(&self, repo: &RepoId) -> Result<()>;
+
+    /// Rebase `branch` onto `onto` using non-interactive system git. On
+    /// conflict, leaves the repository mid-rebase and reports conflicted paths.
+    fn rebase(&self, repo: &RepoId, branch: &str, onto: &str) -> Result<RebaseOutcome>;
+
+    /// Abort an in-progress rebase.
+    fn rebase_abort(&self, repo: &RepoId) -> Result<()>;
 }
 
 /// A [`GitEngine`] backed by [`gix`] for read-only access (ADR-0003).
@@ -1176,6 +1183,33 @@ impl GitEngine for GixEngine {
             return Ok(());
         }
         run_git(&wd, &["revert", "--abort"]).map(|_| ())
+    }
+
+    fn rebase(&self, repo: &RepoId, branch: &str, onto: &str) -> Result<RebaseOutcome> {
+        let wd = self.workdir(repo)?;
+        let args = ["rebase", onto, branch];
+        let out = run_git_raw(&wd, &args)?;
+        if out.status.success() {
+            return Ok(RebaseOutcome::Rebased);
+        }
+
+        let conflicts = conflict_paths(&self.status(repo)?);
+        if !conflicts.is_empty() {
+            return Ok(RebaseOutcome::Conflicts(conflicts));
+        }
+
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let msg = stderr.trim();
+        Err(Error::Git(if msg.is_empty() {
+            format!("git {args:?} failed ({})", out.status)
+        } else {
+            msg.to_string()
+        }))
+    }
+
+    fn rebase_abort(&self, repo: &RepoId) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        run_git(&wd, &["rebase", "--abort"]).map(|_| ())
     }
 }
 
@@ -2692,6 +2726,92 @@ mod tests {
 
         engine.sequencer_abort(&id).expect("sequencer abort");
         assert_eq!(head_oid(p).expect("head after abort"), before);
+        let wt = engine.status(&id).expect("status after abort");
+        assert!(
+            wt.staged.is_empty() && wt.unstaged.is_empty() && wt.untracked.is_empty(),
+            "abort restores a clean tree: {wt:?}"
+        );
+    }
+
+    #[test]
+    fn rebase_replays_branch_commits_onto_target() {
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open the fixture repo");
+
+        engine.create_branch(&id, "topic", None).expect("branch");
+        engine
+            .checkout(&id, "topic", false)
+            .expect("checkout topic");
+        std::fs::write(p.join("topic.txt"), "topic\n").expect("write topic");
+        engine
+            .stage_paths(&id, &["topic.txt".to_string()])
+            .expect("stage topic");
+        engine
+            .commit(&id, "topic commit", &CommitOpts::default())
+            .expect("commit topic");
+
+        engine.checkout(&id, "main", false).expect("checkout main");
+        std::fs::write(p.join("main.txt"), "main\n").expect("write main");
+        engine
+            .stage_paths(&id, &["main.txt".to_string()])
+            .expect("stage main");
+        engine
+            .commit(&id, "main commit", &CommitOpts::default())
+            .expect("commit main");
+
+        let outcome = engine.rebase(&id, "topic", "main").expect("rebase topic");
+        assert_eq!(outcome, RebaseOutcome::Rebased);
+        assert!(
+            is_ancestor(p, "main", "topic").expect("ancestor check"),
+            "topic should be replayed on top of main"
+        );
+        assert_eq!(
+            std::fs::read_to_string(p.join("topic.txt")).expect("read topic"),
+            "topic\n"
+        );
+    }
+
+    #[test]
+    fn conflicting_rebase_reports_paths_and_abort_restores_branch() {
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open the fixture repo");
+
+        engine.create_branch(&id, "topic", None).expect("branch");
+        engine
+            .checkout(&id, "topic", false)
+            .expect("checkout topic");
+        std::fs::write(p.join("file1.txt"), "topic edit\n").expect("write topic");
+        engine
+            .stage_paths(&id, &["file1.txt".to_string()])
+            .expect("stage topic");
+        engine
+            .commit(&id, "topic edit", &CommitOpts::default())
+            .expect("commit topic");
+        let topic_head = head_oid(p).expect("topic head");
+
+        engine.checkout(&id, "main", false).expect("checkout main");
+        std::fs::write(p.join("file1.txt"), "main edit\n").expect("write main");
+        engine
+            .stage_paths(&id, &["file1.txt".to_string()])
+            .expect("stage main");
+        engine
+            .commit(&id, "main edit", &CommitOpts::default())
+            .expect("commit main");
+
+        let outcome = engine
+            .rebase(&id, "topic", "main")
+            .expect("conflicting rebase should report conflicts");
+        assert_eq!(
+            outcome,
+            RebaseOutcome::Conflicts(vec!["file1.txt".to_string()])
+        );
+
+        engine.rebase_abort(&id).expect("rebase abort");
+        assert_eq!(head_oid(p).expect("head after abort"), topic_head);
         let wt = engine.status(&id).expect("status after abort");
         assert!(
             wt.staged.is_empty() && wt.unstaged.is_empty() && wt.untracked.is_empty(),

@@ -172,7 +172,7 @@
         "PHASE 2 EXIT: change, partial-stage, commit/amend, branch/tag, checkout, fetch/pull/push, stash, merge, cherry-pick, revert, and drag-&-drop merge/rebase all work in the window as well as Fork's daily-use surface. Note this in progress.txt. Next is a Phase 3 PRD (new branchName ralph/phase-3-advanced-ship)."
       ],
       "priority": 12,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §1 drag-&-drop merge/rebase. Reuses PH2-010 merge + this story's plain rebase. Interactive rebase + 3-pane resolver + signing + worktrees/reflog/bisect are all Phase 3."
     }
   ]

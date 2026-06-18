@@ -1,7 +1,14 @@
 import { createSignal, For, Show } from "solid-js";
 import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
-import type { FfMode, MergeOutcome, RefInfo, RefKind, RepoId } from "./commands";
+import type {
+  FfMode,
+  MergeOutcome,
+  RebaseOutcome,
+  RefInfo,
+  RefKind,
+  RepoId,
+} from "./commands";
 
 interface RefsViewProps {
   repoId: RepoId;
@@ -28,6 +35,7 @@ const RefsView: Component<RefsViewProps> = (props) => {
   const [err, setErr] = createSignal<string | null>(null);
   const [notice, setNotice] = createSignal<string | null>(null);
   const [conflicts, setConflicts] = createSignal<string[]>([]);
+  const [abortCmd, setAbortCmd] = createSignal<"merge_abort" | "rebase_abort">("merge_abort");
   const [newBranch, setNewBranch] = createSignal("");
   const [newTag, setNewTag] = createSignal("");
   const [ffMode, setFfMode] = createSignal<FfMode>("Auto");
@@ -113,6 +121,7 @@ const RefsView: Component<RefsViewProps> = (props) => {
     setErr(null);
     setNotice(null);
     setConflicts([]);
+    setAbortCmd("merge_abort");
     const message = mergeMessage().trim();
     invoke<MergeOutcome>("merge", {
       repo: props.repoId,
@@ -130,12 +139,53 @@ const RefsView: Component<RefsViewProps> = (props) => {
       .catch((e) => setErr(String(e)));
   };
 
-  const abortMerge = () => {
+  const mergeInto = (source: string, target: string) => {
+    const runMerge = () => mergeSource(source);
+    const targetRef = byKind("Branch").find((r) => r.name === target);
+    if (targetRef && isCurrent(targetRef)) {
+      runMerge();
+      return;
+    }
     setErr(null);
-    invoke("merge_abort", { repo: props.repoId })
+    invoke("checkout", { repo: props.repoId, target, force: false })
+      .then(runMerge)
+      .catch((e) => setErr(String(e)));
+  };
+
+  const describeRebase = (branch: string, onto: string, outcome: RebaseOutcome) =>
+    outcome.kind === "Rebased"
+      ? `Rebased ${branch} onto ${onto}.`
+      : `Rebase stopped with ${outcome.value.length} conflict${outcome.value.length === 1 ? "" : "s"}.`;
+
+  const rebaseBranch = (branch: string, onto: string) => {
+    setErr(null);
+    setNotice(null);
+    setConflicts([]);
+    setAbortCmd("rebase_abort");
+    invoke<RebaseOutcome>("rebase", { repo: props.repoId, branch, onto })
+      .then((outcome) => {
+        if (outcome.kind === "Conflicts") setConflicts(outcome.value);
+        setNotice(describeRebase(branch, onto, outcome));
+        props.onChanged();
+      })
+      .catch((e) => setErr(String(e)));
+  };
+
+  const onBranchDrop = (target: string, ev: DragEvent) => {
+    ev.preventDefault();
+    const source = ev.dataTransfer?.getData("text/plain") ?? "";
+    if (!source || source === target) return;
+    const action = prompt(`Drop '${source}' onto '${target}'. Type 'merge' or 'rebase'.`, "merge");
+    if (action?.toLowerCase() === "merge") mergeInto(source, target);
+    if (action?.toLowerCase() === "rebase") rebaseBranch(source, target);
+  };
+
+  const abortOperation = () => {
+    setErr(null);
+    invoke(abortCmd(), { repo: props.repoId })
       .then(() => {
         setConflicts([]);
-        setNotice("Merge aborted.");
+        setNotice("Operation aborted.");
         props.onChanged();
       })
       .catch((e) => setErr(String(e)));
@@ -162,8 +212,8 @@ const RefsView: Component<RefsViewProps> = (props) => {
           <ul style={{ margin: 0, padding: "0 0 0 1.2rem" }}>
             <For each={conflicts()}>{(path) => <li>{path}</li>}</For>
           </ul>
-          <button style={{ ...smallBtn, "margin-top": "0.35rem" }} onClick={abortMerge}>
-            Abort merge
+          <button style={{ ...smallBtn, "margin-top": "0.35rem" }} onClick={abortOperation}>
+            Abort
           </button>
         </div>
       </Show>
@@ -202,6 +252,10 @@ const RefsView: Component<RefsViewProps> = (props) => {
           <For each={byKind("Branch")}>
             {(r) => (
               <li
+                draggable={true}
+                onDragStart={(ev) => ev.dataTransfer?.setData("text/plain", r.name)}
+                onDragOver={(ev) => ev.preventDefault()}
+                onDrop={(ev) => onBranchDrop(r.name, ev)}
                 style={{
                   display: "flex",
                   "align-items": "center",
