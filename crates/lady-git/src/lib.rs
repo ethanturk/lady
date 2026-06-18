@@ -10,8 +10,9 @@ use std::process::Command;
 use std::sync::Mutex;
 
 use lady_proto::{
-    AheadBehind, Blame, BlameLine, ChangeKind, CommitMeta, FfMode, FileDiff, FileDiffKind,
-    FileStatus, MergeOutcome, Oid, RefInfo, RefKind, RepoId, Signature, StashEntry, WorkingTree,
+    AheadBehind, ApplyOutcome, Blame, BlameLine, ChangeKind, CommitMeta, FfMode, FileDiff,
+    FileDiffKind, FileStatus, MergeOutcome, Oid, RefInfo, RefKind, RepoId, Signature, StashEntry,
+    WorkingTree,
 };
 
 /// Errors surfaced by a [`GitEngine`].
@@ -253,6 +254,17 @@ pub trait GitEngine: Send + Sync {
     /// Abort an in-progress merge, restoring the pre-merge state
     /// (`git merge --abort`).
     fn merge_abort(&self, repo: &RepoId) -> Result<()>;
+
+    /// Cherry-pick `oid` onto the current branch. On conflict, leaves the
+    /// repository mid-sequencer and reports the conflicted paths.
+    fn cherry_pick(&self, repo: &RepoId, oid: &Oid) -> Result<ApplyOutcome>;
+
+    /// Revert `oid` onto the current branch. On conflict, leaves the repository
+    /// mid-sequencer and reports the conflicted paths.
+    fn revert(&self, repo: &RepoId, oid: &Oid) -> Result<ApplyOutcome>;
+
+    /// Abort an in-progress cherry-pick or revert sequencer.
+    fn sequencer_abort(&self, repo: &RepoId) -> Result<()>;
 }
 
 /// A [`GitEngine`] backed by [`gix`] for read-only access (ADR-0003).
@@ -346,6 +358,45 @@ fn head_oid(workdir: &Path) -> Result<Oid> {
     Ok(Oid::from(
         String::from_utf8_lossy(&out.stdout).trim().to_string(),
     ))
+}
+
+/// Deduplicate conflicted paths from a porcelain-derived status snapshot.
+fn conflict_paths(wt: &WorkingTree) -> Vec<String> {
+    let mut conflicts: Vec<String> = wt
+        .staged
+        .iter()
+        .chain(wt.unstaged.iter())
+        .filter(|f| f.kind == ChangeKind::Conflicted)
+        .map(|f| f.path.clone())
+        .collect();
+    conflicts.sort();
+    conflicts.dedup();
+    conflicts
+}
+
+/// Convert a raw cherry-pick/revert result into the shared sequencer outcome.
+fn sequencer_outcome(
+    workdir: &Path,
+    wt: &WorkingTree,
+    args: &[&str],
+    out: &std::process::Output,
+) -> Result<ApplyOutcome> {
+    if out.status.success() {
+        return Ok(ApplyOutcome::Applied(head_oid(workdir)?));
+    }
+
+    let conflicts = conflict_paths(wt);
+    if !conflicts.is_empty() {
+        return Ok(ApplyOutcome::Conflicts(conflicts));
+    }
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let msg = stderr.trim();
+    Err(Error::Git(if msg.is_empty() {
+        format!("git {args:?} failed ({})", out.status)
+    } else {
+        msg.to_string()
+    }))
 }
 
 /// Run system `git` in `workdir`, feeding `input` to its stdin (used for
@@ -1069,16 +1120,7 @@ impl GitEngine for GixEngine {
 
         let out = run_git_raw(&wd, &args)?;
         if !out.status.success() {
-            let wt = self.status(repo)?;
-            let mut conflicts: Vec<String> = wt
-                .staged
-                .iter()
-                .chain(wt.unstaged.iter())
-                .filter(|f| f.kind == ChangeKind::Conflicted)
-                .map(|f| f.path.clone())
-                .collect();
-            conflicts.sort();
-            conflicts.dedup();
+            let conflicts = conflict_paths(&self.status(repo)?);
             if !conflicts.is_empty() {
                 return Ok(MergeOutcome::Conflicts(conflicts));
             }
@@ -1112,6 +1154,28 @@ impl GitEngine for GixEngine {
     fn merge_abort(&self, repo: &RepoId) -> Result<()> {
         let wd = self.workdir(repo)?;
         run_git(&wd, &["merge", "--abort"]).map(|_| ())
+    }
+
+    fn cherry_pick(&self, repo: &RepoId, oid: &Oid) -> Result<ApplyOutcome> {
+        let wd = self.workdir(repo)?;
+        let args = ["cherry-pick", "--no-edit", oid.as_str()];
+        let out = run_git_raw(&wd, &args)?;
+        sequencer_outcome(&wd, &self.status(repo)?, &args, &out)
+    }
+
+    fn revert(&self, repo: &RepoId, oid: &Oid) -> Result<ApplyOutcome> {
+        let wd = self.workdir(repo)?;
+        let args = ["revert", "--no-edit", oid.as_str()];
+        let out = run_git_raw(&wd, &args)?;
+        sequencer_outcome(&wd, &self.status(repo)?, &args, &out)
+    }
+
+    fn sequencer_abort(&self, repo: &RepoId) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        if run_git(&wd, &["cherry-pick", "--abort"]).is_ok() {
+            return Ok(());
+        }
+        run_git(&wd, &["revert", "--abort"]).map(|_| ())
     }
 }
 
@@ -2527,6 +2591,106 @@ mod tests {
         );
 
         engine.merge_abort(&id).expect("merge abort");
+        assert_eq!(head_oid(p).expect("head after abort"), before);
+        let wt = engine.status(&id).expect("status after abort");
+        assert!(
+            wt.staged.is_empty() && wt.unstaged.is_empty() && wt.untracked.is_empty(),
+            "abort restores a clean tree: {wt:?}"
+        );
+    }
+
+    #[test]
+    fn cherry_pick_applies_commit_from_another_branch() {
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open the fixture repo");
+
+        engine.create_branch(&id, "side", None).expect("branch");
+        engine.checkout(&id, "side", false).expect("checkout side");
+        std::fs::write(p.join("side.txt"), "side\n").expect("write side");
+        engine
+            .stage_paths(&id, &["side.txt".to_string()])
+            .expect("stage side");
+        let side_commit = engine
+            .commit(&id, "side commit", &CommitOpts::default())
+            .expect("commit side");
+
+        engine.checkout(&id, "main", false).expect("checkout main");
+        let outcome = engine
+            .cherry_pick(&id, &side_commit)
+            .expect("cherry-pick side commit");
+
+        let ApplyOutcome::Applied(new_head) = outcome else {
+            panic!("expected applied cherry-pick, got {outcome:?}");
+        };
+        assert_eq!(head_oid(p).expect("head"), new_head);
+        assert_eq!(
+            std::fs::read_to_string(p.join("side.txt")).expect("read side file"),
+            "side\n"
+        );
+    }
+
+    #[test]
+    fn revert_undoes_a_commit() {
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open the fixture repo");
+
+        std::fs::write(p.join("file1.txt"), "changed\n").expect("write");
+        engine
+            .stage_paths(&id, &["file1.txt".to_string()])
+            .expect("stage");
+        let changed = engine
+            .commit(&id, "change file1", &CommitOpts::default())
+            .expect("commit change");
+
+        let outcome = engine.revert(&id, &changed).expect("revert change");
+        assert!(matches!(outcome, ApplyOutcome::Applied(_)));
+        assert_eq!(
+            std::fs::read_to_string(p.join("file1.txt")).expect("read file1"),
+            "content 1\n",
+            "revert restored the previous content"
+        );
+    }
+
+    #[test]
+    fn conflicting_cherry_pick_reports_paths_and_abort_restores_head() {
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open the fixture repo");
+
+        engine.create_branch(&id, "side", None).expect("branch");
+        engine.checkout(&id, "side", false).expect("checkout side");
+        std::fs::write(p.join("file1.txt"), "side edit\n").expect("write side");
+        engine
+            .stage_paths(&id, &["file1.txt".to_string()])
+            .expect("stage side");
+        let side_commit = engine
+            .commit(&id, "side edit", &CommitOpts::default())
+            .expect("commit side");
+
+        engine.checkout(&id, "main", false).expect("checkout main");
+        std::fs::write(p.join("file1.txt"), "main edit\n").expect("write main");
+        engine
+            .stage_paths(&id, &["file1.txt".to_string()])
+            .expect("stage main");
+        engine
+            .commit(&id, "main edit", &CommitOpts::default())
+            .expect("commit main");
+        let before = head_oid(p).expect("head before");
+
+        let outcome = engine
+            .cherry_pick(&id, &side_commit)
+            .expect("conflicting cherry-pick should report conflicts");
+        assert_eq!(
+            outcome,
+            ApplyOutcome::Conflicts(vec!["file1.txt".to_string()])
+        );
+
+        engine.sequencer_abort(&id).expect("sequencer abort");
         assert_eq!(head_oid(p).expect("head after abort"), before);
         let wt = engine.status(&id).expect("status after abort");
         assert!(

@@ -157,7 +157,7 @@
         "Unit tests: cherry-pick a commit from another branch applies its change; revert a commit undoes its change; a conflicting cherry-pick reports Conflicts and abort restores state; cargo fmt/clippy -D warnings/test green; cargo deny passes; npm run build green; manual window note in progress.txt"
       ],
       "priority": 11,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §1 cherry-pick, revert. Same conflict policy as merge: detect + list + abort; resolver is Phase 3."
     },
     {

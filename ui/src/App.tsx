@@ -1,7 +1,7 @@
 import { createEffect, createSignal, onMount, Show } from "solid-js";
 import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
-import type { AppInfo, OpenRepo, RefInfo } from "./commands";
+import type { AppInfo, ApplyOutcome, OpenRepo, RefInfo } from "./commands";
 import GraphView from "./GraphView";
 import DiffView from "./DiffView";
 import BlameView from "./BlameView";
@@ -25,6 +25,8 @@ const App: Component = () => {
   const [navFile, setNavFile] = createSignal<string | undefined>(undefined);
   const [paletteOpen, setPaletteOpen] = createSignal(false);
   const [err, setErr] = createSignal<string | null>(null);
+  const [opNotice, setOpNotice] = createSignal<string | null>(null);
+  const [opConflicts, setOpConflicts] = createSignal<string[]>([]);
   // Bumped after any mutation so status/refs/graph views reload (PLAN §3.2).
   const [refreshNonce, setRefreshNonce] = createSignal(0);
   const refresh = () => {
@@ -33,6 +35,41 @@ const App: Component = () => {
     if (!repo) return;
     invoke<RefInfo[]>("list_refs", { repo: repo.id })
       .then(setRefs)
+      .catch((e) => setErr(String(e)));
+  };
+
+  const describeApply = (action: string, outcome: ApplyOutcome) => {
+    if (outcome.kind === "Applied") return `${action} applied as ${outcome.value.slice(0, 8)}.`;
+    return `${action} stopped with ${outcome.value.length} conflict${outcome.value.length === 1 ? "" : "s"}.`;
+  };
+
+  const runCommitAction = (cmd: "cherry_pick" | "revert", label: string) => {
+    const repo = active();
+    const oid = selectedCommit();
+    if (!repo || !oid) return;
+    if (cmd === "revert" && !confirm(`Revert commit ${oid.slice(0, 8)}?`)) return;
+    setErr(null);
+    setOpNotice(null);
+    setOpConflicts([]);
+    invoke<ApplyOutcome>(cmd, { repo: repo.id, oid })
+      .then((outcome) => {
+        if (outcome.kind === "Conflicts") setOpConflicts(outcome.value);
+        setOpNotice(describeApply(label, outcome));
+        refresh();
+      })
+      .catch((e) => setErr(String(e)));
+  };
+
+  const abortSequencer = () => {
+    const repo = active();
+    if (!repo) return;
+    setErr(null);
+    invoke("sequencer_abort", { repo: repo.id })
+      .then(() => {
+        setOpConflicts([]);
+        setOpNotice("Operation aborted.");
+        refresh();
+      })
       .catch((e) => setErr(String(e)));
   };
 
@@ -115,6 +152,18 @@ const App: Component = () => {
       <Show when={err()}>
         <p style={{ color: "crimson", margin: "0.25rem 1rem", "font-size": "0.85rem" }}>{err()}</p>
       </Show>
+      <Show when={opNotice()}>
+        <p style={{ color: "#1a7f37", margin: "0.25rem 1rem", "font-size": "0.85rem" }}>{opNotice()}</p>
+      </Show>
+      <Show when={opConflicts().length > 0}>
+        <div style={{ margin: "0.25rem 1rem", padding: "0.35rem", border: "1px solid #f0c36d", background: "#fff8e5", "font-size": "0.8rem" }}>
+          <span style={{ "font-weight": 700 }}>Conflicts: </span>
+          <span>{opConflicts().join(", ")}</span>
+          <button style={{ margin: "0 0 0 0.5rem" }} onClick={abortSequencer}>
+            Abort
+          </button>
+        </div>
+      </Show>
 
       {/* View tabs for the active repo */}
       <Show when={active()}>
@@ -168,9 +217,21 @@ const App: Component = () => {
                     "min-width": "0",
                     "border-left": "1px solid #ddd",
                     overflow: "hidden",
+                    display: "flex",
+                    "flex-direction": "column",
                   }}
                 >
-                  <DiffView repoId={repoId()!} commit={selectedCommit()!} />
+                  <div style={{ display: "flex", gap: "0.4rem", padding: "0.35rem", "border-bottom": "1px solid #eee", "font-size": "0.8rem" }}>
+                    <button onClick={() => runCommitAction("cherry_pick", "Cherry-pick")}>
+                      Cherry-pick
+                    </button>
+                    <button onClick={() => runCommitAction("revert", "Revert")}>
+                      Revert
+                    </button>
+                  </div>
+                  <div style={{ flex: "1", "min-height": "0" }}>
+                    <DiffView repoId={repoId()!} commit={selectedCommit()!} />
+                  </div>
                 </div>
               </Show>
             </div>

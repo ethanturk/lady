@@ -1,7 +1,8 @@
 use lady_git::{CommitOpts, DiffSpec, GitEngine, GixEngine, GraphQuery, MergeOpts};
 use lady_graph::layout_continuation;
 use lady_proto::{
-    Blame, CommitMeta, FfMode, FileDiff, MergeOutcome, Oid, RefInfo, RepoId, WorkingTree,
+    ApplyOutcome, Blame, CommitMeta, FfMode, FileDiff, MergeOutcome, Oid, RefInfo, RepoId,
+    WorkingTree,
 };
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -603,6 +604,29 @@ fn merge_abort(repo: RepoId, engine: State<GixEngine>) -> Result<(), String> {
     engine.merge_abort(&repo).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn cherry_pick(
+    repo: RepoId,
+    oid: String,
+    engine: State<GixEngine>,
+) -> Result<ApplyOutcome, String> {
+    engine
+        .cherry_pick(&repo, &Oid::from(oid))
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn revert(repo: RepoId, oid: String, engine: State<GixEngine>) -> Result<ApplyOutcome, String> {
+    engine
+        .revert(&repo, &Oid::from(oid))
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn sequencer_abort(repo: RepoId, engine: State<GixEngine>) -> Result<(), String> {
+    engine.sequencer_abort(&repo).map_err(|e| e.to_string())
+}
+
 /// A repository remembered in user settings, with an optional custom group.
 #[derive(Serialize, Deserialize, Default, Clone)]
 pub struct RecentRepo {
@@ -687,6 +711,9 @@ pub fn run() {
             stash_drop,
             merge,
             merge_abort,
+            cherry_pick,
+            revert,
+            sequencer_abort,
             clone_repo,
             load_settings,
             save_settings

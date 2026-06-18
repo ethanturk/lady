@@ -166,6 +166,11 @@ export type MergeOutcome =
   | { kind: "Merged"; value: string }
   | { kind: "Conflicts"; value: string[] };
 
+/** Mirrors lady_proto::ApplyOutcome. */
+export type ApplyOutcome =
+  | { kind: "Applied"; value: string }
+  | { kind: "Conflicts"; value: string[] };
+
 // ── Repository-manager types ───────────────────────────────────────────────────
 
 export interface RecentRepo {

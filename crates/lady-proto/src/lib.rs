@@ -279,6 +279,16 @@ pub enum MergeOutcome {
     Conflicts(Vec<String>),
 }
 
+/// Result of a sequencer operation (cherry-pick or revert).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value")]
+pub enum ApplyOutcome {
+    /// The operation completed and `HEAD` now points at this commit.
+    Applied(Oid),
+    /// Operation stopped with conflicts; carries the conflicted paths.
+    Conflicts(Vec<String>),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -367,6 +377,19 @@ mod tests {
         for outcome in cases {
             let json = serde_json::to_string(&outcome).expect("serialize MergeOutcome");
             let back: MergeOutcome = serde_json::from_str(&json).expect("deserialize MergeOutcome");
+            assert_eq!(outcome, back);
+        }
+    }
+
+    #[test]
+    fn apply_outcome_serde_round_trip() {
+        let cases = [
+            ApplyOutcome::Applied(Oid::from("a".repeat(40))),
+            ApplyOutcome::Conflicts(vec!["conflicted.txt".to_owned()]),
+        ];
+        for outcome in cases {
+            let json = serde_json::to_string(&outcome).expect("serialize ApplyOutcome");
+            let back: ApplyOutcome = serde_json::from_str(&json).expect("deserialize ApplyOutcome");
             assert_eq!(outcome, back);
         }
     }
