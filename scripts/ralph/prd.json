@@ -140,7 +140,7 @@
         "Command logic unit-tested; cargo + npm run build green"
       ],
       "priority": 10,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md \u00a71 file history."
     },
     {

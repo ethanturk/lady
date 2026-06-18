@@ -155,6 +155,15 @@ fn blame(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn file_history(
+    repo: RepoId,
+    path: String,
+    engine: State<GixEngine>,
+) -> Result<Vec<CommitMeta>, String> {
+    engine.file_history(&repo, &path).map_err(|e| e.to_string())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(GixEngine::new())
@@ -165,7 +174,8 @@ pub fn run() {
             walk_log,
             walk_log_graph,
             diff,
-            blame
+            blame,
+            file_history
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

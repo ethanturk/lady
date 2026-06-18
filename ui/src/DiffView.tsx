@@ -225,7 +225,9 @@ const FileBlock: Component<{ file: FileDiff; mode: Mode }> = (props) => {
   );
 };
 
-const DiffView: Component<{ repoId: RepoId; commit: string }> = (props) => {
+const DiffView: Component<{ repoId: RepoId; commit: string; filterPath?: string }> = (
+  props,
+) => {
   const [files, setFiles] = createSignal<FileDiff[]>([]);
   const [mode, setMode] = createSignal<Mode>("unified");
   const [loading, setLoading] = createSignal(false);
@@ -236,8 +238,9 @@ const DiffView: Component<{ repoId: RepoId; commit: string }> = (props) => {
     const repo = props.repoId;
     setLoading(true);
     setErr(null);
+    const filter = props.filterPath;
     invoke<FileDiff[]>("diff", { repo, commit })
-      .then((d) => setFiles(d))
+      .then((d) => setFiles(filter ? d.filter((f) => f.path === filter) : d))
       .catch((e) => setErr(String(e)))
       .finally(() => setLoading(false));
   });

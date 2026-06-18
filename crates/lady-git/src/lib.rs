@@ -68,6 +68,11 @@ pub trait GitEngine: Send + Sync {
     /// Annotate each line of `path` with the commit that last changed it.
     /// `at` selects the revision to blame from (`None` = `HEAD`).
     fn blame(&self, repo: &RepoId, path: &str, at: Option<&Oid>) -> Result<Blame>;
+
+    /// List commits (newest first) that changed `path`, walking from `HEAD`.
+    /// A commit is included when its blob at `path` differs from its first
+    /// parent's (covering add, modify, and delete).
+    fn file_history(&self, repo: &RepoId, path: &str) -> Result<Vec<CommitMeta>>;
 }
 
 /// A [`GitEngine`] backed by [`gix`] for read-only access (ADR-0003).
@@ -355,6 +360,42 @@ impl GitEngine for GixEngine {
             path: path.to_owned(),
             lines,
         })
+    }
+
+    fn file_history(&self, repo: &RepoId, path: &str) -> Result<Vec<CommitMeta>> {
+        let repo = self.repo(repo)?;
+        let head = repo.head_id().map_err(backend)?.detach();
+        let rel = std::path::Path::new(path);
+
+        // Blob id of `path` within a commit's tree (None if the path is absent).
+        let blob_at = |commit: &gix::Commit| -> Result<Option<gix::ObjectId>> {
+            let tree = commit.tree().map_err(backend)?;
+            Ok(tree
+                .lookup_entry_by_path(rel)
+                .map_err(backend)?
+                .map(|e| e.object_id()))
+        };
+
+        let mut out = Vec::new();
+        for info in repo.rev_walk([head]).all().map_err(backend)? {
+            let info = info.map_err(backend)?;
+            let commit = info.object().map_err(backend)?;
+            let current = blob_at(&commit)?;
+
+            // Compare against the first parent (empty tree for a root commit).
+            let parent = match commit.parent_ids().next() {
+                Some(pid) => {
+                    let p = repo.find_commit(pid.detach()).map_err(backend)?;
+                    blob_at(&p)?
+                }
+                None => None,
+            };
+
+            if current != parent {
+                out.push(commit_meta(&commit)?);
+            }
+        }
+        Ok(out)
     }
 }
 
@@ -717,5 +758,44 @@ mod tests {
         );
         assert_eq!(blame.lines[0].author, "Lady Test");
         assert!(blame.lines[0].time > 0, "commit time populated");
+    }
+
+    #[test]
+    fn file_history_lists_only_commits_touching_the_path() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let p = dir.path();
+        git(p, &["init", "-q", "-b", "main"]);
+        git(p, &["config", "user.name", "Lady Test"]);
+        git(p, &["config", "user.email", "test@example.com"]);
+        git(p, &["config", "commit.gpgsign", "false"]);
+
+        // c1: add a.txt + b.txt.
+        std::fs::write(p.join("a.txt"), "a1\n").expect("write");
+        std::fs::write(p.join("b.txt"), "b1\n").expect("write");
+        git(p, &["add", "."]);
+        git(p, &["commit", "-q", "-m", "add a and b"]);
+
+        // c2: modify a.txt only.
+        std::fs::write(p.join("a.txt"), "a2\n").expect("write");
+        git(p, &["add", "."]);
+        git(p, &["commit", "-q", "-m", "edit a"]);
+
+        // c3: modify b.txt only (must NOT appear in a.txt history).
+        std::fs::write(p.join("b.txt"), "b2\n").expect("write");
+        git(p, &["add", "."]);
+        git(p, &["commit", "-q", "-m", "edit b"]);
+
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open the fixture repo");
+        let hist = engine
+            .file_history(&id, "a.txt")
+            .expect("file_history a.txt");
+
+        let summaries: Vec<&str> = hist.iter().map(|c| c.summary.as_str()).collect();
+        assert_eq!(
+            summaries,
+            vec!["edit a", "add a and b"],
+            "newest-first, only commits touching a.txt"
+        );
     }
 }

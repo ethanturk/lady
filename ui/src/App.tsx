@@ -5,6 +5,7 @@ import type { AppInfo, RefInfo, RefKind, RepoId } from "./commands";
 import GraphView from "./GraphView";
 import DiffView from "./DiffView";
 import BlameView from "./BlameView";
+import FileHistory from "./FileHistory";
 
 interface RefGroupProps {
   title: string;
@@ -31,7 +32,7 @@ const RefGroup: Component<RefGroupProps> = (props) => (
   </Show>
 );
 
-type Tab = "commits" | "refs" | "blame";
+type Tab = "commits" | "refs" | "blame" | "history";
 
 const App: Component = () => {
   const [info, setInfo] = createSignal<AppInfo | null>(null);
@@ -131,6 +132,9 @@ const App: Component = () => {
             <button style={tabStyle("blame")} onClick={() => setTab("blame")}>
               Blame
             </button>
+            <button style={tabStyle("history")} onClick={() => setTab("history")}>
+              History
+            </button>
           </div>
         </Show>
       </div>
@@ -171,6 +175,9 @@ const App: Component = () => {
           </Show>
           <Show when={tab() === "blame"}>
             <BlameView repoId={repoId()!} />
+          </Show>
+          <Show when={tab() === "history"}>
+            <FileHistory repoId={repoId()!} />
           </Show>
         </div>
       </Show>
