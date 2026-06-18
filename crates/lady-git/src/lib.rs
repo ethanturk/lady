@@ -53,6 +53,20 @@ pub struct GraphQuery {
     pub limit: usize,
 }
 
+/// What to diff. Generalizes the Phase-1 commit diff to also cover the
+/// working-tree and index sides needed by the Changes view.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DiffSpec {
+    /// A commit against its first parent (Phase 1 behavior).
+    Commit(Oid),
+    /// One path: index blob (old) vs the on-disk working file (new) — i.e. the
+    /// unstaged changes.
+    WorkingVsIndex(String),
+    /// One path: HEAD blob (old) vs the index blob (new) — i.e. the staged
+    /// changes.
+    IndexVsHead(String),
+}
+
 /// A read backend over a git repository.
 ///
 /// Implementations open a repo to a [`RepoId`] handle, then serve refs and
@@ -71,6 +85,10 @@ pub trait GitEngine: Send + Sync {
     /// Diff a commit against its first parent (or the empty tree for root commits).
     /// Returns one `FileDiff` per changed file.
     fn diff_commit(&self, repo: &RepoId, commit: &Oid) -> Result<Vec<FileDiff>>;
+
+    /// Diff per a [`DiffSpec`]: a commit, one file's unstaged changes
+    /// (working vs index), or one file's staged changes (index vs HEAD).
+    fn diff_spec(&self, repo: &RepoId, spec: &DiffSpec) -> Result<Vec<FileDiff>>;
 
     /// Annotate each line of `path` with the commit that last changed it.
     /// `at` selects the revision to blame from (`None` = `HEAD`).
@@ -353,6 +371,26 @@ impl GitEngine for GixEngine {
 
         diffs.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(diffs)
+    }
+
+    fn diff_spec(&self, repo: &RepoId, spec: &DiffSpec) -> Result<Vec<FileDiff>> {
+        match spec {
+            DiffSpec::Commit(oid) => self.diff_commit(repo, oid),
+            DiffSpec::WorkingVsIndex(path) => {
+                let wd = self.workdir(repo)?;
+                // old = index blob (staged content); new = on-disk bytes.
+                let old = cat_blob(&wd, &format!(":{path}"));
+                let new = std::fs::read(wd.join(path)).ok();
+                Ok(single_file_diff(old.as_deref(), new.as_deref(), path))
+            }
+            DiffSpec::IndexVsHead(path) => {
+                let wd = self.workdir(repo)?;
+                // old = HEAD blob; new = index blob (staged content).
+                let old = cat_blob(&wd, &format!("HEAD:{path}"));
+                let new = cat_blob(&wd, &format!(":{path}"));
+                Ok(single_file_diff(old.as_deref(), new.as_deref(), path))
+            }
+        }
     }
 
     fn blame(&self, repo: &RepoId, path: &str, at: Option<&Oid>) -> Result<Blame> {
@@ -662,6 +700,39 @@ struct BlobDiff {
     new_image_b64: Option<String>,
 }
 
+/// Read a blob's bytes by revision-qualified path (e.g. `":path"` for the
+/// index, `"HEAD:path"` for the tip). Returns `None` when the path is absent
+/// on that side (cat-file exits non-zero).
+fn cat_blob(workdir: &Path, rev_path: &str) -> Option<Vec<u8>> {
+    let out = Command::new("git")
+        .current_dir(workdir)
+        .args(["cat-file", "blob", rev_path])
+        .output()
+        .ok()?;
+    if out.status.success() {
+        Some(out.stdout)
+    } else {
+        None
+    }
+}
+
+/// Build a single-file [`FileDiff`] from two byte sides (`None` = absent).
+/// Returns an empty vec when the file is absent on both sides.
+fn single_file_diff(old: Option<&[u8]>, new: Option<&[u8]>, path: &str) -> Vec<FileDiff> {
+    if old.is_none() && new.is_none() {
+        return Vec::new();
+    }
+    let bd = blob_diff_bytes(old, new, path);
+    vec![FileDiff {
+        path: path.to_string(),
+        old_path: None,
+        kind: bd.kind,
+        hunks: bd.hunks,
+        old_image_b64: bd.old_image_b64,
+        new_image_b64: bd.new_image_b64,
+    }]
+}
+
 /// Determine `FileDiffKind` and compute text hunks (or image b64) for a
 /// pair of optional blob OIDs.
 fn blob_diff(
@@ -670,6 +741,31 @@ fn blob_diff(
     new_id: Option<gix::ObjectId>,
     path: &str,
 ) -> Result<BlobDiff> {
+    let old_bytes = old_id
+        .map(|id| {
+            repo.find_object(id)
+                .map_err(backend)
+                .map(|o| o.data.to_vec())
+        })
+        .transpose()?;
+    let new_bytes = new_id
+        .map(|id| {
+            repo.find_object(id)
+                .map_err(backend)
+                .map(|o| o.data.to_vec())
+        })
+        .transpose()?;
+    Ok(blob_diff_bytes(
+        old_bytes.as_deref(),
+        new_bytes.as_deref(),
+        path,
+    ))
+}
+
+/// Diff one file from raw byte sides. `None` means the file is absent on that
+/// side (so old=None → Added, new=None → Deleted). Detects image (by
+/// extension) and binary (null bytes) content; otherwise produces text hunks.
+fn blob_diff_bytes(old: Option<&[u8]>, new: Option<&[u8]>, path: &str) -> BlobDiff {
     use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
     use lady_diff::text_diff;
 
@@ -679,73 +775,48 @@ fn blob_diff(
         ext.as_str(),
         "png" | "jpg" | "jpeg" | "gif" | "bmp" | "ico" | "tiff" | "webp" | "svg"
     ) {
-        let kind = match (old_id, new_id) {
+        let kind = match (old, new) {
             (None, _) => FileDiffKind::Added,
             (_, None) => FileDiffKind::Deleted,
             _ => FileDiffKind::Image,
         };
-        let old_b64 = old_id
-            .map(|id| {
-                repo.find_object(id)
-                    .map_err(backend)
-                    .map(|o| B64.encode(&o.data))
-            })
-            .transpose()?;
-        let new_b64 = new_id
-            .map(|id| {
-                repo.find_object(id)
-                    .map_err(backend)
-                    .map(|o| B64.encode(&o.data))
-            })
-            .transpose()?;
-        return Ok(BlobDiff {
+        return BlobDiff {
             kind,
             hunks: Vec::new(),
-            old_image_b64: old_b64,
-            new_image_b64: new_b64,
-        });
+            old_image_b64: old.map(|b| B64.encode(b)),
+            new_image_b64: new.map(|b| B64.encode(b)),
+        };
     }
 
-    let old_bytes: Vec<u8> = match old_id {
-        Some(id) => repo.find_object(id).map_err(backend)?.data.to_vec(),
-        None => Vec::new(),
-    };
-    let new_bytes: Vec<u8> = match new_id {
-        Some(id) => repo.find_object(id).map_err(backend)?.data.to_vec(),
-        None => Vec::new(),
-    };
-
-    // Binary detection: look for null bytes.
-    let is_binary = old_bytes.contains(&0) || new_bytes.contains(&0);
+    // Binary detection: look for null bytes on either side.
+    let is_binary = old.is_some_and(|b| b.contains(&0)) || new.is_some_and(|b| b.contains(&0));
     if is_binary {
-        let kind = match (old_id, new_id) {
+        let kind = match (old, new) {
             (None, _) => FileDiffKind::Added,
             (_, None) => FileDiffKind::Deleted,
             _ => FileDiffKind::Binary,
         };
-        return Ok(BlobDiff {
+        return BlobDiff {
             kind,
             hunks: Vec::new(),
             old_image_b64: None,
             new_image_b64: None,
-        });
+        };
     }
 
-    let old_text = String::from_utf8_lossy(&old_bytes);
-    let new_text = String::from_utf8_lossy(&new_bytes);
-
-    let kind = match (old_id, new_id) {
+    let old_text = String::from_utf8_lossy(old.unwrap_or(&[]));
+    let new_text = String::from_utf8_lossy(new.unwrap_or(&[]));
+    let kind = match (old, new) {
         (None, _) => FileDiffKind::Added,
         (_, None) => FileDiffKind::Deleted,
         _ => FileDiffKind::Modified,
     };
-    let hunks = text_diff(&old_text, &new_text);
-    Ok(BlobDiff {
+    BlobDiff {
         kind,
-        hunks,
+        hunks: text_diff(&old_text, &new_text),
         old_image_b64: None,
         new_image_b64: None,
-    })
+    }
 }
 
 /// Convert a [`gix::Commit`] into the GUI-agnostic [`CommitMeta`] contract.
@@ -1178,6 +1249,71 @@ mod tests {
         let wt = engine.status(&id).unwrap();
         assert!(wt.staged.is_empty(), "no longer staged");
         assert_eq!(wt.unstaged.len(), 1, "unstaged again");
+    }
+
+    #[test]
+    fn diff_spec_covers_commit_working_and_staged() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let p = dir.path();
+        git(p, &["init", "-q", "-b", "main"]);
+        git(p, &["config", "user.name", "Lady Test"]);
+        git(p, &["config", "user.email", "test@example.com"]);
+        git(p, &["config", "commit.gpgsign", "false"]);
+
+        std::fs::write(p.join("a.txt"), "one\ntwo\nthree\n").expect("write");
+        git(p, &["add", "."]);
+        git(p, &["commit", "-q", "-m", "base"]);
+
+        // Stage a change to line 1, then make a further unstaged change to line 3.
+        std::fs::write(p.join("a.txt"), "ONE\ntwo\nthree\n").expect("write");
+        git(p, &["add", "a.txt"]);
+        std::fs::write(p.join("a.txt"), "ONE\ntwo\nTHREE\n").expect("write");
+
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open");
+
+        // Staged: HEAD ("one") vs index ("ONE") — sees the line-1 change only.
+        let staged = engine
+            .diff_spec(&id, &DiffSpec::IndexVsHead("a.txt".to_string()))
+            .expect("staged diff");
+        assert_eq!(staged.len(), 1);
+        let staged_added: Vec<&str> = staged[0]
+            .hunks
+            .iter()
+            .flat_map(|h| h.lines.iter())
+            .filter(|l| l.kind == lady_proto::LineKind::Added)
+            .map(|l| l.content.as_str())
+            .collect();
+        assert!(staged_added.contains(&"ONE"), "staged diff adds ONE");
+        assert!(!staged_added.contains(&"THREE"), "staged diff omits THREE");
+
+        // Unstaged: index ("ONE..three") vs working ("ONE..THREE") — line-3 only.
+        let working = engine
+            .diff_spec(&id, &DiffSpec::WorkingVsIndex("a.txt".to_string()))
+            .expect("working diff");
+        let working_added: Vec<&str> = working[0]
+            .hunks
+            .iter()
+            .flat_map(|h| h.lines.iter())
+            .filter(|l| l.kind == lady_proto::LineKind::Added)
+            .map(|l| l.content.as_str())
+            .collect();
+        assert!(working_added.contains(&"THREE"), "working diff adds THREE");
+        assert!(!working_added.contains(&"ONE"), "working diff omits ONE");
+
+        // Commit variant still works (root commit adds a.txt).
+        let head = engine.list_refs(&id).unwrap();
+        let head_oid = head
+            .iter()
+            .find(|r| r.kind == RefKind::Head)
+            .unwrap()
+            .target
+            .clone();
+        let commit_diff = engine
+            .diff_spec(&id, &DiffSpec::Commit(head_oid))
+            .expect("commit diff");
+        assert_eq!(commit_diff.len(), 1);
+        assert_eq!(commit_diff[0].path, "a.txt");
     }
 
     #[test]

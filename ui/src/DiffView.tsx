@@ -3,7 +3,7 @@ import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import hljs from "highlight.js";
 import "highlight.js/styles/github.css";
-import type { DiffHunk, DiffLine, FileDiff, RepoId } from "./commands";
+import type { DiffHunk, DiffLine, DiffSpec, FileDiff, RepoId } from "./commands";
 
 type Mode = "unified" | "split";
 
@@ -225,21 +225,39 @@ const FileBlock: Component<{ file: FileDiff; mode: Mode }> = (props) => {
   );
 };
 
-const DiffView: Component<{ repoId: RepoId; commit: string; filterPath?: string }> = (
-  props,
-) => {
+/**
+ * Renders a diff. Either a `commit` (its diff vs first parent, Phase 1) or a
+ * `spec` (working-vs-index / index-vs-HEAD for a single file, Phase 2) drives
+ * the fetch; `spec` takes precedence when both are given.
+ */
+const DiffView: Component<{
+  repoId: RepoId;
+  commit?: string;
+  spec?: DiffSpec;
+  filterPath?: string;
+}> = (props) => {
   const [files, setFiles] = createSignal<FileDiff[]>([]);
   const [mode, setMode] = createSignal<Mode>("unified");
   const [loading, setLoading] = createSignal(false);
   const [err, setErr] = createSignal<string | null>(null);
 
+  // A label for the diff header: spec target, else short commit hash.
+  const title = () => {
+    if (props.spec) return props.spec.value;
+    return props.commit ? props.commit.slice(0, 8) : "";
+  };
+
   createEffect(() => {
+    const spec = props.spec;
     const commit = props.commit;
     const repo = props.repoId;
     setLoading(true);
     setErr(null);
     const filter = props.filterPath;
-    invoke<FileDiff[]>("diff", { repo, commit })
+    const req = spec
+      ? invoke<FileDiff[]>("diff_spec", { repo, spec })
+      : invoke<FileDiff[]>("diff", { repo, commit });
+    req
       .then((d) => setFiles(filter ? d.filter((f) => f.path === filter) : d))
       .catch((e) => setErr(String(e)))
       .finally(() => setLoading(false));
@@ -258,7 +276,7 @@ const DiffView: Component<{ repoId: RepoId; commit: string; filterPath?: string 
         }}
       >
         <span style={{ "font-family": "monospace", "font-size": "0.8rem" }}>
-          {props.commit.slice(0, 8)}
+          {title()}
         </span>
         <span style={{ flex: "1" }} />
         <button

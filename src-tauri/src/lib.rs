@@ -1,4 +1,4 @@
-use lady_git::{GitEngine, GixEngine, GraphQuery};
+use lady_git::{DiffSpec, GitEngine, GixEngine, GraphQuery};
 use lady_graph::layout_continuation;
 use lady_proto::{Blame, CommitMeta, FileDiff, Oid, RefInfo, RepoId, WorkingTree};
 use serde::{Deserialize, Serialize};
@@ -140,6 +140,29 @@ fn walk_log_graph(
 fn diff(repo: RepoId, commit: String, engine: State<GixEngine>) -> Result<Vec<FileDiff>, String> {
     let oid = Oid::from(commit);
     engine.diff_commit(&repo, &oid).map_err(|e| e.to_string())
+}
+
+/// Bridge DTO for a [`DiffSpec`]: `kind` selects the variant and `value` is the
+/// commit oid (Commit) or file path (WorkingVsIndex / IndexVsHead).
+#[derive(Deserialize)]
+pub struct DiffSpecArg {
+    pub kind: String,
+    pub value: String,
+}
+
+#[tauri::command]
+fn diff_spec(
+    repo: RepoId,
+    spec: DiffSpecArg,
+    engine: State<GixEngine>,
+) -> Result<Vec<FileDiff>, String> {
+    let spec = match spec.kind.as_str() {
+        "Commit" => DiffSpec::Commit(Oid::from(spec.value)),
+        "WorkingVsIndex" => DiffSpec::WorkingVsIndex(spec.value),
+        "IndexVsHead" => DiffSpec::IndexVsHead(spec.value),
+        other => return Err(format!("unknown DiffSpec kind: {other}")),
+    };
+    engine.diff_spec(&repo, &spec).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -286,6 +309,7 @@ pub fn run() {
             walk_log,
             walk_log_graph,
             diff,
+            diff_spec,
             blame,
             file_history,
             repo_dirty,

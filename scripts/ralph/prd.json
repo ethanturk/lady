@@ -43,7 +43,7 @@
         "Unit test on each DiffSpec variant against a tempdir repo; cargo fmt/clippy -D warnings/test green; cargo deny passes; npm run build green; manual window note in progress.txt"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §4.1 diff(repo, spec). Reuses Phase 1 DiffView/lady-diff. Working-vs-index = on-disk bytes vs index blob; index-vs-HEAD = index blob vs HEAD tree blob."
     },
     {

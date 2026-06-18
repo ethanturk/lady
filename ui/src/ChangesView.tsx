@@ -1,7 +1,8 @@
 import { createEffect, createSignal, For, Show } from "solid-js";
 import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
-import type { ChangeKind, FileStatus, RepoId, WorkingTree } from "./commands";
+import type { ChangeKind, DiffSpec, FileStatus, RepoId, WorkingTree } from "./commands";
+import DiffView from "./DiffView";
 
 /** A short colored badge for a file's change kind. */
 const KIND_BADGE: Record<ChangeKind, { label: string; color: string }> = {
@@ -47,21 +48,28 @@ const Row: Component<{
   file: FileStatus;
   actionLabel: string;
   onAction: () => void;
+  selected: boolean;
+  onSelect: () => void;
 }> = (props) => (
   <li
     style={{
       display: "flex",
       "align-items": "center",
       gap: "0.4rem",
-      padding: "0.1rem 0",
+      padding: "0.1rem 0.25rem",
       "font-family": "monospace",
       "font-size": "0.8rem",
+      background: props.selected ? "#dbeafe" : "transparent",
+      "border-radius": "3px",
     }}
   >
     <Badge kind={props.file.kind} />
     <span
+      onClick={props.onSelect}
+      title="Show diff"
       style={{
         flex: "1",
+        cursor: "pointer",
         overflow: "hidden",
         "text-overflow": "ellipsis",
         "white-space": "nowrap",
@@ -77,6 +85,12 @@ const Row: Component<{
     </button>
   </li>
 );
+
+/** Which file + side the diff pane is showing. */
+interface Selection {
+  path: string;
+  staged: boolean;
+}
 
 interface ChangesViewProps {
   repoId: RepoId;
@@ -94,6 +108,7 @@ interface ChangesViewProps {
 const ChangesView: Component<ChangesViewProps> = (props) => {
   const [wt, setWt] = createSignal<WorkingTree | null>(null);
   const [err, setErr] = createSignal<string | null>(null);
+  const [selected, setSelected] = createSignal<Selection | null>(null);
 
   const reload = () => {
     setErr(null);
@@ -101,6 +116,15 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
       .then(setWt)
       .catch((e) => setErr(String(e)));
   };
+
+  // The DiffSpec for the current selection (staged → index-vs-HEAD).
+  const selectedSpec = (): DiffSpec | null => {
+    const s = selected();
+    if (!s) return null;
+    return { kind: s.staged ? "IndexVsHead" : "WorkingVsIndex", value: s.path };
+  };
+  const isSelected = (path: string, staged: boolean) =>
+    selected()?.path === path && selected()?.staged === staged;
 
   // Reload on repo change and whenever the refresh nonce bumps.
   createEffect(() => {
@@ -158,45 +182,79 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
   );
 
   return (
-    <div style={{ height: "100%", "overflow-y": "auto", padding: "0.5rem 1rem" }}>
-      <Show when={err()}>
-        <p style={{ color: "crimson", "font-size": "0.85rem" }}>{err()}</p>
-      </Show>
-      <Show when={isClean()}>
-        <p style={{ color: "#888", "font-size": "0.85rem" }}>Working tree clean.</p>
-      </Show>
+    <div style={{ height: "100%", display: "flex", overflow: "hidden" }}>
+      {/* Left: the staged / unstaged / untracked lists. */}
+      <div style={{ flex: "1", "min-width": "0", "overflow-y": "auto", padding: "0.5rem 1rem" }}>
+        <Show when={err()}>
+          <p style={{ color: "crimson", "font-size": "0.85rem" }}>{err()}</p>
+        </Show>
+        <Show when={isClean()}>
+          <p style={{ color: "#888", "font-size": "0.85rem" }}>Working tree clean.</p>
+        </Show>
 
-      <Show when={(wt()?.staged.length ?? 0) > 0}>
-        {header("Staged", wt()!.staged.length, {
-          label: "Unstage all",
-          run: () => unstage(allStagedPaths()),
-        })}
-        <ul style={{ margin: 0, padding: 0, "list-style": "none" }}>
-          <For each={wt()!.staged}>
-            {(f) => <Row file={f} actionLabel="Unstage" onAction={() => unstage([f.path])} />}
-          </For>
-        </ul>
-      </Show>
+        <Show when={(wt()?.staged.length ?? 0) > 0}>
+          {header("Staged", wt()!.staged.length, {
+            label: "Unstage all",
+            run: () => unstage(allStagedPaths()),
+          })}
+          <ul style={{ margin: 0, padding: 0, "list-style": "none" }}>
+            <For each={wt()!.staged}>
+              {(f) => (
+                <Row
+                  file={f}
+                  actionLabel="Unstage"
+                  onAction={() => unstage([f.path])}
+                  selected={isSelected(f.path, true)}
+                  onSelect={() => setSelected({ path: f.path, staged: true })}
+                />
+              )}
+            </For>
+          </ul>
+        </Show>
 
-      <Show when={(wt()?.unstaged.length ?? 0) > 0}>
-        {header("Unstaged", wt()!.unstaged.length, {
-          label: "Stage all",
-          run: () => stage(allUnstagedPaths()),
-        })}
-        <ul style={{ margin: 0, padding: 0, "list-style": "none" }}>
-          <For each={wt()!.unstaged}>
-            {(f) => <Row file={f} actionLabel="Stage" onAction={() => stage([f.path])} />}
-          </For>
-        </ul>
-      </Show>
+        <Show when={(wt()?.unstaged.length ?? 0) > 0}>
+          {header("Unstaged", wt()!.unstaged.length, {
+            label: "Stage all",
+            run: () => stage(allUnstagedPaths()),
+          })}
+          <ul style={{ margin: 0, padding: 0, "list-style": "none" }}>
+            <For each={wt()!.unstaged}>
+              {(f) => (
+                <Row
+                  file={f}
+                  actionLabel="Stage"
+                  onAction={() => stage([f.path])}
+                  selected={isSelected(f.path, false)}
+                  onSelect={() => setSelected({ path: f.path, staged: false })}
+                />
+              )}
+            </For>
+          </ul>
+        </Show>
 
-      <Show when={(wt()?.untracked.length ?? 0) > 0}>
-        {header("Untracked", wt()!.untracked.length)}
-        <ul style={{ margin: 0, padding: 0, "list-style": "none" }}>
-          <For each={untrackedAsFiles()}>
-            {(f) => <Row file={f} actionLabel="Stage" onAction={() => stage([f.path])} />}
-          </For>
-        </ul>
+        <Show when={(wt()?.untracked.length ?? 0) > 0}>
+          {header("Untracked", wt()!.untracked.length)}
+          <ul style={{ margin: 0, padding: 0, "list-style": "none" }}>
+            <For each={untrackedAsFiles()}>
+              {(f) => (
+                <Row
+                  file={f}
+                  actionLabel="Stage"
+                  onAction={() => stage([f.path])}
+                  selected={isSelected(f.path, false)}
+                  onSelect={() => setSelected({ path: f.path, staged: false })}
+                />
+              )}
+            </For>
+          </ul>
+        </Show>
+      </div>
+
+      {/* Right: the diff for the selected file. */}
+      <Show when={selectedSpec()}>
+        <div style={{ flex: "1", "min-width": "0", "border-left": "1px solid #ddd", overflow: "hidden" }}>
+          <DiffView repoId={props.repoId} spec={selectedSpec()!} />
+        </div>
       </Show>
     </div>
   );

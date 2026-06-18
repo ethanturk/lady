@@ -109,6 +109,15 @@ export interface Blame {
   lines: BlameLine[];
 }
 
+/**
+ * Mirrors lady_git::DiffSpec for the diff_spec command. `value` is a commit oid
+ * (Commit) or a file path (WorkingVsIndex = unstaged, IndexVsHead = staged).
+ */
+export interface DiffSpec {
+  kind: "Commit" | "WorkingVsIndex" | "IndexVsHead";
+  value: string;
+}
+
 // ── Working-tree status types ───────────────────────────────────────────────────
 
 /** Mirrors lady_proto::ChangeKind. */
