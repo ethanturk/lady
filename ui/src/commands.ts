@@ -156,6 +156,16 @@ export interface StashEntry {
   oid: string;
 }
 
+/** Mirrors lady_proto::FfMode. */
+export type FfMode = "Auto" | "Only" | "Never";
+
+/** Mirrors lady_proto::MergeOutcome. */
+export type MergeOutcome =
+  | { kind: "AlreadyUpToDate" }
+  | { kind: "FastForwarded" }
+  | { kind: "Merged"; value: string }
+  | { kind: "Conflicts"; value: string[] };
+
 // ── Repository-manager types ───────────────────────────────────────────────────
 
 export interface RecentRepo {

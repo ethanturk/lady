@@ -1,6 +1,8 @@
-use lady_git::{CommitOpts, DiffSpec, GitEngine, GixEngine, GraphQuery};
+use lady_git::{CommitOpts, DiffSpec, GitEngine, GixEngine, GraphQuery, MergeOpts};
 use lady_graph::layout_continuation;
-use lady_proto::{Blame, CommitMeta, FileDiff, Oid, RefInfo, RepoId, WorkingTree};
+use lady_proto::{
+    Blame, CommitMeta, FfMode, FileDiff, MergeOutcome, Oid, RefInfo, RepoId, WorkingTree,
+};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -573,6 +575,34 @@ fn stash_drop(repo: RepoId, index: usize, engine: State<GixEngine>) -> Result<()
     engine.stash_drop(&repo, index).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn merge(
+    repo: RepoId,
+    source: String,
+    fast_forward: String,
+    commit_message: Option<String>,
+    engine: State<GixEngine>,
+) -> Result<MergeOutcome, String> {
+    let fast_forward = match fast_forward.as_str() {
+        "Auto" => FfMode::Auto,
+        "Only" => FfMode::Only,
+        "Never" => FfMode::Never,
+        other => return Err(format!("unknown fast-forward mode: {other}")),
+    };
+    let opts = MergeOpts {
+        fast_forward,
+        commit_message,
+    };
+    engine
+        .merge(&repo, &source, &opts)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn merge_abort(repo: RepoId, engine: State<GixEngine>) -> Result<(), String> {
+    engine.merge_abort(&repo).map_err(|e| e.to_string())
+}
+
 /// A repository remembered in user settings, with an optional custom group.
 #[derive(Serialize, Deserialize, Default, Clone)]
 pub struct RecentRepo {
@@ -655,6 +685,8 @@ pub fn run() {
             stash_apply,
             stash_pop,
             stash_drop,
+            merge,
+            merge_abort,
             clone_repo,
             load_settings,
             save_settings

@@ -248,6 +248,37 @@ pub struct StashEntry {
     pub oid: Oid,
 }
 
+/// Fast-forward policy for a merge (mirrors git's `--ff` / `--ff-only` /
+/// `--no-ff`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FfMode {
+    /// Fast-forward when possible, otherwise create a merge commit (git default).
+    #[default]
+    Auto,
+    /// Refuse the merge unless it can fast-forward (`--ff-only`).
+    Only,
+    /// Always create a merge commit, even when a fast-forward is possible
+    /// (`--no-ff`).
+    Never,
+}
+
+/// Result of a merge attempt.
+///
+/// Conflict *resolution* (a 3-pane editor) is Phase 3; here a conflicted merge
+/// only reports the conflicted paths so the UI can list them and offer abort.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value")]
+pub enum MergeOutcome {
+    /// Target already reachable from HEAD; nothing to do.
+    AlreadyUpToDate,
+    /// HEAD advanced to the target with no merge commit.
+    FastForwarded,
+    /// A merge commit was created; carries its object id.
+    Merged(Oid),
+    /// Merge stopped with conflicts; carries the conflicted paths.
+    Conflicts(Vec<String>),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -323,6 +354,21 @@ mod tests {
         let json = serde_json::to_string(&entry).expect("serialize StashEntry");
         let back: StashEntry = serde_json::from_str(&json).expect("deserialize StashEntry");
         assert_eq!(entry, back);
+    }
+
+    #[test]
+    fn merge_outcome_serde_round_trip() {
+        let cases = [
+            MergeOutcome::AlreadyUpToDate,
+            MergeOutcome::FastForwarded,
+            MergeOutcome::Merged(Oid::from("c".repeat(40))),
+            MergeOutcome::Conflicts(vec!["a.txt".to_owned(), "b.txt".to_owned()]),
+        ];
+        for outcome in cases {
+            let json = serde_json::to_string(&outcome).expect("serialize MergeOutcome");
+            let back: MergeOutcome = serde_json::from_str(&json).expect("deserialize MergeOutcome");
+            assert_eq!(outcome, back);
+        }
     }
 
     #[test]

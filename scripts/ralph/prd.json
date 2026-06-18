@@ -144,7 +144,7 @@
         "Unit tests: ff merge fast-forwards; divergent no-conflict merge creates a merge commit; conflicting merge reports Conflicts and merge_abort restores pre-merge state; cargo fmt/clippy -D warnings/test green; cargo deny passes; npm run build green; manual window note in progress.txt"
       ],
       "priority": 10,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §1 merge (ff / no-ff). Conflict RESOLUTION (3-pane) is Phase 3; this story only detects + lists + aborts."
     },
     {

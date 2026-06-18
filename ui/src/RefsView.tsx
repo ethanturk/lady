@@ -1,7 +1,7 @@
 import { createSignal, For, Show } from "solid-js";
 import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
-import type { RefInfo, RefKind, RepoId } from "./commands";
+import type { FfMode, MergeOutcome, RefInfo, RefKind, RepoId } from "./commands";
 
 interface RefsViewProps {
   repoId: RepoId;
@@ -26,8 +26,12 @@ const smallBtn = {
  */
 const RefsView: Component<RefsViewProps> = (props) => {
   const [err, setErr] = createSignal<string | null>(null);
+  const [notice, setNotice] = createSignal<string | null>(null);
+  const [conflicts, setConflicts] = createSignal<string[]>([]);
   const [newBranch, setNewBranch] = createSignal("");
   const [newTag, setNewTag] = createSignal("");
+  const [ffMode, setFfMode] = createSignal<FfMode>("Auto");
+  const [mergeMessage, setMergeMessage] = createSignal("");
 
   const byKind = (kind: RefKind) => props.refs.filter((r) => r.kind === kind);
   const headTarget = () => props.refs.find((r) => r.kind === "Head")?.target;
@@ -35,6 +39,7 @@ const RefsView: Component<RefsViewProps> = (props) => {
 
   const run = (cmd: string, args: Record<string, unknown>) => {
     setErr(null);
+    setNotice(null);
     invoke(cmd, { repo: props.repoId, ...args })
       .then(() => props.onChanged())
       .catch((e) => setErr(String(e)));
@@ -91,6 +96,51 @@ const RefsView: Component<RefsViewProps> = (props) => {
     setNewTag("");
   };
 
+  const describeMerge = (outcome: MergeOutcome) => {
+    switch (outcome.kind) {
+      case "AlreadyUpToDate":
+        return "Already up to date.";
+      case "FastForwarded":
+        return "Fast-forwarded.";
+      case "Merged":
+        return `Merged as ${outcome.value.slice(0, 8)}.`;
+      case "Conflicts":
+        return `Merge stopped with ${outcome.value.length} conflict${outcome.value.length === 1 ? "" : "s"}.`;
+    }
+  };
+
+  const mergeSource = (source: string) => {
+    setErr(null);
+    setNotice(null);
+    setConflicts([]);
+    const message = mergeMessage().trim();
+    invoke<MergeOutcome>("merge", {
+      repo: props.repoId,
+      source,
+      fastForward: ffMode(),
+      commitMessage: message ? message : null,
+    })
+      .then((outcome) => {
+        if (outcome.kind === "Conflicts") {
+          setConflicts(outcome.value);
+        }
+        setNotice(describeMerge(outcome));
+        props.onChanged();
+      })
+      .catch((e) => setErr(String(e)));
+  };
+
+  const abortMerge = () => {
+    setErr(null);
+    invoke("merge_abort", { repo: props.repoId })
+      .then(() => {
+        setConflicts([]);
+        setNotice("Merge aborted.");
+        props.onChanged();
+      })
+      .catch((e) => setErr(String(e)));
+  };
+
   const inputStyle = {
     border: "1px solid #ccc",
     "border-radius": "3px",
@@ -103,10 +153,40 @@ const RefsView: Component<RefsViewProps> = (props) => {
       <Show when={err()}>
         <p style={{ color: "crimson", "font-size": "0.8rem", "white-space": "pre-wrap" }}>{err()}</p>
       </Show>
+      <Show when={notice()}>
+        <p style={{ color: "#1a7f37", "font-size": "0.8rem", "white-space": "pre-wrap" }}>{notice()}</p>
+      </Show>
+      <Show when={conflicts().length > 0}>
+        <div style={{ border: "1px solid #f0c36d", background: "#fff8e5", padding: "0.4rem", "font-size": "0.8rem" }}>
+          <div style={{ "font-weight": 700, "margin-bottom": "0.25rem" }}>Conflicted files</div>
+          <ul style={{ margin: 0, padding: "0 0 0 1.2rem" }}>
+            <For each={conflicts()}>{(path) => <li>{path}</li>}</For>
+          </ul>
+          <button style={{ ...smallBtn, "margin-top": "0.35rem" }} onClick={abortMerge}>
+            Abort merge
+          </button>
+        </div>
+      </Show>
 
       <section>
         <div style={{ display: "flex", "align-items": "center", gap: "0.4rem", margin: "0.5rem 0 0.25rem" }}>
           <h3 style={{ margin: 0, "font-size": "0.9rem" }}>Branches</h3>
+          <select
+            style={inputStyle}
+            value={ffMode()}
+            onChange={(e) => setFfMode(e.currentTarget.value as FfMode)}
+            title="Merge fast-forward policy"
+          >
+            <option value="Auto">FF auto</option>
+            <option value="Only">FF only</option>
+            <option value="Never">No FF</option>
+          </select>
+          <input
+            style={{ ...inputStyle, width: "11rem" }}
+            placeholder="merge message"
+            value={mergeMessage()}
+            onInput={(e) => setMergeMessage(e.currentTarget.value)}
+          />
           <input
             style={inputStyle}
             placeholder="new-branch"
@@ -137,6 +217,9 @@ const RefsView: Component<RefsViewProps> = (props) => {
                 <Show when={!isCurrent(r)}>
                   <button style={smallBtn} onClick={() => checkoutSafely(r.name)}>
                     Checkout
+                  </button>
+                  <button style={smallBtn} onClick={() => mergeSource(r.name)}>
+                    Merge
                   </button>
                   <button style={smallBtn} onClick={() => deleteBranch(r.name)}>
                     Delete
@@ -211,6 +294,9 @@ const RefsView: Component<RefsViewProps> = (props) => {
                   <span style={{ color: "#888" }}>{r.target.slice(0, 8)}</span>
                   <button style={smallBtn} onClick={() => checkoutSafely(r.name)}>
                     Checkout
+                  </button>
+                  <button style={smallBtn} onClick={() => mergeSource(r.name)}>
+                    Merge
                   </button>
                 </li>
               )}

@@ -10,8 +10,8 @@ use std::process::Command;
 use std::sync::Mutex;
 
 use lady_proto::{
-    AheadBehind, Blame, BlameLine, ChangeKind, CommitMeta, FileDiff, FileDiffKind, FileStatus, Oid,
-    RefInfo, RefKind, RepoId, Signature, StashEntry, WorkingTree,
+    AheadBehind, Blame, BlameLine, ChangeKind, CommitMeta, FfMode, FileDiff, FileDiffKind,
+    FileStatus, MergeOutcome, Oid, RefInfo, RefKind, RepoId, Signature, StashEntry, WorkingTree,
 };
 
 /// Errors surfaced by a [`GitEngine`].
@@ -73,6 +73,16 @@ pub struct CommitOpts {
     /// Replace the tip commit (`git commit --amend`) instead of adding a new
     /// one. The author and date are preserved; the message is replaced.
     pub amend: bool,
+}
+
+/// Options for [`GitEngine::merge`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MergeOpts {
+    /// Fast-forward policy (`git merge --ff`, `--ff-only`, or `--no-ff`).
+    pub fast_forward: FfMode,
+    /// Optional merge commit message. When absent, Lady passes `--no-edit` so
+    /// system git never opens an editor during GUI-driven merges.
+    pub commit_message: Option<String>,
 }
 
 /// A read backend over a git repository.
@@ -233,6 +243,16 @@ pub trait GitEngine: Send + Sync {
 
     /// Drop `stash@{index}` without applying it.
     fn stash_drop(&self, repo: &RepoId, index: usize) -> Result<()>;
+
+    /// Merge `source` (a branch/ref name) into the current branch. Reports the
+    /// outcome; on conflict the working tree is left mid-merge with the
+    /// conflicted paths listed (resolve in Phase 3, or call
+    /// [`GitEngine::merge_abort`]).
+    fn merge(&self, repo: &RepoId, source: &str, opts: &MergeOpts) -> Result<MergeOutcome>;
+
+    /// Abort an in-progress merge, restoring the pre-merge state
+    /// (`git merge --abort`).
+    fn merge_abort(&self, repo: &RepoId) -> Result<()>;
 }
 
 /// A [`GitEngine`] backed by [`gix`] for read-only access (ADR-0003).
@@ -289,11 +309,7 @@ impl GixEngine {
 /// On a non-zero exit, returns [`Error::Git`] carrying git's stderr verbatim
 /// (ADR-0003 shell-out mutation tier; surface git's own messages faithfully).
 pub(crate) fn run_git(workdir: &Path, args: &[&str]) -> Result<std::process::Output> {
-    let out = Command::new("git")
-        .current_dir(workdir)
-        .args(args)
-        .output()
-        .map_err(|e| Error::Git(format!("failed to run git: {e}")))?;
+    let out = run_git_raw(workdir, args)?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         let msg = stderr.trim();
@@ -304,6 +320,32 @@ pub(crate) fn run_git(workdir: &Path, args: &[&str]) -> Result<std::process::Out
         }));
     }
     Ok(out)
+}
+
+/// Run system `git` and return the raw output without mapping non-zero exits.
+fn run_git_raw(workdir: &Path, args: &[&str]) -> Result<std::process::Output> {
+    Command::new("git")
+        .current_dir(workdir)
+        .args(args)
+        .output()
+        .map_err(|e| Error::Git(format!("failed to run git: {e}")))
+}
+
+/// True when `ancestor` is reachable from `descendant`.
+fn is_ancestor(workdir: &Path, ancestor: &str, descendant: &str) -> Result<bool> {
+    let out = run_git_raw(
+        workdir,
+        &["merge-base", "--is-ancestor", ancestor, descendant],
+    )?;
+    Ok(out.status.success())
+}
+
+/// Current `HEAD` object id.
+fn head_oid(workdir: &Path) -> Result<Oid> {
+    let out = run_git(workdir, &["rev-parse", "HEAD"])?;
+    Ok(Oid::from(
+        String::from_utf8_lossy(&out.stdout).trim().to_string(),
+    ))
 }
 
 /// Run system `git` in `workdir`, feeding `input` to its stdin (used for
@@ -998,6 +1040,78 @@ impl GitEngine for GixEngine {
         let wd = self.workdir(repo)?;
         let sel = format!("stash@{{{index}}}");
         run_git(&wd, &["stash", "drop", &sel]).map(|_| ())
+    }
+
+    fn merge(&self, repo: &RepoId, source: &str, opts: &MergeOpts) -> Result<MergeOutcome> {
+        let wd = self.workdir(repo)?;
+        let before = head_oid(&wd)?;
+        let target = run_git(&wd, &["rev-parse", source])?;
+        let target = String::from_utf8_lossy(&target.stdout).trim().to_string();
+
+        if is_ancestor(&wd, &target, "HEAD")? {
+            return Ok(MergeOutcome::AlreadyUpToDate);
+        }
+
+        let mut args: Vec<&str> = vec!["merge"];
+        match opts.fast_forward {
+            FfMode::Auto => args.push("--ff"),
+            FfMode::Only => args.push("--ff-only"),
+            FfMode::Never => args.push("--no-ff"),
+        }
+        if let Some(msg) = opts.commit_message.as_deref() {
+            args.push("-m");
+            args.push(msg);
+        } else {
+            args.push("--no-edit");
+        }
+        args.push("--");
+        args.push(source);
+
+        let out = run_git_raw(&wd, &args)?;
+        if !out.status.success() {
+            let wt = self.status(repo)?;
+            let mut conflicts: Vec<String> = wt
+                .staged
+                .iter()
+                .chain(wt.unstaged.iter())
+                .filter(|f| f.kind == ChangeKind::Conflicted)
+                .map(|f| f.path.clone())
+                .collect();
+            conflicts.sort();
+            conflicts.dedup();
+            if !conflicts.is_empty() {
+                return Ok(MergeOutcome::Conflicts(conflicts));
+            }
+
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let msg = stderr.trim();
+            return Err(Error::Git(if msg.is_empty() {
+                format!("git {args:?} failed ({})", out.status)
+            } else {
+                msg.to_string()
+            }));
+        }
+
+        let after = head_oid(&wd)?;
+        if after == before {
+            return Ok(MergeOutcome::AlreadyUpToDate);
+        }
+
+        let parent_count = run_git(&wd, &["rev-list", "--parents", "-n", "1", "HEAD"])?;
+        let parent_count = String::from_utf8_lossy(&parent_count.stdout)
+            .split_whitespace()
+            .skip(1)
+            .count();
+        if parent_count > 1 {
+            Ok(MergeOutcome::Merged(after))
+        } else {
+            Ok(MergeOutcome::FastForwarded)
+        }
+    }
+
+    fn merge_abort(&self, repo: &RepoId) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        run_git(&wd, &["merge", "--abort"]).map(|_| ())
     }
 }
 
@@ -2286,6 +2400,138 @@ mod tests {
         assert!(
             engine.stash_list(&id).expect("stash list").is_empty(),
             "pop removed the stash"
+        );
+    }
+
+    #[test]
+    fn merge_ff_only_fast_forwards() {
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open the fixture repo");
+
+        engine.create_branch(&id, "feature", None).expect("branch");
+        engine
+            .checkout(&id, "feature", false)
+            .expect("checkout feature");
+        std::fs::write(p.join("feature.txt"), "feature\n").expect("write");
+        engine
+            .stage_paths(&id, &["feature.txt".to_string()])
+            .expect("stage");
+        let feature_head = engine
+            .commit(&id, "feature commit", &CommitOpts::default())
+            .expect("commit feature");
+
+        engine.checkout(&id, "main", false).expect("checkout main");
+        let outcome = engine
+            .merge(
+                &id,
+                "feature",
+                &MergeOpts {
+                    fast_forward: FfMode::Only,
+                    commit_message: None,
+                },
+            )
+            .expect("merge feature");
+
+        assert_eq!(outcome, MergeOutcome::FastForwarded);
+        assert_eq!(head_oid(p).expect("head"), feature_head);
+    }
+
+    #[test]
+    fn merge_no_ff_creates_merge_commit() {
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open the fixture repo");
+
+        engine.create_branch(&id, "side", None).expect("branch");
+        engine.checkout(&id, "side", false).expect("checkout side");
+        std::fs::write(p.join("side.txt"), "side\n").expect("write side");
+        engine
+            .stage_paths(&id, &["side.txt".to_string()])
+            .expect("stage side");
+        engine
+            .commit(&id, "side commit", &CommitOpts::default())
+            .expect("commit side");
+
+        engine.checkout(&id, "main", false).expect("checkout main");
+        std::fs::write(p.join("main.txt"), "main\n").expect("write main");
+        engine
+            .stage_paths(&id, &["main.txt".to_string()])
+            .expect("stage main");
+        engine
+            .commit(&id, "main commit", &CommitOpts::default())
+            .expect("commit main");
+
+        let outcome = engine
+            .merge(
+                &id,
+                "side",
+                &MergeOpts {
+                    fast_forward: FfMode::Never,
+                    commit_message: Some("merge side".to_string()),
+                },
+            )
+            .expect("merge side");
+
+        let MergeOutcome::Merged(merge_oid) = outcome else {
+            panic!("expected merge commit, got {outcome:?}");
+        };
+        assert_eq!(head_oid(p).expect("head"), merge_oid);
+        let parents =
+            run_git(p, &["rev-list", "--parents", "-n", "1", "HEAD"]).expect("rev-list parents");
+        assert_eq!(
+            String::from_utf8_lossy(&parents.stdout)
+                .split_whitespace()
+                .skip(1)
+                .count(),
+            2,
+            "merge commit has two parents"
+        );
+    }
+
+    #[test]
+    fn conflicting_merge_reports_paths_and_abort_restores_head() {
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open the fixture repo");
+
+        engine.create_branch(&id, "side", None).expect("branch");
+        engine.checkout(&id, "side", false).expect("checkout side");
+        std::fs::write(p.join("file1.txt"), "side edit\n").expect("write side");
+        engine
+            .stage_paths(&id, &["file1.txt".to_string()])
+            .expect("stage side");
+        engine
+            .commit(&id, "side edit", &CommitOpts::default())
+            .expect("commit side");
+
+        engine.checkout(&id, "main", false).expect("checkout main");
+        std::fs::write(p.join("file1.txt"), "main edit\n").expect("write main");
+        engine
+            .stage_paths(&id, &["file1.txt".to_string()])
+            .expect("stage main");
+        engine
+            .commit(&id, "main edit", &CommitOpts::default())
+            .expect("commit main");
+        let before = head_oid(p).expect("head before");
+
+        let outcome = engine
+            .merge(&id, "side", &MergeOpts::default())
+            .expect("conflicting merge should report conflicts");
+        assert_eq!(
+            outcome,
+            MergeOutcome::Conflicts(vec!["file1.txt".to_string()])
+        );
+
+        engine.merge_abort(&id).expect("merge abort");
+        assert_eq!(head_oid(p).expect("head after abort"), before);
+        let wt = engine.status(&id).expect("status after abort");
+        assert!(
+            wt.staged.is_empty() && wt.unstaged.is_empty() && wt.untracked.is_empty(),
+            "abort restores a clean tree: {wt:?}"
         );
     }
 }
