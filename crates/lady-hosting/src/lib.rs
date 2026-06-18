@@ -359,4 +359,70 @@ mod tests {
             "401 → Unauthorized, got {err:?}"
         );
     }
+
+    #[tokio::test]
+    async fn create_pull_request_returns_url_on_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/repos/octocat/hello/pulls"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+                "html_url": "https://github.com/octocat/hello/pull/42"
+            })))
+            .mount(&server)
+            .await;
+
+        let client = GitHubClient::with_base_url(server.uri());
+        let slug = RepoSlug {
+            owner: "octocat".into(),
+            repo: "hello".into(),
+        };
+        let pr = NewPullRequest {
+            head: "feature".into(),
+            base: "main".into(),
+            title: "Add feature".into(),
+            body: "Body".into(),
+            draft: false,
+        };
+        let url = client
+            .create_pull_request("tok", &slug, &pr)
+            .await
+            .expect("create PR");
+        assert_eq!(url, "https://github.com/octocat/hello/pull/42");
+    }
+
+    #[tokio::test]
+    async fn create_pull_request_surfaces_api_error_message() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/repos/octocat/hello/pulls"))
+            .respond_with(ResponseTemplate::new(422).set_body_json(serde_json::json!({
+                "message": "A pull request already exists for octocat:feature."
+            })))
+            .mount(&server)
+            .await;
+
+        let client = GitHubClient::with_base_url(server.uri());
+        let slug = RepoSlug {
+            owner: "octocat".into(),
+            repo: "hello".into(),
+        };
+        let pr = NewPullRequest {
+            head: "feature".into(),
+            base: "main".into(),
+            title: "t".into(),
+            body: "b".into(),
+            draft: false,
+        };
+        let err = client
+            .create_pull_request("tok", &slug, &pr)
+            .await
+            .unwrap_err();
+        match err {
+            Error::Api { status, message } => {
+                assert_eq!(status, 422);
+                assert!(message.contains("already exists"), "message: {message}");
+            }
+            other => panic!("expected Api error, got {other:?}"),
+        }
+    }
 }

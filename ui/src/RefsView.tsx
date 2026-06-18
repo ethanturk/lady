@@ -43,6 +43,53 @@ const RefsView: Component<RefsViewProps> = (props) => {
   const [ffMode, setFfMode] = createSignal<FfMode>("Auto");
   const [mergeMessage, setMergeMessage] = createSignal("");
 
+  // Create-PR form state (PH3-012).
+  const [prBranch, setPrBranch] = createSignal<string | null>(null);
+  const [prTitle, setPrTitle] = createSignal("");
+  const [prBody, setPrBody] = createSignal("");
+  const [prBase, setPrBase] = createSignal("");
+  const [prDraft, setPrDraft] = createSignal(false);
+  const [prUrl, setPrUrl] = createSignal<string | null>(null);
+  const [prBusy, setPrBusy] = createSignal(false);
+
+  // The repo's default base branch (main/master) for prefill.
+  const defaultBase = () => {
+    const names = props.refs.filter((r) => r.kind === "Branch").map((r) => r.name);
+    return names.find((n) => n === "main") ?? names.find((n) => n === "master") ?? names[0] ?? "main";
+  };
+
+  const openPrForm = (branch: string) => {
+    setErr(null);
+    setPrUrl(null);
+    setPrBranch(branch);
+    setPrTitle(branch);
+    setPrBody("");
+    setPrBase(defaultBase());
+    setPrDraft(false);
+    // Prefill the body with recent commit subjects as a starting point.
+    invoke<string[]>("recent_messages", { repo: props.repoId, limit: 5 })
+      .then((msgs) => setPrBody(msgs.map((m) => `- ${m}`).join("\n")))
+      .catch(() => {});
+  };
+
+  const submitPr = () => {
+    const head = prBranch();
+    if (!head || !prTitle().trim() || !prBase().trim()) return;
+    setPrBusy(true);
+    setErr(null);
+    invoke<string>("github_create_pr", {
+      repo: props.repoId,
+      head,
+      base: prBase().trim(),
+      title: prTitle().trim(),
+      body: prBody(),
+      draft: prDraft(),
+    })
+      .then((url) => setPrUrl(url))
+      .catch((e) => setErr(String(e)))
+      .finally(() => setPrBusy(false));
+  };
+
   const byKind = (kind: RefKind) => props.refs.filter((r) => r.kind === kind);
   const headTarget = () => props.refs.find((r) => r.kind === "Head")?.target;
   const isCurrent = (r: RefInfo) => r.kind === "Branch" && r.target === headTarget();
@@ -203,6 +250,90 @@ const RefsView: Component<RefsViewProps> = (props) => {
 
   return (
     <div style={{ padding: "0.5rem 1rem", "overflow-y": "auto", height: "100%" }}>
+      {/* Create-PR form (PH3-012) */}
+      <Show when={prBranch()}>
+        <div
+          style={{
+            position: "fixed",
+            inset: "0",
+            background: "rgba(0,0,0,0.35)",
+            display: "flex",
+            "align-items": "center",
+            "justify-content": "center",
+            "z-index": "50",
+          }}
+          onClick={() => setPrBranch(null)}
+        >
+          <div
+            style={{
+              background: "#fff",
+              "border-radius": "6px",
+              width: "560px",
+              "max-width": "92vw",
+              padding: "0.9rem 1rem",
+              "box-shadow": "0 8px 30px rgba(0,0,0,0.25)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ "font-weight": 600, "margin-bottom": "0.5rem" }}>
+              Create pull request — {prBranch()}
+            </div>
+            <Show when={err()}>
+              <p style={{ color: "crimson", "font-size": "0.82rem", "white-space": "pre-wrap" }}>{err()}</p>
+            </Show>
+            <Show
+              when={prUrl()}
+              fallback={
+                <div style={{ display: "flex", "flex-direction": "column", gap: "0.45rem" }}>
+                  <label style={{ display: "flex", "align-items": "center", gap: "0.4rem", "font-size": "0.82rem" }}>
+                    <span style={{ width: "3.5rem" }}>base</span>
+                    <input style={{ flex: "1", padding: "0.3rem 0.5rem" }} value={prBase()} onInput={(e) => setPrBase(e.currentTarget.value)} />
+                  </label>
+                  <label style={{ display: "flex", "align-items": "center", gap: "0.4rem", "font-size": "0.82rem" }}>
+                    <span style={{ width: "3.5rem" }}>title</span>
+                    <input style={{ flex: "1", padding: "0.3rem 0.5rem" }} value={prTitle()} onInput={(e) => setPrTitle(e.currentTarget.value)} />
+                  </label>
+                  <textarea
+                    style={{ "min-height": "6rem", padding: "0.3rem 0.5rem", "font-family": "inherit", "font-size": "0.82rem" }}
+                    placeholder="Description"
+                    value={prBody()}
+                    onInput={(e) => setPrBody(e.currentTarget.value)}
+                  />
+                  <label style={{ display: "flex", "align-items": "center", gap: "0.3rem", "font-size": "0.82rem" }}>
+                    <input type="checkbox" checked={prDraft()} onChange={() => setPrDraft((d) => !d)} />
+                    Draft
+                  </label>
+                  <div style={{ display: "flex", gap: "0.5rem", "justify-content": "flex-end" }}>
+                    <button onClick={() => setPrBranch(null)}>Cancel</button>
+                    <button
+                      onClick={submitPr}
+                      disabled={prBusy()}
+                      style={{ background: "#1a7f37", color: "#fff", border: "none", "border-radius": "3px", padding: "0.3rem 0.9rem", cursor: "pointer" }}
+                    >
+                      {prBusy() ? "Creating…" : "Create PR"}
+                    </button>
+                  </div>
+                </div>
+              }
+            >
+              <div>
+                <p style={{ color: "#1a7f37", "font-size": "0.85rem" }}>Pull request created.</p>
+                <p style={{ "font-family": "monospace", "font-size": "0.8rem", "word-break": "break-all" }}>{prUrl()}</p>
+                <div style={{ display: "flex", gap: "0.5rem", "justify-content": "flex-end" }}>
+                  <button onClick={() => setPrBranch(null)}>Close</button>
+                  <button
+                    onClick={() => invoke("open_url", { url: prUrl() }).catch((e) => setErr(String(e)))}
+                    style={{ background: "#0070f3", color: "#fff", border: "none", "border-radius": "3px", padding: "0.3rem 0.9rem", cursor: "pointer" }}
+                  >
+                    Open in browser
+                  </button>
+                </div>
+              </div>
+            </Show>
+          </div>
+        </div>
+      </Show>
+
       <Show when={err()}>
         <p style={{ color: "crimson", "font-size": "0.8rem", "white-space": "pre-wrap" }}>{err()}</p>
       </Show>
@@ -271,6 +402,13 @@ const RefsView: Component<RefsViewProps> = (props) => {
                 <span style={{ width: "0.8rem", color: "#1a7f37" }}>{isCurrent(r) ? "●" : ""}</span>
                 <span style={{ flex: "1", "font-weight": isCurrent(r) ? 700 : 400 }}>{r.name}</span>
                 <span style={{ color: "#888" }}>{r.target.slice(0, 8)}</span>
+                <button
+                  style={smallBtn}
+                  title="Create a GitHub pull request from this branch"
+                  onClick={() => openPrForm(r.name)}
+                >
+                  PR
+                </button>
                 <Show when={isCurrent(r)}>
                   <button
                     style={smallBtn}

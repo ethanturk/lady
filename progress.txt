@@ -17,7 +17,7 @@ cargo test, cargo deny check, npm run build. UI stories also note a manual windo
 - [x] PH3-009 Custom commands (UI builder)
 - [x] PH3-010 External diff/merge tool integration
 - [x] PH3-011 lady-hosting crate + GitHub auth
-- [ ] PH3-012 Create GitHub pull request from a branch
+- [x] PH3-012 Create GitHub pull request from a branch
 - [ ] PH3-013 Licensing gate — trial + offline signed-key verify
 - [ ] PH3-014 Core Parity release-readiness gate (Phase 3 EXIT)
 
@@ -41,3 +41,8 @@ cargo test, cargo deny check, npm run build. UI stories also note a manual windo
   and "Ext merge" in ConflictResolver (launch_mergetool). Honors diff.tool/
   merge.tool. No tool configured → git's error surfaces in the view. Launching
   a real GUI tool is manual-only (not unit-tested to avoid hanging on a tool).
+- PH3-012: "PR" button per branch in Refs opens a form (base/title/body prefilled
+  from branch + recent subjects, draft toggle). On success shows the URL with an
+  "Open in browser" button (open_url, http(s)-only). Errors clearly on no-auth /
+  no-GitHub-remote / API failure. create_pull_request tested vs wiremock
+  (success URL + 422 "already exists"). Live PR creation is manual.

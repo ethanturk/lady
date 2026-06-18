@@ -1043,6 +1043,72 @@ fn github_detect(
     Ok(lady_hosting::detect_github_slug(&urls))
 }
 
+/// Open a pull request for the active repo's GitHub remote (PH3-012). Returns
+/// the PR's HTML URL. Errors clearly on no-auth / no-GitHub-remote / API
+/// failures (e.g. a PR already exists).
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+async fn github_create_pr(
+    repo: RepoId,
+    head: String,
+    base: String,
+    title: String,
+    body: String,
+    draft: bool,
+    engine: State<'_, GixEngine>,
+    hosting: State<'_, Hosting>,
+) -> Result<String, String> {
+    let token = hosting
+        .store
+        .get(GITHUB_TOKEN_KEY)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Not connected to GitHub — connect in Settings first.".to_string())?;
+    let urls = engine.list_remote_urls(&repo).map_err(|e| e.to_string())?;
+    let slug = lady_hosting::detect_github_slug(&urls)
+        .ok_or_else(|| "No GitHub remote found on this repository.".to_string())?;
+    let pr = lady_hosting::NewPullRequest {
+        head,
+        base,
+        title,
+        body,
+        draft,
+    };
+    hosting
+        .client
+        .create_pull_request(&token, &slug, &pr)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Open `url` in the user's default browser (used to view a freshly opened PR).
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    use std::process::Command;
+    // Only http(s) URLs are opened, never arbitrary commands.
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err("refusing to open a non-http URL".to_string());
+    }
+    #[cfg(target_os = "macos")]
+    let mut cmd = {
+        let mut c = Command::new("open");
+        c.arg(&url);
+        c
+    };
+    #[cfg(target_os = "windows")]
+    let mut cmd = {
+        let mut c = Command::new("cmd");
+        c.args(["/C", "start", "", &url]);
+        c
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut cmd = {
+        let mut c = Command::new("xdg-open");
+        c.arg(&url);
+        c
+    };
+    cmd.spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(GixEngine::new())
@@ -1125,6 +1191,8 @@ pub fn run() {
             github_auth_status,
             github_sign_out,
             github_detect,
+            github_create_pr,
+            open_url,
             clone_repo,
             load_settings,
             save_settings
