@@ -61,7 +61,7 @@
         "cargo test passes; clippy -D warnings clean; fmt clean"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md \u00a74.1 + \u00a72.3. Keep zero git-library deps in lady-proto \u2014 it is the pure contract crate."
     },
     {

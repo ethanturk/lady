@@ -7,3 +7,7 @@ publish.workspace = true
 description = "Shared GUI-agnostic serde types: the UI <-> core contract."
 
 [dependencies]
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

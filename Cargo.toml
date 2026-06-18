@@ -6,3 +6,7 @@ members = ["crates/lady-proto"]
 edition = "2021"
 license = "LicenseRef-Proprietary"
 publish = false
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
