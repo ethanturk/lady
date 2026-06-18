@@ -11,7 +11,7 @@ cargo test, cargo deny check, npm run build. UI stories also note a manual windo
 - [x] PH3-003 Interactive rebase plan model + executor (engine)
 - [x] PH3-004 Interactive rebase UI
 - [x] PH3-005 Commit signing (GPG + SSH)
-- [ ] PH3-006 Worktrees
+- [x] PH3-006 Worktrees
 - [ ] PH3-007 Reflog view + restore lost commits
 - [ ] PH3-008 Bisect
 - [ ] PH3-009 Custom commands (UI builder)

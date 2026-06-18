@@ -372,6 +372,19 @@ impl SignatureStatus {
     }
 }
 
+/// A linked worktree of a repository (`git worktree list`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Worktree {
+    /// Absolute path to the worktree directory.
+    pub path: String,
+    /// Checked-out branch (short name), or `None` when detached/bare.
+    pub branch: Option<String>,
+    /// The worktree's `HEAD` commit, or `None` for a bare entry.
+    pub head: Option<Oid>,
+    /// Whether the worktree is locked.
+    pub locked: bool,
+}
+
 /// What mid-operation state a repository is in, used to drive conflict
 /// resolution and the correct `--abort` path.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

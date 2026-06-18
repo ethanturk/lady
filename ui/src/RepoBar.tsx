@@ -13,6 +13,8 @@ function baseName(path: string): string {
 const RepoBar: Component<{
   active: string | null;
   onActiveChange: (repo: OpenRepo | null) => void;
+  /** Receives an opener so other views (e.g. worktrees) can open a path as a tab. */
+  apiRef?: (open: (path: string) => void) => void;
 }> = (props) => {
   const [opened, setOpened] = createSignal<OpenRepo[]>([]);
   const [recent, setRecent] = createSignal<RecentRepo[]>([]);
@@ -25,6 +27,8 @@ const RepoBar: Component<{
   const [err, setErr] = createSignal<string | null>(null);
 
   onMount(async () => {
+    // Expose an opener so worktrees can open a path as a repo tab.
+    props.apiRef?.((p: string) => openPath(p, null));
     try {
       const s = await invoke<Settings>("load_settings");
       setRecent(s.recent);

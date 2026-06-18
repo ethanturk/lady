@@ -190,6 +190,14 @@ export interface RebaseStep {
 /** Mirrors lady_proto::SignatureStatus. */
 export type SignatureStatus = "Good" | "Bad" | "Untrusted" | "None";
 
+/** Mirrors lady_proto::Worktree. */
+export interface Worktree {
+  path: string;
+  branch: string | null;
+  head: string | null;
+  locked: boolean;
+}
+
 /** Mirrors lady_proto::ConflictState. */
 export type ConflictState = "None" | "Merge" | "Rebase" | "CherryPick" | "Revert";
 

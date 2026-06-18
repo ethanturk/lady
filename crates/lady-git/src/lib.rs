@@ -13,7 +13,7 @@ use lady_proto::{
     AheadBehind, ApplyOutcome, Blame, BlameLine, ChangeKind, CommitMeta, ConflictSides,
     ConflictState, FfMode, FileDiff, FileDiffKind, FileStatus, MergeOutcome, Oid, ParsedConflict,
     RebaseOutcome, RebaseStep, RefInfo, RefKind, RepoId, Signature, SignatureStatus, StashEntry,
-    WorkingTree,
+    WorkingTree, Worktree,
 };
 
 /// Errors surfaced by a [`GitEngine`].
@@ -337,6 +337,26 @@ pub trait GitEngine: Send + Sync {
     /// One `git log --no-walk` call covers the whole batch (PH3-005); unknown
     /// oids map to [`SignatureStatus::None`].
     fn signature_statuses(&self, repo: &RepoId, oids: &[Oid]) -> Result<Vec<SignatureStatus>>;
+
+    /// List the repository's worktrees (`git worktree list --porcelain`).
+    fn list_worktrees(&self, repo: &RepoId) -> Result<Vec<Worktree>>;
+
+    /// Add a worktree at `path`. With `new_branch`, create branch `branch`
+    /// there (`-b`); otherwise check out the existing `branch` (or a detached
+    /// HEAD when `branch` is `None`).
+    fn add_worktree(
+        &self,
+        repo: &RepoId,
+        path: &str,
+        branch: Option<&str>,
+        new_branch: bool,
+    ) -> Result<()>;
+
+    /// Remove the worktree at `path` (`git worktree remove`).
+    fn remove_worktree(&self, repo: &RepoId, path: &str) -> Result<()>;
+
+    /// Prune stale worktree administrative entries (`git worktree prune`).
+    fn prune_worktrees(&self, repo: &RepoId) -> Result<()>;
 }
 
 /// A [`GitEngine`] backed by [`gix`] for read-only access (ADR-0003).
@@ -1544,6 +1564,87 @@ exit 0\n";
             })
             .collect())
     }
+
+    fn list_worktrees(&self, repo: &RepoId) -> Result<Vec<Worktree>> {
+        let wd = self.workdir(repo)?;
+        let out = run_git(&wd, &["worktree", "list", "--porcelain"])?;
+        Ok(parse_worktrees(&String::from_utf8_lossy(&out.stdout)))
+    }
+
+    fn add_worktree(
+        &self,
+        repo: &RepoId,
+        path: &str,
+        branch: Option<&str>,
+        new_branch: bool,
+    ) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        let mut args: Vec<&str> = vec!["worktree", "add"];
+        match (branch, new_branch) {
+            // New branch created in the worktree: `add -b <branch> <path>`.
+            (Some(b), true) => {
+                args.push("-b");
+                args.push(b);
+                args.push(path);
+            }
+            // Check out an existing branch: `add <path> <branch>`.
+            (Some(b), false) => {
+                args.push(path);
+                args.push(b);
+            }
+            // Detached / default: `add <path>`.
+            (None, _) => args.push(path),
+        }
+        run_git(&wd, &args).map(|_| ())
+    }
+
+    fn remove_worktree(&self, repo: &RepoId, path: &str) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        run_git(&wd, &["worktree", "remove", path]).map(|_| ())
+    }
+
+    fn prune_worktrees(&self, repo: &RepoId) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        run_git(&wd, &["worktree", "prune"]).map(|_| ())
+    }
+}
+
+/// Parse `git worktree list --porcelain` into [`Worktree`]s. Blocks are
+/// separated by blank lines; each starts with `worktree <path>`.
+fn parse_worktrees(text: &str) -> Vec<Worktree> {
+    let mut out = Vec::new();
+    let mut current: Option<Worktree> = None;
+    for line in text.lines() {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            if let Some(wt) = current.take() {
+                out.push(wt);
+            }
+            current = Some(Worktree {
+                path: path.to_string(),
+                branch: None,
+                head: None,
+                locked: false,
+            });
+        } else if let Some(wt) = current.as_mut() {
+            if let Some(sha) = line.strip_prefix("HEAD ") {
+                wt.head = Some(Oid::from(sha.to_string()));
+            } else if let Some(refname) = line.strip_prefix("branch ") {
+                // `branch refs/heads/<name>` → short name.
+                wt.branch = Some(
+                    refname
+                        .strip_prefix("refs/heads/")
+                        .unwrap_or(refname)
+                        .to_string(),
+                );
+            } else if line == "locked" || line.starts_with("locked ") {
+                wt.locked = true;
+            }
+        }
+    }
+    if let Some(wt) = current.take() {
+        out.push(wt);
+    }
+    out
 }
 
 // ── Status parsing ────────────────────────────────────────────────────────────
@@ -3427,6 +3528,48 @@ mod tests {
         assert_eq!(commits.len(), 2, "two commits in the range");
         assert_eq!(commits[0].summary, "add a.txt", "oldest first");
         assert_eq!(commits[1].summary, "add b.txt");
+    }
+
+    #[test]
+    fn worktree_add_list_remove_roundtrip() {
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open");
+
+        // Worktree dir is a sibling temp path (must not already exist).
+        let wt_parent = tempfile::tempdir().expect("wt parent");
+        let wt_path = wt_parent.path().join("feature-wt");
+        let wt_str = wt_path.to_str().expect("wt path utf8");
+
+        // Initially only the main worktree is listed.
+        let before = engine.list_worktrees(&id).expect("list before");
+        assert_eq!(before.len(), 1, "only the main worktree exists: {before:?}");
+
+        // Add a worktree on a new branch and confirm it lists.
+        engine
+            .add_worktree(&id, wt_str, Some("feature"), true)
+            .expect("add worktree");
+        let listed = engine.list_worktrees(&id).expect("list after add");
+        assert_eq!(listed.len(), 2, "main + new worktree: {listed:?}");
+        let added = listed
+            .iter()
+            .find(|w| w.path == wt_path.canonicalize().unwrap().to_string_lossy())
+            .or_else(|| {
+                listed
+                    .iter()
+                    .find(|w| w.branch.as_deref() == Some("feature"))
+            })
+            .expect("added worktree present");
+        assert_eq!(added.branch.as_deref(), Some("feature"));
+        assert!(added.head.is_some(), "worktree HEAD resolved");
+
+        // Remove it; back to just the main worktree.
+        engine
+            .remove_worktree(&id, wt_str)
+            .expect("remove worktree");
+        let after = engine.list_worktrees(&id).expect("list after remove");
+        assert_eq!(after.len(), 1, "worktree removed: {after:?}");
     }
 
     /// SSH commit signing end-to-end: generate an ephemeral ssh key + an

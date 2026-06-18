@@ -12,12 +12,13 @@ import SyncBar from "./SyncBar";
 import RepoBar from "./RepoBar";
 import ConflictResolver from "./ConflictResolver";
 import InteractiveRebase from "./InteractiveRebase";
+import WorktreesView from "./WorktreesView";
 import SignatureBadge from "./SignatureBadge";
 import type { SignatureStatus } from "./commands";
 import CommandPalette from "./CommandPalette";
 import type { PaletteEntry } from "./CommandPalette";
 
-type Tab = "changes" | "commits" | "refs" | "blame" | "history" | "conflicts";
+type Tab = "changes" | "commits" | "refs" | "blame" | "history" | "conflicts" | "worktrees";
 
 const App: Component = () => {
   const [info, setInfo] = createSignal<AppInfo | null>(null);
@@ -35,6 +36,8 @@ const App: Component = () => {
   const [conflictState, setConflictState] = createSignal<ConflictState>("None");
   // When set, the interactive-rebase editor is open for this start commit oid.
   const [rebaseFrom, setRebaseFrom] = createSignal<string | null>(null);
+  // Opener handed up from RepoBar so a worktree can be opened as a repo tab.
+  let openRepoPath: ((path: string) => void) | null = null;
   // Bumped after any mutation so status/refs/graph views reload (PLAN §3.2).
   const [refreshNonce, setRefreshNonce] = createSignal(0);
   // Poll the mid-operation state; auto-surface the resolver when conflicts
@@ -206,7 +209,7 @@ const App: Component = () => {
       </div>
 
       {/* Repository manager */}
-      <RepoBar active={repoId()} onActiveChange={setActive} />
+      <RepoBar active={repoId()} onActiveChange={setActive} apiRef={(open) => (openRepoPath = open)} />
 
       <Show when={err()}>
         <p style={{ color: "crimson", margin: "0.25rem 1rem", "font-size": "0.85rem" }}>{err()}</p>
@@ -244,6 +247,9 @@ const App: Component = () => {
           </button>
           <button style={tabStyle("history")} onClick={() => setTab("history")}>
             History
+          </button>
+          <button style={tabStyle("worktrees")} onClick={() => setTab("worktrees")}>
+            Worktrees
           </button>
           <Show when={conflictState() !== "None"}>
             <button
@@ -324,6 +330,14 @@ const App: Component = () => {
           </Show>
           <Show when={tab() === "history"}>
             <FileHistory repoId={repoId()!} />
+          </Show>
+          <Show when={tab() === "worktrees"}>
+            <WorktreesView
+              repoId={repoId()!}
+              refreshNonce={refreshNonce()}
+              onChanged={refresh}
+              onOpen={(path) => openRepoPath?.(path)}
+            />
           </Show>
           <Show when={tab() === "conflicts"}>
             <ConflictResolver

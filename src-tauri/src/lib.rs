@@ -371,6 +371,43 @@ fn signature_statuses(
         .map_err(|e| e.to_string())
 }
 
+/// List the repository's worktrees (PH3-006).
+#[tauri::command]
+fn list_worktrees(
+    repo: RepoId,
+    engine: State<GixEngine>,
+) -> Result<Vec<lady_proto::Worktree>, String> {
+    engine.list_worktrees(&repo).map_err(|e| e.to_string())
+}
+
+/// Add a worktree at `path`; create branch `branch` there when `new_branch`.
+#[tauri::command]
+fn add_worktree(
+    repo: RepoId,
+    path: String,
+    branch: Option<String>,
+    new_branch: bool,
+    engine: State<GixEngine>,
+) -> Result<(), String> {
+    engine
+        .add_worktree(&repo, &path, branch.as_deref(), new_branch)
+        .map_err(|e| e.to_string())
+}
+
+/// Remove the worktree at `path`.
+#[tauri::command]
+fn remove_worktree(repo: RepoId, path: String, engine: State<GixEngine>) -> Result<(), String> {
+    engine
+        .remove_worktree(&repo, &path)
+        .map_err(|e| e.to_string())
+}
+
+/// Prune stale worktree entries.
+#[tauri::command]
+fn prune_worktrees(repo: RepoId, engine: State<GixEngine>) -> Result<(), String> {
+    engine.prune_worktrees(&repo).map_err(|e| e.to_string())
+}
+
 /// The most recent commit subjects (newest first), capped at `limit`.
 #[tauri::command]
 fn recent_messages(
@@ -888,6 +925,10 @@ pub fn run() {
             rebase_skip,
             rebase_range,
             signature_statuses,
+            list_worktrees,
+            add_worktree,
+            remove_worktree,
+            prune_worktrees,
             clone_repo,
             load_settings,
             save_settings
