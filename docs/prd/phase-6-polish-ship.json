@@ -1,0 +1,157 @@
+{
+  "project": "Lady",
+  "branchName": "phase-6-polish-ship",
+  "description": "Phase 6 — Polish & ship (PLAN.md §9 final phase): the cross-platform distribution + quality pass that turns the feature-complete app (Core Parity v1.0 + Fast-follow v1.1 + AI v1.2) into a signed, auto-updating, accessible, performance-budgeted product. Covers perf benchmarking + budgets (criterion on large synthetic repos; cold-open < ~1s to first paint, status refresh < ~100ms warm, 60fps graph scroll — PLAN.md §8.9), large-repo perf passes against any misses, accessibility (keyboard nav, focus, ARIA, contrast in light+dark), theming polish (finalize tokens + reduced-motion), packaging via the Tauri bundler for macOS (.dmg/.app, notarized), Windows (.msi/NSIS, Authenticode), and Linux (AppImage + Flatpak), auto-update via the Tauri updater plugin with signed manifests, user/keyboard/privacy/MCP docs + release notes, a release CI pipeline (build → sign → notarize → publish artifacts + update manifest on tag, cross-platform matrix), and the GA exit gate. Builds on the existing CI (fmt/clippy/test/deny + npm build, macOS/Windows/Linux matrix from Phase 0) and the bundle config stub (src-tauri/tauri.conf.json bundle.active=false). No new product features — this is the ship. Each story = one context-window commit. Secrets (signing certs/keys, notarization creds, updater private key) live in CI secrets / the OS keychain, NEVER in the repo; the updater public key may be committed. Version line: workspace is at 1.2.0 after Phase 5; the GA ship bumps to 1.3.0.",
+  "userStories": [
+    {
+      "id": "PH6-001",
+      "title": "Performance benchmarks + budgets",
+      "description": "As the team, I need measured performance budgets so regressions are caught.",
+      "acceptanceCriteria": [
+        "criterion benchmarks for the hot pure paths (graph layout in lady-graph, diff in lady-diff, log walk + status in lady-git) over a large synthetic repo fixture (linux.git-scale generator, deterministic seed)",
+        "Documented budgets (PLAN.md §8.9): cold open of a large repo < ~1s to first paint, status refresh < ~100ms on warm cache, 60fps graph scroll; a bench harness prints current vs budget",
+        "A CI job runs the benches in --quick/check mode (no perf gate failure on shared runners, but the harness compiles + runs); cargo fmt/clippy -D warnings/test green; cargo deny passes",
+        "Results recorded in docs (a short PERF.md or a section) with the measured numbers on the dev machine"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "PLAN.md §8.9, §10 perf. Establish the measurement before optimizing (PH6-002). Use a seeded synthetic-repo generator in a dev-dependency/test helper so benches are reproducible and offline."
+    },
+    {
+      "id": "PH6-002",
+      "title": "Large-repo performance passes",
+      "description": "As a user with a big repository, I want Lady to stay fast.",
+      "acceptanceCriteria": [
+        "Address any budget misses found in PH6-001: confirm incremental/stable graph layout streams rows (no full re-layout on scroll/refresh), commit list + diff views virtualize, log walk is paged, status uses a warm cache",
+        "No O(history) work on the UI thread for a single screen of rows; large diffs lazy-load hunks; image/binary diffs are bounded",
+        "Re-run the PH6-001 benches and show the budgets are met (or document the residual gap + why); cargo fmt/clippy/test green; cargo deny passes; npm run build green",
+        "Manual window check on a large repo (e.g. a clone of a big OSS repo): scroll, refresh, open diffs"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "PLAN.md §8.1/§8.9. Mostly verification + targeted fixes — much of this is already incremental from Phase 1. Only optimize what the benches show is over budget."
+    },
+    {
+      "id": "PH6-003",
+      "title": "Accessibility pass",
+      "description": "As a keyboard or screen-reader user, I want Lady to be usable without a mouse.",
+      "acceptanceCriteria": [
+        "Keyboard navigation across all views (tab order, focus rings, Esc/Enter semantics in dialogs, the command palette reachable + operable by keyboard); no mouse-only actions",
+        "Semantic roles/labels on controls (buttons, tabs, lists, the diff/graph regions) so a screen reader announces them; live regions for streaming AI output + progress",
+        "Color contrast meets WCAG AA in both light and dark themes; focus is always visible; prefers-reduced-motion respected",
+        "Documented manual a11y check (VoiceOver/NVDA pass over the core flows); npm run build green; cargo fmt/clippy/test green"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "PLAN.md §6 UX, §8. SolidJS + WebView makes ARIA/contrast tractable (ADR-0001/0010). No backend change expected — UI-only."
+    },
+    {
+      "id": "PH6-004",
+      "title": "Theming polish",
+      "description": "As a user, I want a consistent, polished, themeable UI.",
+      "acceptanceCriteria": [
+        "Finalize the CSS theme-token set (surfaces, borders, accent, syntax colors) so every view uses tokens — no hard-coded colors leak through in light or dark (audit the views added in Phases 1-5)",
+        "System/Dark/Light toggle (PH from Phase 4 dark mode) verified across all views incl. the new AI surfaces; reduced-motion honored",
+        "Optional: a custom-accent or extra theme to prove the token system; documented",
+        "npm run build green; cargo fmt/clippy/test green; manual window check across themes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "PLAN.md §6. Builds on the existing System/Dark/Light toggle + themed syntax highlighting (recent main commits). Audit + close gaps rather than rebuild."
+    },
+    {
+      "id": "PH6-005",
+      "title": "Packaging — macOS (.dmg/.app, notarized)",
+      "description": "As a macOS user, I want a signed, notarized installable build.",
+      "acceptanceCriteria": [
+        "Tauri bundler config produces a .app + .dmg (bundle.active=true with macOS targets, identifier, category, icons already present)",
+        "Developer ID code-signing + notarization wired via CI secrets (signing identity, Apple ID/app-specific password or notarytool API key) — NEVER committed; a Gatekeeper-pass is documented (spctl/stapler)",
+        "A local/CI build produces an installable artifact; the build step is green on the macOS runner; cargo fmt/clippy/test green",
+        "Signing/notarization is skipped gracefully when secrets are absent (PR builds still produce an unsigned bundle)"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "PLAN.md §8.8, §9. ADR-0001 Tauri bundler. Secrets in CI only. Notarization is the macOS Gatekeeper requirement; stapling the ticket to the .dmg."
+    },
+    {
+      "id": "PH6-006",
+      "title": "Packaging — Windows (.msi/NSIS, Authenticode)",
+      "description": "As a Windows user, I want a signed installer.",
+      "acceptanceCriteria": [
+        "Tauri bundler produces an .msi and/or NSIS installer on the Windows runner",
+        "Authenticode signing wired via a CI secret cert (or Azure Trusted Signing) — NEVER committed; signature verified (signtool verify) and documented",
+        "The build step is green on the Windows runner; signing skipped gracefully without secrets; cargo fmt/clippy/test green"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": "PLAN.md §8.8, §9. Mirror the macOS story for Windows. Keep signing optional on forks/PRs."
+    },
+    {
+      "id": "PH6-007",
+      "title": "Packaging — Linux (AppImage + Flatpak)",
+      "description": "As a Linux user, I want portable installable builds.",
+      "acceptanceCriteria": [
+        "Tauri bundler produces an AppImage on the Linux runner; a Flatpak manifest builds the app",
+        "The artifacts launch (smoke-documented) and bundle the WebKitGTK runtime deps correctly",
+        "The build step is green on the Linux runner; cargo fmt/clippy/test green"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": "PLAN.md §8.8, §9. Linux has no code-signing requirement; focus on portability + runtime deps (the gtk-rs advisories are already deny-ignored as not-runtime-reachable elsewhere, but Linux IS the runtime here — verify launch)."
+    },
+    {
+      "id": "PH6-008",
+      "title": "Auto-update (Tauri updater + signed manifests)",
+      "description": "As a user, I want the app to update itself safely.",
+      "acceptanceCriteria": [
+        "Tauri updater plugin wired: the app checks a signed update manifest/endpoint, prompts the user, and applies a verified update",
+        "Update manifests are signed with the updater private key (CI secret); the PUBLIC key is embedded/committed; an unsigned/tampered manifest is rejected",
+        "An in-app 'check for updates' + update-available flow; update only on explicit user action (no silent forced update)",
+        "Unit/integration coverage where feasible (manifest signature verify); cargo fmt/clippy/test green; cargo deny passes; npm run build green"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": "PLAN.md §8.8 Auto-update, §9. ADR-0001 Tauri updater. Signature verification is trust-critical — only the public key is committed; the private key signs manifests in CI."
+    },
+    {
+      "id": "PH6-009",
+      "title": "Documentation + release notes",
+      "description": "As a new user, I want docs to get started and understand privacy.",
+      "acceptanceCriteria": [
+        "A user guide (open/clone, the core flows, command palette, keyboard shortcuts reference), an AI/privacy doc (BYOK, consent, redaction-is-best-effort, the local Ollama path — ADR-0008/0009), and an MCP setup doc (lady-mcp, read-only, configuring an external assistant)",
+        "Release notes / CHANGELOG covering Core Parity → Fast-follow → AI → ship (v1.0 → 1.3.0)",
+        "Docs build/lint clean (markdown); links resolve; no secrets in docs"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": "PLAN.md §9 docs. Pull from CONTEXT.md, the ADRs, and progress notes. Keyboard-shortcuts doc complements the PH6-003 a11y work."
+    },
+    {
+      "id": "PH6-010",
+      "title": "Release CI pipeline",
+      "description": "As the team, I want tagging a release to produce signed artifacts.",
+      "acceptanceCriteria": [
+        "A tag-triggered release workflow builds on the macOS/Windows/Linux matrix, runs the full green gate (fmt/clippy -D warnings/test/deny + npm build), then bundles + signs/notarizes per OS (reusing PH6-005/006/007) and publishes the artifacts + the signed update manifest (PH6-008)",
+        "All signing/notarization/updater secrets come from CI secrets; the workflow is a no-op-safe on forks (no secrets → unsigned artifacts, no publish)",
+        "A dry-run (workflow_dispatch) produces artifacts without publishing; documented"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": "PLAN.md §9, §10 cross-platform CI. Extends the existing .github/workflows/ci.yml (build+test+deny matrix from Phase 0) with a release.yml. Keep PR CI unchanged + fast."
+    },
+    {
+      "id": "PH6-011",
+      "title": "Phase 6 GA exit gate (v1.3.0 ship)",
+      "description": "As the team, I want to confirm Lady is shippable and cut GA.",
+      "acceptanceCriteria": [
+        "docs/RELEASE-CHECKLIST.md updated: perf budgets, accessibility, theming, packaging (macOS/Windows/Linux), auto-update, docs, release CI — each ticked to its story; the GA ship line recorded",
+        "Whole workspace green: cargo fmt --all --check, cargo clippy --all-targets -- -D warnings, cargo test, cargo deny check, npm run build; release workflow produces signed artifacts on the matrix",
+        "Version bumped to 1.3.0 across all crates + tauri.conf.json + ui/package.json; notes confirm GA — Core Parity + Fast-follow + AI + a signed, auto-updating, accessible, perf-budgeted ship",
+        "This is the final planned phase; any remaining items are explicitly listed as post-GA"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": "PLAN.md §9 Phase 6 exit — the ship. Version line: workspace is at 1.2.0 after Phase 5; bump to 1.3.0 here. Mirror the Phase 4/5 exit-gate stories."
+    }
+  ]
+}

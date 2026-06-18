@@ -1,7 +1,7 @@
 {
   "project": "Lady",
   "branchName": "phase-5-ai",
-  "description": "Phase 5 — AI: GitKraken Git AI parity + superset (PLAN.md §9; ADR-0008 BYOK + local Ollama, no backend; ADR-0009 explicit opt-in + redaction; ADR-0011 thin reqwest provider trait). Adds the lady-ai crate and provider abstraction, BYOK key management + consent + per-repo toggle, local Ollama + the remote providers, a context builder with token budgeting + secret redaction, then the user-facing AI features: commit messages, Commit Composer (logical split), explain, review-gated conflict resolution, PR/MR title/description + changelog + stash notes, and an MCP server exposing repo context. Post-release; builds on Phases 1-3 (partial-staging patch builder, 3-pane resolver) and Phase 4 (forge-agnostic hosting). Branches from main (Phase 4 complete + merged). Shared infra is already in the workspace from Phases 3-4 — reqwest/rustls, keyring, async-trait, tokio, and wiremock (dev) — so lady-ai mainly adds tiktoken-rs (budgeting), plus rmcp (PH5-011) and an optional vector store (PH5-012); run cargo-deny after adding each and allow-list any new permissive license as needed. Each story = one context-window commit. AI is opt-in and gated by explicit consent (ADR-0009); no remote call without consent; redaction tests are MANDATORY. Providers are tested against mocked HTTP (wiremock) with recorded responses — NEVER live APIs in CI (PLAN.md §10). UI stories rely on build + typecheck + unit tests with a manual window check noted.",
+  "description": "Phase 5 \u2014 AI: GitKraken Git AI parity + superset (PLAN.md \u00a79; ADR-0008 BYOK + local Ollama, no backend; ADR-0009 explicit opt-in + redaction; ADR-0011 thin reqwest provider trait). Adds the lady-ai crate and provider abstraction, BYOK key management + consent + per-repo toggle, local Ollama + the remote providers, a context builder with token budgeting + secret redaction, then the user-facing AI features: commit messages, Commit Composer (logical split), explain, review-gated conflict resolution, PR/MR title/description + changelog + stash notes, and an MCP server exposing repo context. Post-release; builds on Phases 1-3 (partial-staging patch builder, 3-pane resolver) and Phase 4 (forge-agnostic hosting). Branches from main (Phase 4 complete + merged). Shared infra is already in the workspace from Phases 3-4 \u2014 reqwest/rustls, keyring, async-trait, tokio, and wiremock (dev) \u2014 so lady-ai mainly adds tiktoken-rs (budgeting), plus rmcp (PH5-011) and an optional vector store (PH5-012); run cargo-deny after adding each and allow-list any new permissive license as needed. Each story = one context-window commit. AI is opt-in and gated by explicit consent (ADR-0009); no remote call without consent; redaction tests are MANDATORY. Providers are tested against mocked HTTP (wiremock) with recorded responses \u2014 NEVER live APIs in CI (PLAN.md \u00a710). UI stories rely on build + typecheck + unit tests with a manual window check noted.",
   "userStories": [
     {
       "id": "PH5-001",
@@ -14,8 +14,8 @@
         "Unit tests with a fake in-crate provider; cargo fmt/clippy -D warnings/test green; cargo deny passes (reqwest/rustls permissive)"
       ],
       "priority": 1,
-      "passes": false,
-      "notes": "PLAN.md §5.1, ADR-0011. Trait + types first; concrete providers in PH5-003/004. Workspace already provides reqwest/rustls + async-trait + tokio + wiremock (Phases 3-4); add tiktoken-rs in PH5-005. Stream to the UI via Tauri events (reuse the fetch/push-progress emitter pattern from Phase 2)."
+      "passes": true,
+      "notes": "PLAN.md \u00a75.1, ADR-0011. Trait + types first; concrete providers in PH5-003/004. Workspace already provides reqwest/rustls + async-trait + tokio + wiremock (Phases 3-4); add tiktoken-rs in PH5-005. Stream to the UI via Tauri events (reuse the fetch/push-progress emitter pattern from Phase 2)."
     },
     {
       "id": "PH5-002",
@@ -28,8 +28,8 @@
         "Unit tests: consent gate blocks a remote call until accepted; keychain abstraction get/set/delete (mocked); cargo fmt/clippy/test green; cargo deny passes; npm run build green"
       ],
       "priority": 2,
-      "passes": false,
-      "notes": "ADR-0008 + ADR-0009. Trust-critical — never call remote without recorded consent. Reuse lady-hosting's TokenStore + KeyringStore (PH3-011/PH4-001) for keychain storage rather than a fresh impl; persist consent + the per-repo toggle + active-provider choice in settings (preserved like the license key, PH3-013)."
+      "passes": true,
+      "notes": "ADR-0008 + ADR-0009. Trust-critical \u2014 never call remote without recorded consent. Reuse lady-hosting's TokenStore + KeyringStore (PH3-011/PH4-001) for keychain storage rather than a fresh impl; persist consent + the per-repo toggle + active-provider choice in settings (preserved like the license key, PH3-013)."
     },
     {
       "id": "PH5-003",
@@ -41,7 +41,7 @@
         "Graceful message when Ollama is not running/installed; unit/integration test against a mocked Ollama HTTP endpoint; cargo fmt/clippy/test green; cargo deny passes"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "ADR-0008 local-first path. Do the local provider before remote ones so the private default exists first."
     },
     {
@@ -54,8 +54,8 @@
         "Unit tests per provider against mocked HTTP (wiremock) with recorded response fixtures; NO live API calls in tests; cargo fmt/clippy/test green; cargo deny passes"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": "PLAN.md §5.1, ADR-0008. One story across the five since the trait makes each a thin client; split if any one proves large."
+      "passes": true,
+      "notes": "PLAN.md \u00a75.1, ADR-0008. One story across the five since the trait makes each a thin client; split if any one proves large."
     },
     {
       "id": "PH5-005",
@@ -68,8 +68,8 @@
         "Unit tests: redaction strips planted secrets; over-budget diffs are truncated/summarized deterministically; cargo fmt/clippy/test green; cargo deny passes"
       ],
       "priority": 5,
-      "passes": false,
-      "notes": "PLAN.md §5.2, ADR-0009. Redaction tests are non-negotiable. Local Ollama may skip redaction but the pipeline still budgets."
+      "passes": true,
+      "notes": "PLAN.md \u00a75.2, ADR-0009. Redaction tests are non-negotiable. Local Ollama may skip redaction but the pipeline still budgets."
     },
     {
       "id": "PH5-006",
@@ -81,7 +81,7 @@
         "Unit test the prompt assembly + that a fake provider's output reaches the preview; cargo fmt/clippy/test green; cargo deny passes; npm run build green"
       ],
       "priority": 6,
-      "passes": false,
+      "passes": true,
       "notes": "GitKraken parity: commit messages. Reuses Phase 2 staging."
     },
     {
@@ -95,8 +95,8 @@
         "Unit test: a known multi-change working tree yields a plan that, applied, produces the expected N commits; cargo fmt/clippy/test green; cargo deny passes; npm run build green"
       ],
       "priority": 7,
-      "passes": false,
-      "notes": "GitKraken Commit Composer — the marquee AI feature. Depends on Phase 2 partial-staging (PLAN.md §5.3)."
+      "passes": true,
+      "notes": "GitKraken Commit Composer \u2014 the marquee AI feature. Depends on Phase 2 partial-staging (PLAN.md \u00a75.3)."
     },
     {
       "id": "PH5-008",
@@ -108,7 +108,7 @@
         "Unit test prompt assembly per target + fake-provider round-trip; cargo fmt/clippy/test green; cargo deny passes; npm run build green"
       ],
       "priority": 8,
-      "passes": false,
+      "passes": true,
       "notes": "GitKraken parity: explanations + regenerate."
     },
     {
@@ -117,12 +117,12 @@
       "description": "As a user, I want AI suggestions to resolve merge conflicts, which I review.",
       "acceptanceCriteria": [
         "AiTask::ResolveConflict: per conflict region feed base+ours+theirs+context -> model returns a proposed resolution",
-        "The proposal is shown in the Phase 3 3-pane resolver for the user to accept/edit; NEVER auto-written without explicit confirmation (ADR-0009 spirit + PLAN.md §5.3)",
+        "The proposal is shown in the Phase 3 3-pane resolver for the user to accept/edit; NEVER auto-written without explicit confirmation (ADR-0009 spirit + PLAN.md \u00a75.3)",
         "ui: an 'Auto-resolve with AI' action per conflicted file that populates the result pane as a suggestion",
         "Unit test: a conflict + fake provider yields a suggestion that lands in the resolver model but is not auto-committed; cargo fmt/clippy/test green; cargo deny passes; npm run build green"
       ],
       "priority": 9,
-      "passes": false,
+      "passes": true,
       "notes": "GitKraken parity: Auto-resolve with AI. Reuses Phase 3 PH3-001/002 resolver. Always review-gated."
     },
     {
@@ -135,7 +135,7 @@
         "Unit tests for each flow's prompt + fake-provider output; cargo fmt/clippy/test green; cargo deny passes; npm run build green"
       ],
       "priority": 10,
-      "passes": false,
+      "passes": true,
       "notes": "GitKraken parity: PR titles, changelogs, stash notes. Hooks into Phase 3/4 PR creation + Phase 2 stash. PR creation is forge-agnostic since PH4-001 (PR vs MR label by remote); the generated text hooks the existing Refs create-PR form and must respect the detected forge's noun."
     },
     {
@@ -148,8 +148,8 @@
         "Smoke test: an MCP client lists the tools and get_log returns commits for a fixture repo; cargo fmt/clippy/test green; cargo deny passes (rmcp permissive)"
       ],
       "priority": 11,
-      "passes": false,
-      "notes": "PLAN.md §5.4 — makes Lady an MCP context provider (matches GitKraken MCP). rmcp is a new dep — run cargo-deny after adding and allow-list any new permissive license (cf. the CDLA-Permissive-2.0 add for webpki-roots in PH4-001). get_file_at needs a public 'file at rev' read on lady-git (cat-blob); search_commits can start as a message/grep walk."
+      "passes": true,
+      "notes": "PLAN.md \u00a75.4 \u2014 makes Lady an MCP context provider (matches GitKraken MCP). rmcp is a new dep \u2014 run cargo-deny after adding and allow-list any new permissive license (cf. the CDLA-Permissive-2.0 add for webpki-roots in PH4-001). get_file_at needs a public 'file at rev' read on lady-git (cat-blob); search_commits can start as a message/grep walk."
     },
     {
       "id": "PH5-012",
@@ -159,24 +159,24 @@
         "Embed commit messages + diffs (provider embeddings or a local model) into a vector store (SQLite + brute force, or an hnsw index for v1); incremental index update on new commits",
         "A search command/ui: natural-language query -> ranked commits (e.g. 'where did we change retry logic')",
         "Unit test: indexing a fixture + a query returns the expected commit above unrelated ones; cargo fmt/clippy/test green; cargo deny passes; npm run build green",
-        "Clearly marked optional — may slip without blocking the Phase 5 exit"
+        "Clearly marked optional \u2014 may slip without blocking the Phase 5 exit"
       ],
       "priority": 12,
       "passes": false,
-      "notes": "PLAN.md §5.3 superset stretch. Skippable; note in progress if deferred."
+      "notes": "PLAN.md \u00a75.3 superset stretch. Skippable; note in progress if deferred. STATUS: DEFERRED at the Phase 5 exit (explicitly optional). A literal search_commits (message grep) ships via lady-mcp + the engine; embedding-based ranking is a Fast-follow/Phase 6 candidate."
     },
     {
       "id": "PH5-013",
       "title": "Phase 5 AI parity exit gate",
       "description": "As the team, I want to confirm GitKraken Git AI parity + the local-first + MCP story.",
       "acceptanceCriteria": [
-        "docs/RELEASE-CHECKLIST.md updated: commit messages, Commit Composer, explain, AI conflict resolution, PR title/description, changelog, stash notes, MCP server — each ticked to its story; the local-first Ollama path and explicit-opt-in privacy verified",
+        "docs/RELEASE-CHECKLIST.md updated: commit messages, Commit Composer, explain, AI conflict resolution, PR title/description, changelog, stash notes, MCP server \u2014 each ticked to its story; the local-first Ollama path and explicit-opt-in privacy verified",
         "Whole workspace green: cargo fmt --all --check, cargo clippy --all-targets -- -D warnings, cargo test, cargo deny check, npm run build; redaction + consent tests present and passing",
         "Version bumped (e.g. 1.2.0); notes confirm GitKraken Git AI parity reached and that semantic search (PH5-012) is shipped or explicitly deferred"
       ],
       "priority": 13,
-      "passes": false,
-      "notes": "PLAN.md §9 Phase 5 exit. Remaining after this: Phase 6 polish & ship (packaging/notarization/auto-update/a11y/perf). Version line: workspace is at 1.1.0 after Phase 4; bump to 1.2.0 here."
+      "passes": true,
+      "notes": "PLAN.md \u00a79 Phase 5 exit. Remaining after this: Phase 6 polish & ship (packaging/notarization/auto-update/a11y/perf). Version line: workspace is at 1.1.0 after Phase 4; bump to 1.2.0 here."
     }
   ]
 }
