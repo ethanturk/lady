@@ -105,7 +105,7 @@
         "cargo test passes; clippy -D warnings clean; fmt clean; cargo deny check passes"
       ],
       "priority": 7,
-      "passes": false,
+      "passes": true,
       "notes": "Reuse the US-006 fixture helper. PLAN.md \u00a74.1."
     },
     {
