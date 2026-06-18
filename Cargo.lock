@@ -2393,10 +2393,13 @@ dependencies = [
 name = "lady-app"
 version = "0.1.0"
 dependencies = [
+ "lady-git",
+ "lady-proto",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
+ "tempfile",
 ]
 
 [[package]]

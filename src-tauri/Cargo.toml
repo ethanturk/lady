@@ -20,3 +20,8 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+lady-git = { workspace = true }
+lady-proto = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

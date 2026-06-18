@@ -43,7 +43,7 @@
         "Works on the Lady repo; a unit test covers the command layer; cargo + npm run build green; cargo deny passes"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "Reuses lady-git from Phase 0 (ADR-0003)."
     },
     {
