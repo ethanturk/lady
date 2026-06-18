@@ -158,6 +158,32 @@ pub struct FileDiff {
     pub new_image_b64: Option<String>,
 }
 
+// ── Blame types ───────────────────────────────────────────────────────────────
+
+/// One line of a file annotated with the commit that last changed it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlameLine {
+    /// 1-indexed line number in the blamed file.
+    pub line_no: u32,
+    /// The commit that introduced this line.
+    pub commit: Oid,
+    /// Author name of that commit.
+    pub author: String,
+    /// Committer time of that commit (Unix seconds).
+    pub time: i64,
+    /// The line's text content (no trailing newline).
+    pub content: String,
+}
+
+/// Per-line blame for a single file at a given revision.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Blame {
+    /// Relative file path (forward slashes).
+    pub path: String,
+    /// Lines in file order.
+    pub lines: Vec<BlameLine>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,5 +230,22 @@ mod tests {
             let back: RefInfo = serde_json::from_str(&json).expect("deserialize RefInfo");
             assert_eq!(info, back);
         }
+    }
+
+    #[test]
+    fn blame_serde_round_trip() {
+        let blame = Blame {
+            path: "src/lib.rs".to_owned(),
+            lines: vec![BlameLine {
+                line_no: 1,
+                commit: Oid::from("a".repeat(40)),
+                author: "Ada Lovelace".to_owned(),
+                time: 1_700_000_000,
+                content: "fn main() {}".to_owned(),
+            }],
+        };
+        let json = serde_json::to_string(&blame).expect("serialize Blame");
+        let back: Blame = serde_json::from_str(&json).expect("deserialize Blame");
+        assert_eq!(blame, back);
     }
 }

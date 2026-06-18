@@ -8,7 +8,9 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 
-use lady_proto::{CommitMeta, FileDiff, FileDiffKind, Oid, RefInfo, RefKind, RepoId, Signature};
+use lady_proto::{
+    Blame, BlameLine, CommitMeta, FileDiff, FileDiffKind, Oid, RefInfo, RefKind, RepoId, Signature,
+};
 
 /// Errors surfaced by a [`GitEngine`].
 #[derive(Debug, thiserror::Error)]
@@ -62,6 +64,10 @@ pub trait GitEngine: Send + Sync {
     /// Diff a commit against its first parent (or the empty tree for root commits).
     /// Returns one `FileDiff` per changed file.
     fn diff_commit(&self, repo: &RepoId, commit: &Oid) -> Result<Vec<FileDiff>>;
+
+    /// Annotate each line of `path` with the commit that last changed it.
+    /// `at` selects the revision to blame from (`None` = `HEAD`).
+    fn blame(&self, repo: &RepoId, path: &str, at: Option<&Oid>) -> Result<Blame>;
 }
 
 /// A [`GitEngine`] backed by [`gix`] for read-only access (ADR-0003).
@@ -283,6 +289,72 @@ impl GitEngine for GixEngine {
 
         diffs.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(diffs)
+    }
+
+    fn blame(&self, repo: &RepoId, path: &str, at: Option<&Oid>) -> Result<Blame> {
+        use gix::bstr::BStr;
+        use std::collections::HashMap;
+
+        let repo = self.repo(repo)?;
+
+        // Suspect revision: explicit oid, else the resolved HEAD tip.
+        let suspect = match at {
+            Some(oid) => gix::ObjectId::from_hex(oid.as_str().as_bytes()).map_err(backend)?,
+            None => repo.head_id().map_err(backend)?.detach(),
+        };
+
+        let outcome = repo
+            .blame_file(
+                BStr::new(path.as_bytes()),
+                suspect,
+                gix::repository::blame_file::Options::default(),
+            )
+            .map_err(backend)?;
+
+        // The blob is the full file content; index its lines for content text.
+        let blob = String::from_utf8_lossy(&outcome.blob);
+        let file_lines: Vec<&str> = blob.lines().collect();
+
+        // Cache commit (author, time) lookups so each source commit resolves once.
+        let mut commit_info: HashMap<gix::ObjectId, (String, i64)> = HashMap::new();
+        let mut resolve = |id: gix::ObjectId| -> Result<(String, i64)> {
+            if let Some(v) = commit_info.get(&id) {
+                return Ok(v.clone());
+            }
+            let commit = repo.find_commit(id).map_err(backend)?;
+            let author = commit.author().map_err(backend)?.name.to_string();
+            let time = commit.time().map_err(backend)?.seconds;
+            let v = (author, time);
+            commit_info.insert(id, v.clone());
+            Ok(v)
+        };
+
+        // Expand each hunk (a contiguous run) into per-line annotations.
+        let mut entries = outcome.entries.clone();
+        entries.sort_by_key(|e| e.start_in_blamed_file);
+
+        let mut lines = Vec::new();
+        for entry in entries {
+            let (author, time) = resolve(entry.commit_id)?;
+            let commit = Oid::from(entry.commit_id.to_string());
+            let start = entry.start_in_blamed_file;
+            for offset in 0..entry.len.get() {
+                let idx = (start + offset) as usize;
+                let content = file_lines.get(idx).copied().unwrap_or("").to_owned();
+                lines.push(BlameLine {
+                    line_no: start + offset + 1,
+                    commit: commit.clone(),
+                    author: author.clone(),
+                    time,
+                    content,
+                });
+            }
+        }
+
+        Ok(Blame {
+            path: path.to_owned(),
+            lines,
+        })
     }
 }
 
@@ -600,5 +672,50 @@ mod tests {
             matches!(err, Error::Open { .. }),
             "expected Error::Open, got {err:?}"
         );
+    }
+
+    #[test]
+    fn blame_attributes_lines_to_introducing_commits() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let p = dir.path();
+        git(p, &["init", "-q", "-b", "main"]);
+        git(p, &["config", "user.name", "Lady Test"]);
+        git(p, &["config", "user.email", "test@example.com"]);
+        git(p, &["config", "commit.gpgsign", "false"]);
+
+        // Commit 1 introduces two lines.
+        std::fs::write(p.join("a.txt"), "line1\nline2\n").expect("write");
+        git(p, &["add", "."]);
+        git(p, &["commit", "-q", "-m", "first"]);
+
+        // Commit 2 changes line 2 and appends line 3.
+        std::fs::write(p.join("a.txt"), "line1\nCHANGED\nline3\n").expect("write");
+        git(p, &["add", "."]);
+        git(p, &["commit", "-q", "-m", "second"]);
+
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open the fixture repo");
+        let blame = engine.blame(&id, "a.txt", None).expect("blame a.txt");
+
+        assert_eq!(blame.path, "a.txt");
+        assert_eq!(blame.lines.len(), 3, "three lines blamed");
+
+        // Lines are in file order with 1-indexed numbers.
+        assert_eq!(blame.lines[0].line_no, 1);
+        assert_eq!(blame.lines[0].content, "line1");
+        assert_eq!(blame.lines[1].content, "CHANGED");
+        assert_eq!(blame.lines[2].content, "line3");
+
+        // Line 1 came from the first commit; lines 2 and 3 from the second.
+        assert_ne!(
+            blame.lines[0].commit, blame.lines[1].commit,
+            "line 1 and the changed line 2 have different source commits"
+        );
+        assert_eq!(
+            blame.lines[1].commit, blame.lines[2].commit,
+            "the changed line and appended line share the second commit"
+        );
+        assert_eq!(blame.lines[0].author, "Lady Test");
+        assert!(blame.lines[0].time > 0, "commit time populated");
     }
 }

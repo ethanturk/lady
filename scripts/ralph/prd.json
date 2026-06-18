@@ -127,7 +127,7 @@
         "Unit test on the blame mapping; cargo + npm run build green; cargo deny passes"
       ],
       "priority": 9,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md \u00a71 blame."
     },
     {

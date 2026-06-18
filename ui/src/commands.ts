@@ -93,3 +93,18 @@ export interface FileDiff {
   old_image_b64: string | null;
   new_image_b64: string | null;
 }
+
+// ── Blame types ───────────────────────────────────────────────────────────────
+
+export interface BlameLine {
+  line_no: number;
+  commit: string;
+  author: string;
+  time: number;
+  content: string;
+}
+
+export interface Blame {
+  path: string;
+  lines: BlameLine[];
+}

@@ -1,6 +1,6 @@
 use lady_git::{GitEngine, GixEngine, GraphQuery};
 use lady_graph::layout_continuation;
-use lady_proto::{CommitMeta, FileDiff, Oid, RefInfo, RepoId};
+use lady_proto::{Blame, CommitMeta, FileDiff, Oid, RefInfo, RepoId};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -142,6 +142,19 @@ fn diff(repo: RepoId, commit: String, engine: State<GixEngine>) -> Result<Vec<Fi
     engine.diff_commit(&repo, &oid).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn blame(
+    repo: RepoId,
+    path: String,
+    at: Option<String>,
+    engine: State<GixEngine>,
+) -> Result<Blame, String> {
+    let at = at.map(Oid::from);
+    engine
+        .blame(&repo, &path, at.as_ref())
+        .map_err(|e| e.to_string())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(GixEngine::new())
@@ -151,7 +164,8 @@ pub fn run() {
             list_refs,
             walk_log,
             walk_log_graph,
-            diff
+            diff,
+            blame
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

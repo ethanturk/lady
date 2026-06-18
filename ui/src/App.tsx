@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { AppInfo, RefInfo, RefKind, RepoId } from "./commands";
 import GraphView from "./GraphView";
 import DiffView from "./DiffView";
+import BlameView from "./BlameView";
 
 interface RefGroupProps {
   title: string;
@@ -30,7 +31,7 @@ const RefGroup: Component<RefGroupProps> = (props) => (
   </Show>
 );
 
-type Tab = "commits" | "refs";
+type Tab = "commits" | "refs" | "blame";
 
 const App: Component = () => {
   const [info, setInfo] = createSignal<AppInfo | null>(null);
@@ -127,6 +128,9 @@ const App: Component = () => {
             <button style={tabStyle("refs")} onClick={() => setTab("refs")}>
               Refs
             </button>
+            <button style={tabStyle("blame")} onClick={() => setTab("blame")}>
+              Blame
+            </button>
           </div>
         </Show>
       </div>
@@ -164,6 +168,9 @@ const App: Component = () => {
               <RefGroup title="Tags" refs={byKind("Tag")} />
               <RefGroup title="Remotes" refs={byKind("Remote")} />
             </div>
+          </Show>
+          <Show when={tab() === "blame"}>
+            <BlameView repoId={repoId()!} />
           </Show>
         </div>
       </Show>
