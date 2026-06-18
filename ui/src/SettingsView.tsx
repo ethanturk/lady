@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { For } from "solid-js";
 import type { ForgeKind, HostingInfo, LicenseStatus, RepoId, RepoInfo } from "./commands";
 import { FORGE_KINDS, FORGE_LABEL } from "./commands";
+import AiSettings from "./AiSettings";
 
 /**
  * Settings panel (PH3-011 / PH4): connect/disconnect the active repo's forge
@@ -239,6 +240,8 @@ const SettingsView: Component<{ repoId: RepoId }> = (props) => {
           </button>
         </div>
       </Show>
+
+      <AiSettings repoId={props.repoId} />
     </div>
   );
 };

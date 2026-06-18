@@ -124,21 +124,37 @@ pub fn ai_revoke_consent(provider: ProviderKind) -> Result<(), String> {
     write_settings(&settings)
 }
 
-/// Enable or disable AI for a specific repo path (default off, ADR-0009).
+/// Resolve a repo's workdir path as the per-repo AI toggle key, so the toggle
+/// and the gate ([`require_repo_enabled`]) always agree.
+fn repo_key(repo: &RepoId, engine: &GixEngine) -> Result<String, String> {
+    Ok(engine
+        .workdir_path(repo)
+        .map_err(|e| e.to_string())?
+        .to_string_lossy()
+        .to_string())
+}
+
+/// Enable or disable AI for a repo (default off, ADR-0009).
 #[tauri::command]
-pub fn ai_set_repo_enabled(path: String, enabled: bool) -> Result<(), String> {
+pub fn ai_set_repo_enabled(
+    repo: RepoId,
+    enabled: bool,
+    engine: State<'_, GixEngine>,
+) -> Result<(), String> {
+    let key = repo_key(&repo, &engine)?;
     let mut settings = load_settings_inner();
-    settings.ai_repos.retain(|p| *p != path);
+    settings.ai_repos.retain(|p| *p != key);
     if enabled {
-        settings.ai_repos.push(path);
+        settings.ai_repos.push(key);
     }
     write_settings(&settings)
 }
 
-/// Whether AI is enabled for `path`.
+/// Whether AI is enabled for `repo`.
 #[tauri::command]
-pub fn ai_repo_enabled(path: String) -> Result<bool, String> {
-    Ok(load_settings_inner().ai_repos.contains(&path))
+pub fn ai_repo_enabled(repo: RepoId, engine: State<'_, GixEngine>) -> Result<bool, String> {
+    let key = repo_key(&repo, &engine)?;
+    Ok(load_settings_inner().ai_repos.contains(&key))
 }
 
 /// List models available from the local Ollama endpoint (PH5-003).

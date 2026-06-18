@@ -12,6 +12,7 @@ import type {
   RepoId,
 } from "./commands";
 import { requestNoun } from "./commands";
+import { isConsentError, runAiStream } from "./ai";
 
 interface RefsViewProps {
   repoId: RepoId;
@@ -64,6 +65,37 @@ const RefsView: Component<RefsViewProps> = (props) => {
   const [prDraft, setPrDraft] = createSignal(false);
   const [prUrl, setPrUrl] = createSignal<string | null>(null);
   const [prBusy, setPrBusy] = createSignal(false);
+  const [aiBusy, setAiBusy] = createSignal(false);
+
+  // Generate the PR/MR title or description with AI (PH5-010), streaming into
+  // the field. Respects consent + the per-repo toggle (enforced server-side).
+  const aiPrText = async (which: "title" | "description") => {
+    const head = prBranch();
+    const base = prBase().trim();
+    if (!head || !base || aiBusy()) return;
+    setErr(null);
+    setAiBusy(true);
+    const setter = which === "title" ? setPrTitle : setPrBody;
+    setter("");
+    try {
+      const cmd = which === "title" ? "ai_pr_title" : "ai_pr_description";
+      const full = await runAiStream(
+        cmd,
+        { repo: props.repoId, base, head },
+        (acc) => setter(acc),
+      );
+      setter(full);
+    } catch (e) {
+      const msg = String(e);
+      setErr(
+        isConsentError(msg)
+          ? "AI consent required — enable the provider and grant consent in Settings."
+          : msg,
+      );
+    } finally {
+      setAiBusy(false);
+    }
+  };
 
   // The repo's default base branch (main/master) for prefill.
   const defaultBase = () => {
@@ -305,7 +337,16 @@ const RefsView: Component<RefsViewProps> = (props) => {
                   <label style={{ display: "flex", "align-items": "center", gap: "0.4rem", "font-size": "0.82rem" }}>
                     <span style={{ width: "3.5rem" }}>title</span>
                     <input style={{ flex: "1", padding: "0.3rem 0.5rem" }} value={prTitle()} onInput={(e) => setPrTitle(e.currentTarget.value)} />
+                    <button type="button" disabled={aiBusy()} title="Generate title with AI" onClick={() => aiPrText("title")} style={{ "font-size": "0.75rem", padding: "0.2rem 0.5rem" }}>
+                      ✨
+                    </button>
                   </label>
+                  <div style={{ display: "flex", "align-items": "center", gap: "0.4rem" }}>
+                    <span style={{ "font-size": "0.78rem", color: "var(--fg-muted, #888)" }}>description</span>
+                    <button type="button" disabled={aiBusy()} title="Generate description with AI" onClick={() => aiPrText("description")} style={{ "font-size": "0.75rem", padding: "0.2rem 0.5rem" }}>
+                      {aiBusy() ? "Generating…" : "✨ Generate"}
+                    </button>
+                  </div>
                   <textarea
                     style={{ "min-height": "6rem", padding: "0.3rem 0.5rem", "font-family": "inherit", "font-size": "0.82rem" }}
                     placeholder="Description"

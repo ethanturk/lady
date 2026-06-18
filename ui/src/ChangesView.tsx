@@ -3,6 +3,7 @@ import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import type { ChangeKind, DiffSpec, FileStatus, RepoId, StashEntry, WorkingTree } from "./commands";
 import DiffView from "./DiffView";
+import { cancelAi, isConsentError, runAiStream } from "./ai";
 
 /** A short colored badge for a file's change kind. */
 const KIND_BADGE: Record<ChangeKind, { label: string; color: string }> = {
@@ -115,6 +116,40 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
   const [recent, setRecent] = createSignal<string[]>([]);
   const [stashes, setStashes] = createSignal<StashEntry[]>([]);
   const [stashUntracked, setStashUntracked] = createSignal(false);
+  // AI commit-message generation (PH5-006).
+  const [aiBusy, setAiBusy] = createSignal(false);
+  const [aiReq, setAiReq] = createSignal<string | null>(null);
+
+  const generateMessage = async () => {
+    if (aiBusy()) return;
+    setErr(null);
+    setAiBusy(true);
+    setMessage("");
+    try {
+      const full = await runAiStream(
+        "ai_commit_message",
+        { repo: props.repoId },
+        (acc) => setMessage(acc),
+        (id) => setAiReq(id),
+      );
+      setMessage(full);
+    } catch (e) {
+      const msg = String(e);
+      setErr(
+        isConsentError(msg)
+          ? "AI consent required — enable the provider and grant consent in Settings."
+          : msg,
+      );
+    } finally {
+      setAiBusy(false);
+      setAiReq(null);
+    }
+  };
+
+  const cancelGenerate = () => {
+    const id = aiReq();
+    if (id) cancelAi(id).catch(() => {});
+  };
 
   const reload = () => {
     setErr(null);
@@ -219,14 +254,44 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
   };
 
   // Stash the working tree, then refresh status + stash list + siblings.
+  const [stashMsg, setStashMsg] = createSignal("");
   const stashSave = () => {
+    const msg = stashMsg().trim();
     invoke("stash_save", {
       repo: props.repoId,
-      message: null,
+      message: msg === "" ? null : msg,
       includeUntracked: stashUntracked(),
     })
+      .then(() => setStashMsg(""))
       .then(afterMutation)
       .catch((e) => setErr(String(e)));
+  };
+
+  // Generate a short stash note for the working changes (PH5-010).
+  const generateStashNote = async () => {
+    if (aiBusy()) return;
+    setErr(null);
+    setAiBusy(true);
+    setStashMsg("");
+    try {
+      const full = await runAiStream(
+        "ai_stash_note",
+        { repo: props.repoId },
+        (acc) => setStashMsg(acc),
+        (id) => setAiReq(id),
+      );
+      setStashMsg(full.trim());
+    } catch (e) {
+      const msg = String(e);
+      setErr(
+        isConsentError(msg)
+          ? "AI consent required — enable the provider and grant consent in Settings."
+          : msg,
+      );
+    } finally {
+      setAiBusy(false);
+      setAiReq(null);
+    }
   };
   const stashOp = (cmd: string, index: number) => {
     invoke(cmd, { repo: props.repoId, index })
@@ -314,6 +379,19 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
           <input type="checkbox" checked={sign()} onChange={() => setSign((s) => !s)} />
           Sign (-S)
         </label>
+        <button
+          style={{ "font-size": "0.78rem", padding: "0.2rem 0.6rem", border: "1px solid var(--accent)", "border-radius": "4px", background: "var(--surface)", color: "var(--accent)", cursor: aiBusy() ? "default" : "pointer" }}
+          disabled={aiBusy()}
+          onClick={generateMessage}
+          title="Generate a commit message for the staged changes (AI)"
+        >
+          {aiBusy() ? "Generating…" : "✨ Generate"}
+        </button>
+        <Show when={aiBusy()}>
+          <button style={{ "font-size": "0.78rem", padding: "0.2rem 0.6rem" }} onClick={cancelGenerate}>
+            Cancel
+          </button>
+        </Show>
         <Show when={recent().length > 0}>
           <select
             onChange={(e) => {
@@ -352,9 +430,18 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
         </Show>
 
         {/* Stash controls: save the working tree, manage the stack. */}
-        <div style={{ display: "flex", "align-items": "center", gap: "0.5rem", margin: "0.25rem 0" }}>
+        <div style={{ display: "flex", "align-items": "center", gap: "0.5rem", margin: "0.25rem 0", "flex-wrap": "wrap" }}>
           <button style={smallBtn} disabled={isClean()} onClick={stashSave}>
             Stash changes
+          </button>
+          <input
+            style={{ flex: "1", "min-width": "8rem", "font-size": "0.75rem", padding: "0.15rem 0.35rem", border: "1px solid var(--border)", "border-radius": "4px", background: "var(--surface)", color: "var(--fg)" }}
+            placeholder="stash note (optional)…"
+            value={stashMsg()}
+            onInput={(e) => setStashMsg(e.currentTarget.value)}
+          />
+          <button style={smallBtn} disabled={isClean() || aiBusy()} title="Generate a stash note with AI" onClick={generateStashNote}>
+            {aiBusy() ? "…" : "✨"}
           </button>
           <label style={{ display: "flex", "align-items": "center", gap: "0.2rem", "font-size": "0.72rem", color: "var(--fg-muted)" }}>
             <input

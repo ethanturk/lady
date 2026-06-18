@@ -1,0 +1,115 @@
+// AI (Phase 5) bindings + a streaming helper. The backend streams token deltas
+// over the `ai-stream` Tauri event and resolves the invoke with the full text;
+// consent + redaction are enforced server-side (ADR-0009).
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+
+export type ProviderKind =
+  | "Ollama"
+  | "OpenAi"
+  | "Anthropic"
+  | "Gemini"
+  | "AzureOpenAi"
+  | "Mistral";
+
+export const PROVIDERS: ProviderKind[] = [
+  "Ollama",
+  "OpenAi",
+  "Anthropic",
+  "Gemini",
+  "AzureOpenAi",
+  "Mistral",
+];
+
+export const PROVIDER_LABEL: Record<ProviderKind, string> = {
+  Ollama: "Ollama (local)",
+  OpenAi: "OpenAI",
+  Anthropic: "Anthropic Claude",
+  Gemini: "Google Gemini",
+  AzureOpenAi: "Azure OpenAI",
+  Mistral: "Mistral",
+};
+
+export const isRemote = (p: ProviderKind): boolean => p !== "Ollama";
+
+export interface AiConfig {
+  active: ProviderKind | null;
+  models: Record<string, string>;
+  default_model: string | null;
+  ollama_host: string;
+  azure_endpoint: string;
+  azure_deployment: string;
+  consented: ProviderKind[];
+}
+
+export interface PlannedCommit {
+  message: string;
+  hunk_ids: string[];
+}
+
+export interface CommitPlan {
+  commits: PlannedCommit[];
+}
+
+let reqCounter = 0;
+function nextReqId(): string {
+  reqCounter += 1;
+  return `ai-${Date.now()}-${reqCounter}`;
+}
+
+/** Whether the error string from a backend AI call means consent is needed. */
+export const isConsentError = (msg: string): boolean =>
+  msg.includes("consent required");
+
+/**
+ * Run a streaming AI command. Subscribes to `ai-stream`, forwards each delta to
+ * `onDelta`, and resolves with the full text. `args` must NOT include req_id —
+ * it is generated and returned via `setReqId` so the caller can cancel.
+ */
+export async function runAiStream(
+  command: string,
+  args: Record<string, unknown>,
+  onDelta: (full: string) => void,
+  setReqId?: (id: string) => void,
+): Promise<string> {
+  const reqId = nextReqId();
+  setReqId?.(reqId);
+  let acc = "";
+  const unlisten = await listen<string>("ai-stream", (e) => {
+    acc += e.payload;
+    onDelta(acc);
+  });
+  try {
+    // The backend returns the full text too; prefer it (handles non-stream).
+    const full = await invoke<string>(command, { ...args, reqId });
+    return full || acc;
+  } finally {
+    unlisten();
+  }
+}
+
+/** Cancel an in-flight streaming completion. */
+export const cancelAi = (reqId: string): Promise<void> =>
+  invoke("ai_cancel", { reqId });
+
+// Thin config/key/consent wrappers.
+export const getAiConfig = (): Promise<AiConfig> => invoke("ai_get_config");
+export const setAiConfig = (config: AiConfig): Promise<void> =>
+  invoke("ai_set_config", { config });
+export const setAiKey = (provider: ProviderKind, key: string): Promise<void> =>
+  invoke("ai_set_key", { provider, key });
+export const deleteAiKey = (provider: ProviderKind): Promise<void> =>
+  invoke("ai_delete_key", { provider });
+export const hasAiKey = (provider: ProviderKind): Promise<boolean> =>
+  invoke("ai_has_key", { provider });
+export const grantConsent = (provider: ProviderKind): Promise<void> =>
+  invoke("ai_grant_consent", { provider });
+export const revokeConsent = (provider: ProviderKind): Promise<void> =>
+  invoke("ai_revoke_consent", { provider });
+export const setRepoEnabled = (
+  repo: string,
+  enabled: boolean,
+): Promise<void> => invoke("ai_set_repo_enabled", { repo, enabled });
+export const repoEnabled = (repo: string): Promise<boolean> =>
+  invoke("ai_repo_enabled", { repo });
+export const ollamaModels = (): Promise<string[]> => invoke("ai_ollama_models");

@@ -21,6 +21,7 @@ import NotificationsView from "./NotificationsView";
 import LfsView from "./LfsView";
 import GitFlowView from "./GitFlowView";
 import SubmodulesView from "./SubmodulesView";
+import AiView from "./AiView";
 import LicenseGate from "./LicenseGate";
 import ThemeToggle from "./ThemeToggle";
 import SignatureBadge from "./SignatureBadge";
@@ -43,7 +44,8 @@ type Tab =
   | "notifications"
   | "lfs"
   | "flow"
-  | "submodules";
+  | "submodules"
+  | "ai";
 
 const App: Component = () => {
   const [info, setInfo] = createSignal<AppInfo | null>(null);
@@ -322,6 +324,9 @@ const App: Component = () => {
           <button style={tabStyle("submodules")} onClick={() => setTab("submodules")}>
             Submodules
           </button>
+          <button style={tabStyle("ai")} onClick={() => setTab("ai")}>
+            ✨ AI
+          </button>
           <button style={tabStyle("settings")} onClick={() => setTab("settings")}>
             Settings
           </button>
@@ -444,6 +449,9 @@ const App: Component = () => {
               onChanged={refresh}
               onOpen={(path) => openRepoPath?.(path)}
             />
+          </Show>
+          <Show when={tab() === "ai"}>
+            <AiView repoId={repoId()!} onChanged={refresh} />
           </Show>
           <Show when={tab() === "settings"}>
             <SettingsView repoId={repoId()!} />

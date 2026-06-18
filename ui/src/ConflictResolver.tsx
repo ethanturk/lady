@@ -1,6 +1,7 @@
 import { createEffect, createSignal, For, Show } from "solid-js";
 import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
+import { cancelAi, isConsentError, runAiStream } from "./ai";
 import type {
   ConflictRegion,
   ConflictSegment,
@@ -61,6 +62,55 @@ const ConflictResolver: Component<{
   const [regions, setRegions] = createSignal<RegionState[]>([]);
   const [err, setErr] = createSignal<string | null>(null);
   const [busy, setBusy] = createSignal(false);
+  // AI suggestion (PH5-009) — review-gated; never written without an explicit
+  // Apply click.
+  const [aiSuggestion, setAiSuggestion] = createSignal<string | null>(null);
+  const [aiBusy, setAiBusy] = createSignal(false);
+  const [aiReq, setAiReq] = createSignal<string | null>(null);
+
+  const autoResolveAi = async () => {
+    const path = current();
+    if (!path || aiBusy()) return;
+    setErr(null);
+    setAiBusy(true);
+    setAiSuggestion("");
+    try {
+      const full = await runAiStream(
+        "ai_resolve_conflict",
+        { repo: props.repoId, path },
+        (acc) => setAiSuggestion(acc),
+        (id) => setAiReq(id),
+      );
+      setAiSuggestion(full);
+    } catch (e) {
+      const msg = String(e);
+      setErr(
+        isConsentError(msg)
+          ? "AI consent required — enable the provider and grant consent in Settings."
+          : msg,
+      );
+      setAiSuggestion(null);
+    } finally {
+      setAiBusy(false);
+      setAiReq(null);
+    }
+  };
+
+  const applyAiSuggestion = () => {
+    const path = current();
+    const content = aiSuggestion();
+    if (!path || content == null) return;
+    setErr(null);
+    setBusy(true);
+    invoke("write_resolution", { repo: props.repoId, path, content })
+      .then(() => invoke("mark_resolved", { repo: props.repoId, path }))
+      .then(() => setAiSuggestion(null))
+      .then(advance)
+      .catch((e) => {
+        setErr(String(e));
+        setBusy(false);
+      });
+  };
 
   const current = () => paths()[idx()];
 
@@ -280,6 +330,14 @@ const ConflictResolver: Component<{
             Ext merge
           </button>
           <button
+            style={{ ...headerBtn, border: "1px solid var(--accent)", color: "var(--accent)" }}
+            disabled={busy() || aiBusy()}
+            title="Suggest a resolution with AI (you review before applying)"
+            onClick={autoResolveAi}
+          >
+            {aiBusy() ? "Resolving…" : "✨ Auto-resolve with AI"}
+          </button>
+          <button
             style={{ ...headerBtn, background: allChosen() ? "#1a7f37" : "var(--border)", color: allChosen() ? "var(--on-accent)" : "var(--fg-muted)" }}
             disabled={busy() || !allChosen()}
             onClick={saveResolution}
@@ -287,6 +345,34 @@ const ConflictResolver: Component<{
             Save &amp; next
           </button>
         </div>
+
+        {/* AI suggestion panel (review-gated) — edit then Apply, or Dismiss. */}
+        <Show when={aiSuggestion() !== null}>
+          <div style={{ margin: "0.4rem 0.6rem", border: "1px solid var(--accent)", "border-radius": "4px", padding: "0.4rem" }}>
+            <div style={{ display: "flex", "align-items": "center", gap: "0.4rem", "margin-bottom": "0.3rem" }}>
+              <span style={{ "font-size": "0.78rem", "font-weight": 600, color: "var(--accent)" }}>
+                AI suggestion for {current()} — review before applying
+              </span>
+              <span style={{ flex: "1" }} />
+              <Show when={aiBusy() && aiReq()}>
+                <button style={headerBtn} onClick={() => { const id = aiReq(); if (id) cancelAi(id).catch(() => {}); }}>
+                  Cancel
+                </button>
+              </Show>
+              <button style={{ ...headerBtn, border: "1px solid #1a7f37", color: "#1a7f37" }} disabled={busy() || aiBusy()} onClick={applyAiSuggestion}>
+                Apply &amp; next
+              </button>
+              <button style={headerBtn} onClick={() => setAiSuggestion(null)}>
+                Dismiss
+              </button>
+            </div>
+            <textarea
+              style={{ width: "100%", "box-sizing": "border-box", "min-height": "8rem", resize: "vertical", "font-family": "ui-monospace, monospace", "font-size": "0.8rem", padding: "0.35rem", border: "1px solid var(--border)", "border-radius": "4px", background: "var(--surface)", color: "var(--fg)" }}
+              value={aiSuggestion() ?? ""}
+              onInput={(e) => setAiSuggestion(e.currentTarget.value)}
+            />
+          </div>
+        </Show>
 
         <Show when={err()}>
           <p style={{ color: "var(--error)", margin: "0.25rem 0.6rem", "font-size": "0.85rem" }}>{err()}</p>
