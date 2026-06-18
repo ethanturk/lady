@@ -352,8 +352,15 @@ pub(crate) fn api_error_message(body: &str) -> String {
             v.get("message")
                 .and_then(|m| m.as_str())
                 .map(String::from)
-                // GitLab uses `{ "message": {...} }` or `{ "error": "..." }`.
+                // GitLab: `{ "error": "..." }`.
                 .or_else(|| v.get("error").and_then(|m| m.as_str()).map(String::from))
+                // Bitbucket / Azure: `{ "error": { "message": "..." } }`.
+                .or_else(|| {
+                    v.get("error")
+                        .and_then(|e| e.get("message"))
+                        .and_then(|m| m.as_str())
+                        .map(String::from)
+                })
         })
         .unwrap_or_else(|| body.to_string())
 }
