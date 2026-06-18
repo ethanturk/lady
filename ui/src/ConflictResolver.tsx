@@ -5,7 +5,9 @@ import type {
   ConflictRegion,
   ConflictSegment,
   ConflictSides,
+  ConflictState,
   ParsedConflict,
+  RebaseOutcome,
   RepoId,
 } from "./commands";
 
@@ -48,6 +50,7 @@ function regionInitial(region: ConflictRegion, choice: RegionState["choice"]): s
 const ConflictResolver: Component<{
   repoId: RepoId;
   refreshNonce: number;
+  conflictState: ConflictState;
   onChanged: () => void;
   onDone: () => void;
 }> = (props) => {
@@ -178,6 +181,41 @@ const ConflictResolver: Component<{
       });
   };
 
+  // Rebase sequencing controls (PH3-004 handoff). Continue/skip drive the
+  // engine; the parent is told to finish when the rebase completes.
+  const runRebaseStep = (cmd: "rebase_continue" | "rebase_skip") => {
+    setErr(null);
+    setBusy(true);
+    invoke<RebaseOutcome>(cmd, { repo: props.repoId })
+      .then((outcome) => {
+        setBusy(false);
+        if (outcome.kind === "Rebased") {
+          props.onDone();
+        } else {
+          // More conflicts (or an edit stop) — reload and keep resolving.
+          props.onChanged();
+        }
+      })
+      .catch((e) => {
+        setErr(String(e));
+        setBusy(false);
+      });
+  };
+
+  const abort = () => {
+    setErr(null);
+    setBusy(true);
+    invoke("conflict_abort", { repo: props.repoId })
+      .then(() => {
+        setBusy(false);
+        props.onDone();
+      })
+      .catch((e) => {
+        setErr(String(e));
+        setBusy(false);
+      });
+  };
+
   const headerBtn = {
     border: "1px solid #ccc",
     background: "#fff",
@@ -193,7 +231,12 @@ const ConflictResolver: Component<{
         when={paths().length > 0}
         fallback={
           <p style={{ color: "#1a7f37", padding: "1rem", "font-size": "0.9rem" }}>
-            No conflicts to resolve. 🎉
+            <Show
+              when={props.conflictState === "Rebase"}
+              fallback="No conflicts to resolve. 🎉"
+            >
+              All files resolved — continue the rebase to finish.
+            </Show>
           </p>
         }
       >
@@ -363,6 +406,40 @@ const ConflictResolver: Component<{
               )}
             </For>
           </div>
+        </div>
+      </Show>
+
+      {/* Sequencing footer: continue/skip a rebase, abort any operation. */}
+      <Show when={props.conflictState !== "None"}>
+        <div
+          style={{
+            display: "flex",
+            gap: "0.5rem",
+            padding: "0.4rem 0.6rem",
+            "border-top": "1px solid #ddd",
+            "flex-shrink": 0,
+            "align-items": "center",
+          }}
+        >
+          <span style={{ "font-size": "0.78rem", color: "#666" }}>
+            In {props.conflictState.toLowerCase()}
+          </span>
+          <span style={{ flex: "1" }} />
+          <Show when={props.conflictState === "Rebase"}>
+            <button style={headerBtn} disabled={busy()} onClick={() => runRebaseStep("rebase_continue")}>
+              Continue rebase
+            </button>
+            <button style={headerBtn} disabled={busy()} onClick={() => runRebaseStep("rebase_skip")}>
+              Skip commit
+            </button>
+          </Show>
+          <button
+            style={{ ...headerBtn, color: "#d1242f", "border-color": "#d1242f" }}
+            disabled={busy()}
+            onClick={abort}
+          >
+            Abort
+          </button>
         </div>
       </Show>
     </div>

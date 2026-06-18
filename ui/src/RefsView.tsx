@@ -15,6 +15,8 @@ interface RefsViewProps {
   refs: RefInfo[];
   /** Called after a mutation so App reloads refs + status + graph. */
   onChanged: () => void;
+  /** Open the interactive-rebase editor from a branch tip (PH3-004). */
+  onInteractiveRebase: (oid: string) => void;
 }
 
 const smallBtn = {
@@ -269,6 +271,15 @@ const RefsView: Component<RefsViewProps> = (props) => {
                 <span style={{ width: "0.8rem", color: "#1a7f37" }}>{isCurrent(r) ? "●" : ""}</span>
                 <span style={{ flex: "1", "font-weight": isCurrent(r) ? 700 : 400 }}>{r.name}</span>
                 <span style={{ color: "#888" }}>{r.target.slice(0, 8)}</span>
+                <Show when={isCurrent(r)}>
+                  <button
+                    style={smallBtn}
+                    title="Interactive rebase this branch's recent history"
+                    onClick={() => props.onInteractiveRebase(r.target)}
+                  >
+                    Rebase i
+                  </button>
+                </Show>
                 <Show when={!isCurrent(r)}>
                   <button style={smallBtn} onClick={() => checkoutSafely(r.name)}>
                     Checkout

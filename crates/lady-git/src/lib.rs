@@ -322,6 +322,11 @@ pub trait GitEngine: Send + Sync {
 
     /// Skip the current commit of an in-progress rebase.
     fn rebase_skip(&self, repo: &RepoId) -> Result<RebaseOutcome>;
+
+    /// Compute the interactive-rebase range "from `from` to HEAD": returns the
+    /// `onto` target (the parent of `from`) and the commits in the range, oldest
+    /// first, ready to seed a [`RebaseStep`] plan (PH3-004 entry point).
+    fn rebase_range(&self, repo: &RepoId, from: &Oid) -> Result<(Oid, Vec<CommitMeta>)>;
 }
 
 /// A [`GitEngine`] backed by [`gix`] for read-only access (ADR-0003).
@@ -1474,6 +1479,26 @@ exit 0\n";
         let envs = [("GIT_EDITOR", "true"), ("GIT_SEQUENCE_EDITOR", "true")];
         let out = run_git_env_raw(&wd, &["rebase", "--skip"], &envs)?;
         self.interpret_rebase(repo, &out)
+    }
+
+    fn rebase_range(&self, repo: &RepoId, from: &Oid) -> Result<(Oid, Vec<CommitMeta>)> {
+        let wd = self.workdir(repo)?;
+        let parent_rev = format!("{}^", from.as_str());
+        // `onto` is the parent of `from`; a root commit has none.
+        let onto = run_git(&wd, &["rev-parse", &parent_rev])?;
+        let onto = Oid::from(String::from_utf8_lossy(&onto.stdout).trim().to_string());
+
+        // Commits in (from^..HEAD], oldest first — the order a todo lists them.
+        let range = format!("{parent_rev}..HEAD");
+        let out = run_git(&wd, &["rev-list", "--reverse", &range])?;
+        let repo_h = self.repo(repo)?;
+        let mut commits = Vec::new();
+        for line in String::from_utf8_lossy(&out.stdout).lines() {
+            let oid = gix::ObjectId::from_hex(line.trim().as_bytes()).map_err(backend)?;
+            let commit = repo_h.find_commit(oid).map_err(backend)?;
+            commits.push(commit_meta(&commit)?);
+        }
+        Ok((onto, commits))
     }
 }
 
@@ -3332,6 +3357,25 @@ mod tests {
         let after_tip = git_out(p, &["log", "-1", "--format=%s"]);
         assert_eq!(after_tip, "add a.txt", "reorder put a.txt on top");
         assert!(p.join("a.txt").exists() && p.join("b.txt").exists());
+    }
+
+    #[test]
+    fn rebase_range_returns_onto_and_ordered_commits() {
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open");
+
+        let base = head_oid(p).expect("base"); // tip of fixture (commit 3)
+        let a = add_commit(&engine, &id, p, "a.txt", "A\n");
+        let _b = add_commit(&engine, &id, p, "b.txt", "B\n");
+
+        // "Rebase interactive from `a`": onto = a^ (== base), commits = [a, b].
+        let (onto, commits) = engine.rebase_range(&id, &a).expect("range");
+        assert_eq!(onto, base, "onto is the parent of the start commit");
+        assert_eq!(commits.len(), 2, "two commits in the range");
+        assert_eq!(commits[0].summary, "add a.txt", "oldest first");
+        assert_eq!(commits[1].summary, "add b.txt");
     }
 
     #[test]

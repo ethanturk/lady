@@ -748,6 +748,29 @@ fn rebase_skip(repo: RepoId, engine: State<GixEngine>) -> Result<RebaseOutcome, 
     engine.rebase_skip(&repo).map_err(|e| e.to_string())
 }
 
+/// The interactive-rebase range "from a commit to HEAD": the `onto` target plus
+/// the commits to edit (oldest first), for seeding the rebase editor (PH3-004).
+#[derive(Serialize)]
+pub struct RebaseRange {
+    pub onto: String,
+    pub commits: Vec<CommitMeta>,
+}
+
+#[tauri::command]
+fn rebase_range(
+    repo: RepoId,
+    from: String,
+    engine: State<GixEngine>,
+) -> Result<RebaseRange, String> {
+    let (onto, commits) = engine
+        .rebase_range(&repo, &Oid::from(from))
+        .map_err(|e| e.to_string())?;
+    Ok(RebaseRange {
+        onto: onto.as_str().to_owned(),
+        commits,
+    })
+}
+
 /// A repository remembered in user settings, with an optional custom group.
 #[derive(Serialize, Deserialize, Default, Clone)]
 pub struct RecentRepo {
@@ -849,6 +872,7 @@ pub fn run() {
             rebase_interactive,
             rebase_continue,
             rebase_skip,
+            rebase_range,
             clone_repo,
             load_settings,
             save_settings

@@ -1,7 +1,7 @@
 import { createEffect, createSignal, onMount, Show } from "solid-js";
 import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
-import type { AppInfo, ApplyOutcome, ConflictState, OpenRepo, RefInfo } from "./commands";
+import type { AppInfo, ApplyOutcome, ConflictState, OpenRepo, RebaseOutcome, RefInfo } from "./commands";
 import GraphView from "./GraphView";
 import DiffView from "./DiffView";
 import BlameView from "./BlameView";
@@ -11,6 +11,7 @@ import RefsView from "./RefsView";
 import SyncBar from "./SyncBar";
 import RepoBar from "./RepoBar";
 import ConflictResolver from "./ConflictResolver";
+import InteractiveRebase from "./InteractiveRebase";
 import CommandPalette from "./CommandPalette";
 import type { PaletteEntry } from "./CommandPalette";
 
@@ -29,6 +30,8 @@ const App: Component = () => {
   const [opNotice, setOpNotice] = createSignal<string | null>(null);
   const [opConflicts, setOpConflicts] = createSignal<string[]>([]);
   const [conflictState, setConflictState] = createSignal<ConflictState>("None");
+  // When set, the interactive-rebase editor is open for this start commit oid.
+  const [rebaseFrom, setRebaseFrom] = createSignal<string | null>(null);
   // Bumped after any mutation so status/refs/graph views reload (PLAN §3.2).
   const [refreshNonce, setRefreshNonce] = createSignal(0);
   // Poll the mid-operation state; auto-surface the resolver when conflicts
@@ -93,6 +96,24 @@ const App: Component = () => {
         refresh();
       })
       .catch((e) => setErr(String(e)));
+  };
+
+  // Result of running an interactive rebase: finish cleanly, or hand a conflict
+  // / edit-stop off to the 3-pane resolver (PH3-002).
+  const onRebaseComplete = (outcome: RebaseOutcome) => {
+    setRebaseFrom(null);
+    setErr(null);
+    if (outcome.kind === "Rebased") {
+      setOpNotice("Rebase complete.");
+    } else if (outcome.kind === "Stopped") {
+      setOpNotice("Rebase stopped to edit a commit — amend, then continue.");
+      setTab("conflicts");
+    } else {
+      setOpConflicts(outcome.value);
+      setOpNotice(`Rebase stopped with ${outcome.value.length} conflict(s).`);
+      setTab("conflicts");
+    }
+    refresh();
   };
 
   onMount(async () => {
@@ -263,6 +284,9 @@ const App: Component = () => {
                     <button onClick={() => runCommitAction("revert", "Revert")}>
                       Revert
                     </button>
+                    <button onClick={() => setRebaseFrom(selectedCommit())}>
+                      Rebase i from here
+                    </button>
                   </div>
                   <div style={{ flex: "1", "min-height": "0" }}>
                     <DiffView repoId={repoId()!} commit={selectedCommit()!} />
@@ -272,7 +296,12 @@ const App: Component = () => {
             </div>
           </Show>
           <Show when={tab() === "refs"}>
-            <RefsView repoId={repoId()!} refs={refs()} onChanged={refresh} />
+            <RefsView
+              repoId={repoId()!}
+              refs={refs()}
+              onChanged={refresh}
+              onInteractiveRebase={(oid) => setRebaseFrom(oid)}
+            />
           </Show>
           <Show when={tab() === "blame"}>
             <BlameView repoId={repoId()!} initialPath={navFile()} />
@@ -284,6 +313,7 @@ const App: Component = () => {
             <ConflictResolver
               repoId={repoId()!}
               refreshNonce={refreshNonce()}
+              conflictState={conflictState()}
               onChanged={refresh}
               onDone={() => {
                 setOpConflicts([]);
@@ -293,6 +323,16 @@ const App: Component = () => {
             />
           </Show>
         </div>
+      </Show>
+
+      {/* Interactive-rebase editor (PH3-004) */}
+      <Show when={rebaseFrom() && active()}>
+        <InteractiveRebase
+          repoId={repoId()!}
+          fromOid={rebaseFrom()!}
+          onClose={() => setRebaseFrom(null)}
+          onComplete={onRebaseComplete}
+        />
       </Show>
 
       <CommandPalette
