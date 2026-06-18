@@ -15,7 +15,7 @@
         "cargo fmt/clippy -D warnings/build clean; cargo deny check passes (Tauri deps are MIT/Apache); npm run build (tsc + vite) passes"
       ],
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Prereqs verified present: node v22, npm 10.9, cargo-tauri. ADR-0001, ADR-0010."
     },
     {

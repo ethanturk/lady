@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/lady-proto", "crates/lady-git", "crates/lady-cli"]
+members = ["crates/lady-proto", "crates/lady-git", "crates/lady-cli", "src-tauri"]
 
 [workspace.package]
 edition = "2021"
