@@ -73,6 +73,10 @@ pub trait GitEngine: Send + Sync {
     /// A commit is included when its blob at `path` differs from its first
     /// parent's (covering add, modify, and delete).
     fn file_history(&self, repo: &RepoId, path: &str) -> Result<Vec<CommitMeta>>;
+
+    /// Whether the repository's worktree has uncommitted changes (tracked
+    /// modifications or untracked files). Powers the dirty-tab star indicator.
+    fn is_dirty(&self, repo: &RepoId) -> Result<bool>;
 }
 
 /// A [`GitEngine`] backed by [`gix`] for read-only access (ADR-0003).
@@ -396,6 +400,11 @@ impl GitEngine for GixEngine {
             }
         }
         Ok(out)
+    }
+
+    fn is_dirty(&self, repo: &RepoId) -> Result<bool> {
+        let repo = self.repo(repo)?;
+        repo.is_dirty().map_err(backend)
     }
 }
 
@@ -797,5 +806,26 @@ mod tests {
             vec!["edit a", "add a and b"],
             "newest-first, only commits touching a.txt"
         );
+    }
+
+    #[test]
+    fn is_dirty_reflects_worktree_changes() {
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open the fixture repo");
+
+        // Fresh checkout from a committed fixture: clean.
+        assert!(!engine.is_dirty(&id).expect("status on clean tree"));
+
+        // Modify a tracked file → dirty.
+        let tracked = std::fs::read_dir(p)
+            .expect("read dir")
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .find(|pp| pp.extension().is_some_and(|x| x == "txt"))
+            .expect("a tracked .txt file exists");
+        std::fs::write(&tracked, "mutated\n").expect("write");
+        assert!(engine.is_dirty(&id).expect("status on dirty tree"));
     }
 }

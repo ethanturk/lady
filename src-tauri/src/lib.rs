@@ -164,6 +164,92 @@ fn file_history(
     engine.file_history(&repo, &path).map_err(|e| e.to_string())
 }
 
+/// Whether a repo's worktree has uncommitted changes (drives the tab star).
+#[tauri::command]
+fn repo_dirty(repo: RepoId, engine: State<GixEngine>) -> Result<bool, String> {
+    engine.is_dirty(&repo).map_err(|e| e.to_string())
+}
+
+/// Clone `url` into `dest` via system git (ADR-0003 shell-out tier), streaming
+/// git's progress lines to the frontend as `clone-progress` events, and open
+/// the result.
+#[tauri::command]
+fn clone_repo(
+    url: String,
+    dest: String,
+    app: tauri::AppHandle,
+    engine: State<GixEngine>,
+) -> Result<RepoId, String> {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+    use tauri::Emitter;
+
+    let mut child = Command::new("git")
+        .args(["clone", "--progress", &url, &dest])
+        .stderr(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to start git clone: {e}"))?;
+
+    // git writes progress to stderr; relay each line as an event.
+    if let Some(stderr) = child.stderr.take() {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            let _ = app.emit("clone-progress", line);
+        }
+    }
+
+    let status = child.wait().map_err(|e| e.to_string())?;
+    if !status.success() {
+        return Err(format!("git clone failed ({status})"));
+    }
+
+    engine
+        .open(std::path::Path::new(&dest))
+        .map_err(|e| e.to_string())
+}
+
+/// A repository remembered in user settings, with an optional custom group.
+#[derive(Serialize, Deserialize, Default, Clone)]
+pub struct RecentRepo {
+    pub path: String,
+    #[serde(default)]
+    pub group: Option<String>,
+}
+
+/// Persisted user settings (recent repos + their groups).
+#[derive(Serialize, Deserialize, Default)]
+pub struct Settings {
+    #[serde(default)]
+    pub recent: Vec<RecentRepo>,
+}
+
+/// Path to `settings.toml` in the platform config dir (via `directories`).
+fn settings_file() -> Result<std::path::PathBuf, String> {
+    let dirs = directories::ProjectDirs::from("dev", "Lady", "Lady")
+        .ok_or_else(|| "could not resolve a config directory".to_string())?;
+    Ok(dirs.config_dir().join("settings.toml"))
+}
+
+#[tauri::command]
+fn load_settings() -> Result<Settings, String> {
+    let path = settings_file()?;
+    match std::fs::read_to_string(&path) {
+        Ok(s) => toml::from_str(&s).map_err(|e| e.to_string()),
+        // Missing file → first run; return defaults.
+        Err(_) => Ok(Settings::default()),
+    }
+}
+
+#[tauri::command]
+fn save_settings(settings: Settings) -> Result<(), String> {
+    let path = settings_file()?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let body = toml::to_string_pretty(&settings).map_err(|e| e.to_string())?;
+    std::fs::write(&path, body).map_err(|e| e.to_string())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(GixEngine::new())
@@ -175,7 +261,11 @@ pub fn run() {
             walk_log_graph,
             diff,
             blame,
-            file_history
+            file_history,
+            repo_dirty,
+            clone_repo,
+            load_settings,
+            save_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

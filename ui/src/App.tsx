@@ -1,11 +1,12 @@
-import { createSignal, For, onMount, Show } from "solid-js";
+import { createEffect, createSignal, For, onMount, Show } from "solid-js";
 import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
-import type { AppInfo, RefInfo, RefKind, RepoId } from "./commands";
+import type { AppInfo, OpenRepo, RefInfo, RefKind } from "./commands";
 import GraphView from "./GraphView";
 import DiffView from "./DiffView";
 import BlameView from "./BlameView";
 import FileHistory from "./FileHistory";
+import RepoBar from "./RepoBar";
 
 interface RefGroupProps {
   title: string;
@@ -36,8 +37,7 @@ type Tab = "commits" | "refs" | "blame" | "history";
 
 const App: Component = () => {
   const [info, setInfo] = createSignal<AppInfo | null>(null);
-  const [path, setPath] = createSignal("");
-  const [repoId, setRepoId] = createSignal<RepoId | null>(null);
+  const [active, setActive] = createSignal<OpenRepo | null>(null);
   const [refs, setRefs] = createSignal<RefInfo[]>([]);
   const [tab, setTab] = createSignal<Tab>("commits");
   const [selectedCommit, setSelectedCommit] = createSignal<string | null>(null);
@@ -48,21 +48,18 @@ const App: Component = () => {
     setInfo(data);
   });
 
-  const openRepo = async () => {
-    try {
-      setErr(null);
-      setRepoId(null);
-      setRefs([]);
-      setSelectedCommit(null);
-      const id = await invoke<RepoId>("open_repo", { path: path() });
-      const refList = await invoke<RefInfo[]>("list_refs", { repo: id });
-      setRefs(refList);
-      setRepoId(id);
-      setTab("commits");
-    } catch (e) {
-      setErr(String(e));
-    }
-  };
+  const repoId = () => active()?.id ?? null;
+
+  // Reload refs whenever the active repo changes.
+  createEffect(() => {
+    const repo = active();
+    setSelectedCommit(null);
+    setRefs([]);
+    if (!repo) return;
+    invoke<RefInfo[]>("list_refs", { repo: repo.id })
+      .then(setRefs)
+      .catch((e) => setErr(String(e)));
+  });
 
   const byKind = (kind: RefKind) => refs().filter((r) => r.kind === kind);
 
@@ -85,62 +82,42 @@ const App: Component = () => {
         "font-family": "sans-serif",
       }}
     >
-      {/* Header */}
-      <div style={{ padding: "0.75rem 1rem", "flex-shrink": 0 }}>
+      {/* App title */}
+      <div style={{ padding: "0.5rem 1rem 0", "flex-shrink": 0 }}>
         <Show when={info()}>
           <span style={{ "font-weight": 600 }}>
             {info()?.name} {info()?.version}
           </span>
         </Show>
-
-        <div
-          style={{
-            display: "flex",
-            gap: "0.5rem",
-            "margin-top": "0.5rem",
-          }}
-        >
-          <input
-            type="text"
-            value={path()}
-            onInput={(e) => setPath(e.currentTarget.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") openRepo();
-            }}
-            placeholder="/path/to/repo"
-            style={{ flex: "1", padding: "0.3rem 0.5rem", "font-size": "0.875rem" }}
-          />
-          <button onClick={openRepo} style={{ padding: "0.3rem 0.8rem" }}>
-            Open
-          </button>
-        </div>
-
-        <Show when={err()}>
-          <p style={{ color: "crimson", margin: "0.25rem 0 0", "font-size": "0.85rem" }}>
-            {err()}
-          </p>
-        </Show>
-
-        <Show when={repoId()}>
-          <div style={{ display: "flex", gap: "0.25rem", "margin-top": "0.5rem" }}>
-            <button style={tabStyle("commits")} onClick={() => setTab("commits")}>
-              Commits
-            </button>
-            <button style={tabStyle("refs")} onClick={() => setTab("refs")}>
-              Refs
-            </button>
-            <button style={tabStyle("blame")} onClick={() => setTab("blame")}>
-              Blame
-            </button>
-            <button style={tabStyle("history")} onClick={() => setTab("history")}>
-              History
-            </button>
-          </div>
-        </Show>
       </div>
 
+      {/* Repository manager */}
+      <RepoBar active={repoId()} onActiveChange={setActive} />
+
+      <Show when={err()}>
+        <p style={{ color: "crimson", margin: "0.25rem 1rem", "font-size": "0.85rem" }}>{err()}</p>
+      </Show>
+
+      {/* View tabs for the active repo */}
+      <Show when={active()}>
+        <div style={{ display: "flex", gap: "0.25rem", padding: "0.5rem 1rem 0", "flex-shrink": 0 }}>
+          <button style={tabStyle("commits")} onClick={() => setTab("commits")}>
+            Commits
+          </button>
+          <button style={tabStyle("refs")} onClick={() => setTab("refs")}>
+            Refs
+          </button>
+          <button style={tabStyle("blame")} onClick={() => setTab("blame")}>
+            Blame
+          </button>
+          <button style={tabStyle("history")} onClick={() => setTab("history")}>
+            History
+          </button>
+        </div>
+      </Show>
+
       {/* Content */}
-      <Show when={repoId()}>
+      <Show when={active()}>
         <div style={{ flex: "1", overflow: "hidden" }}>
           <Show when={tab() === "commits"}>
             <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>

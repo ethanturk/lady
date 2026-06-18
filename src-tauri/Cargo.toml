@@ -24,6 +24,8 @@ lady-git = { workspace = true }
 lady-proto = { workspace = true }
 lady-graph = { workspace = true }
 lady-diff = { workspace = true }
+directories = { workspace = true }
+toml = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

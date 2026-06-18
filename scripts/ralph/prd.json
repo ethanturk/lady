@@ -154,7 +154,7 @@
         "cargo + npm run build green; cargo deny passes"
       ],
       "priority": 11,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md \u00a71 repository manager. Clone uses shell-out git (ADR-0003)."
     },
     {

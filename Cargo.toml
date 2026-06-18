@@ -23,8 +23,11 @@ gix = { version = "0.84", default-features = false, features = [
     "revision",
     "sha1",
     "blame",
+    "status",
 ] }
 tempfile = "3"
+directories = "5"
+toml = "0.8"
 lady-proto = { path = "crates/lady-proto" }
 lady-git = { path = "crates/lady-git" }
 lady-graph = { path = "crates/lady-graph" }

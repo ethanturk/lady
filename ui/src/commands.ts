@@ -108,3 +108,22 @@ export interface Blame {
   path: string;
   lines: BlameLine[];
 }
+
+// ── Repository-manager types ───────────────────────────────────────────────────
+
+export interface RecentRepo {
+  path: string;
+  group: string | null;
+}
+
+export interface Settings {
+  recent: RecentRepo[];
+}
+
+/** An opened repo backing one tab in the repository manager (UI-only). */
+export interface OpenRepo {
+  path: string;
+  id: RepoId;
+  group: string | null;
+  dirty: boolean;
+}
