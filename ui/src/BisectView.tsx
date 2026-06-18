@@ -71,7 +71,7 @@ const BisectView: Component<{
       disabled={state().suspected != null}
       style={{
         background: bg,
-        color: "#fff",
+        color: "var(--on-accent)",
         border: "none",
         "border-radius": "4px",
         padding: "0.35rem 1rem",
@@ -88,7 +88,7 @@ const BisectView: Component<{
       <h3 style={{ margin: "0 0 0.6rem", "font-size": "0.95rem" }}>Bisect</h3>
 
       <Show when={err()}>
-        <p style={{ color: "crimson", "font-size": "0.85rem" }}>{err()}</p>
+        <p style={{ color: "var(--error)", "font-size": "0.85rem" }}>{err()}</p>
       </Show>
 
       <Show
@@ -118,18 +118,18 @@ const BisectView: Component<{
                 <span style={{ "font-family": "monospace", "font-weight": 600 }}>
                   {state().current_oid?.slice(0, 10)}
                 </span>
-                <span style={{ color: "#888", "margin-left": "0.6rem" }}>
+                <span style={{ color: "var(--fg-muted)", "margin-left": "0.6rem" }}>
                   ~{state().remaining_steps_estimate} step
                   {state().remaining_steps_estimate === 1 ? "" : "s"} left
                 </span>
               </p>
-              <p style={{ "font-size": "0.82rem", color: "#666" }}>
+              <p style={{ "font-size": "0.82rem", color: "var(--fg-muted)" }}>
                 Test the checked-out commit, then mark it:
               </p>
               <div style={{ display: "flex", gap: "0.5rem" }}>
                 {markBtn("good", "#1a7f37")}
                 {markBtn("bad", "#cf222e")}
-                {markBtn("skip", "#6e7781")}
+                {markBtn("skip", "var(--fg-muted)")}
               </div>
             </div>
           }

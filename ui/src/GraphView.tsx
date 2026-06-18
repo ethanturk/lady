@@ -207,7 +207,7 @@ const GraphView: Component<{
     <div style={{ display: "flex", "flex-direction": "column", height: "100%", overflow: "hidden" }}>
       {/* Stash markers shown inline above the commit graph (Fork parity). */}
       <Show when={stashes().length > 0}>
-        <div style={{ "flex-shrink": 0, "border-bottom": "1px solid #eee" }}>
+        <div style={{ "flex-shrink": 0, "border-bottom": "1px solid var(--border)" }}>
           <For each={stashes()}>
             {(s) => (
               <div
@@ -278,17 +278,17 @@ const GraphView: Component<{
                     "align-items": "center",
                     gap: "0.5rem",
                     padding: "0 0.5rem",
-                    "border-bottom": "1px solid #eee",
+                    "border-bottom": "1px solid var(--border)",
                     "box-sizing": "border-box",
                     "font-size": "0.875rem",
                     cursor: "pointer",
-                    background: props.selected === row.oid ? "#e6f0ff" : "transparent",
+                    background: props.selected === row.oid ? "var(--selection)" : "transparent",
                   }}
                 >
                   <span
                     style={{
                       "font-family": "monospace",
-                      color: "#888",
+                      color: "var(--fg-muted)",
                       "min-width": "6.5ch",
                     }}
                   >
@@ -307,7 +307,7 @@ const GraphView: Component<{
                   <SignatureBadge status={sigs()[row.oid]} />
                   <span
                     style={{
-                      color: "#555",
+                      color: "var(--fg-muted)",
                       "white-space": "nowrap",
                       "max-width": "12ch",
                       overflow: "hidden",
@@ -318,7 +318,7 @@ const GraphView: Component<{
                   </span>
                   <span
                     style={{
-                      color: "#888",
+                      color: "var(--fg-muted)",
                       "white-space": "nowrap",
                       "min-width": "7ch",
                       "text-align": "right",
@@ -336,7 +336,7 @@ const GraphView: Component<{
             style={{
               "text-align": "center",
               padding: "0.4rem",
-              color: "#888",
+              color: "var(--fg-muted)",
               "font-size": "0.8rem",
             }}
           >

@@ -55,7 +55,7 @@ const LfsView: Component<{
         }
       >
         <Show when={err()}>
-          <p style={{ color: "crimson", "font-size": "0.85rem" }}>{err()}</p>
+          <p style={{ color: "var(--error)", "font-size": "0.85rem" }}>{err()}</p>
         </Show>
 
         <div style={{ display: "flex", gap: "0.4rem", "align-items": "center", "margin-bottom": "0.6rem" }}>
@@ -72,25 +72,25 @@ const LfsView: Component<{
         </div>
 
         <h4 style={{ margin: "0.6rem 0 0.3rem", "font-size": "0.85rem" }}>Tracked patterns</h4>
-        <Show when={status().patterns.length > 0} fallback={<p style={{ color: "#888", "font-size": "0.82rem" }}>None.</p>}>
+        <Show when={status().patterns.length > 0} fallback={<p style={{ color: "var(--fg-muted)", "font-size": "0.82rem" }}>None.</p>}>
           <ul style={{ margin: 0, padding: "0 0 0 1.1rem", "font-family": "monospace", "font-size": "0.82rem" }}>
             <For each={status().patterns}>{(p) => <li>{p}</li>}</For>
           </ul>
         </Show>
 
         <h4 style={{ margin: "0.8rem 0 0.3rem", "font-size": "0.85rem" }}>Tracked files</h4>
-        <Show when={status().files.length > 0} fallback={<p style={{ color: "#888", "font-size": "0.82rem" }}>None.</p>}>
+        <Show when={status().files.length > 0} fallback={<p style={{ color: "var(--fg-muted)", "font-size": "0.82rem" }}>None.</p>}>
           <ul style={{ margin: 0, padding: 0, "list-style": "none" }}>
             <For each={status().files}>
               {(f) => (
                 <li style={{ display: "flex", "align-items": "center", gap: "0.5rem", padding: "0.2rem 0", "font-size": "0.83rem" }}>
-                  <span title={f.downloaded ? "materialized" : "pointer only"} style={{ color: f.downloaded ? "#1a7f37" : "#999" }}>
+                  <span title={f.downloaded ? "materialized" : "pointer only"} style={{ color: f.downloaded ? "#1a7f37" : "var(--fg-muted)" }}>
                     {f.downloaded ? "●" : "○"}
                   </span>
                   <span style={{ flex: "1", "font-family": "monospace", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>
                     {f.path}
                   </span>
-                  <span style={{ color: "#888", "font-family": "monospace", "font-size": "0.72rem" }}>{f.oid.slice(0, 8)}</span>
+                  <span style={{ color: "var(--fg-muted)", "font-family": "monospace", "font-size": "0.72rem" }}>{f.oid.slice(0, 8)}</span>
                 </li>
               )}
             </For>

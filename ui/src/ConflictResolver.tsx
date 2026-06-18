@@ -19,7 +19,7 @@ interface RegionState {
 
 const OURS_BG = "#e6ffec";
 const THEIRS_BG = "#ddf4ff";
-const BASE_BG = "#f6f8fa";
+const BASE_BG = "var(--surface-2)";
 
 const pane = {
   flex: "1",
@@ -217,8 +217,8 @@ const ConflictResolver: Component<{
   };
 
   const headerBtn = {
-    border: "1px solid #ccc",
-    background: "#fff",
+    border: "1px solid var(--border)",
+    background: "var(--surface)",
     "border-radius": "3px",
     "font-size": "0.75rem",
     cursor: "pointer",
@@ -247,11 +247,11 @@ const ConflictResolver: Component<{
             "align-items": "center",
             gap: "0.5rem",
             padding: "0.4rem 0.6rem",
-            "border-bottom": "1px solid #ddd",
+            "border-bottom": "1px solid var(--border)",
             "flex-shrink": 0,
           }}
         >
-          <span style={{ "font-size": "0.8rem", color: "#666" }}>
+          <span style={{ "font-size": "0.8rem", color: "var(--fg-muted)" }}>
             Conflict {idx() + 1} / {paths().length}
           </span>
           <span style={{ "font-family": "monospace", "font-size": "0.8rem", "font-weight": 600 }}>
@@ -280,7 +280,7 @@ const ConflictResolver: Component<{
             Ext merge
           </button>
           <button
-            style={{ ...headerBtn, background: allChosen() ? "#1a7f37" : "#eee", color: allChosen() ? "#fff" : "#999" }}
+            style={{ ...headerBtn, background: allChosen() ? "#1a7f37" : "var(--border)", color: allChosen() ? "var(--on-accent)" : "var(--fg-muted)" }}
             disabled={busy() || !allChosen()}
             onClick={saveResolution}
           >
@@ -289,16 +289,16 @@ const ConflictResolver: Component<{
         </div>
 
         <Show when={err()}>
-          <p style={{ color: "crimson", margin: "0.25rem 0.6rem", "font-size": "0.85rem" }}>{err()}</p>
+          <p style={{ color: "var(--error)", margin: "0.25rem 0.6rem", "font-size": "0.85rem" }}>{err()}</p>
         </Show>
 
         {/* Three read-only panes: base | ours | theirs */}
-        <div style={{ display: "flex", height: "32%", "border-bottom": "1px solid #ddd", "flex-shrink": 0 }}>
-          <div style={{ ...pane, background: BASE_BG, "border-right": "1px solid #eee" }}>
-            <div style={{ color: "#888", "font-weight": 700, "margin-bottom": "0.25rem" }}>BASE</div>
+        <div style={{ display: "flex", height: "32%", "border-bottom": "1px solid var(--border)", "flex-shrink": 0 }}>
+          <div style={{ ...pane, background: BASE_BG, "border-right": "1px solid var(--border)" }}>
+            <div style={{ color: "var(--fg-muted)", "font-weight": 700, "margin-bottom": "0.25rem" }}>BASE</div>
             {sideText(sides().base)}
           </div>
-          <div style={{ ...pane, background: OURS_BG, "border-right": "1px solid #eee" }}>
+          <div style={{ ...pane, background: OURS_BG, "border-right": "1px solid var(--border)" }}>
             <div style={{ color: "#1a7f37", "font-weight": 700, "margin-bottom": "0.25rem" }}>OURS</div>
             {sideText(sides().ours)}
           </div>
@@ -312,7 +312,7 @@ const ConflictResolver: Component<{
             strip on the right marks each conflict region. */}
         <div style={{ flex: "1", display: "flex", "min-height": "0" }}>
           <div style={{ flex: "1", overflow: "auto", padding: "0.5rem 0.6rem" }}>
-            <div style={{ color: "#666", "font-size": "0.75rem", "margin-bottom": "0.4rem" }}>
+            <div style={{ color: "var(--fg-muted)", "font-size": "0.75rem", "margin-bottom": "0.4rem" }}>
               RESULT — choose a side per conflict, then edit if needed
             </div>
             <For each={conflictSegments()}>
@@ -325,7 +325,7 @@ const ConflictResolver: Component<{
                         margin: 0,
                         "font-family": "monospace",
                         "font-size": "0.78rem",
-                        color: "#444",
+                        color: "var(--fg)",
                         "white-space": "pre-wrap",
                       }}
                     >
@@ -340,12 +340,12 @@ const ConflictResolver: Component<{
                       <button
                         onClick={() => choose(ri, c, region)}
                         style={{
-                          border: "1px solid #ccc",
+                          border: "1px solid var(--border)",
                           "border-radius": "3px",
                           "font-size": "0.7rem",
                           cursor: "pointer",
                           padding: "0.1rem 0.4rem",
-                          background: regions()[ri]?.choice === c ? bg : "#fff",
+                          background: regions()[ri]?.choice === c ? bg : "var(--surface)",
                           "font-weight": regions()[ri]?.choice === c ? 700 : 400,
                         }}
                       >
@@ -358,16 +358,16 @@ const ConflictResolver: Component<{
                           border: "1px solid #f0c36d",
                           "border-radius": "4px",
                           margin: "0.3rem 0",
-                          background: "#fffdf7",
+                          background: "var(--surface-2)",
                         }}
                       >
                         <div style={{ display: "flex", gap: "0.3rem", padding: "0.25rem 0.4rem" }}>
-                          <span style={{ "font-size": "0.7rem", color: "#999", flex: "1" }}>
+                          <span style={{ "font-size": "0.7rem", color: "var(--fg-muted)", flex: "1" }}>
                             conflict #{ri + 1}
                           </span>
                           {choiceBtn("ours", "Ours", OURS_BG)}
                           {choiceBtn("theirs", "Theirs", THEIRS_BG)}
-                          {choiceBtn("both", "Both", "#f0f3f6")}
+                          {choiceBtn("both", "Both", "var(--surface-2)")}
                         </div>
                         <textarea
                           value={regions()[ri]?.text ?? ""}
@@ -399,8 +399,8 @@ const ConflictResolver: Component<{
             style={{
               width: "10px",
               "flex-shrink": 0,
-              background: "#f6f8fa",
-              "border-left": "1px solid #eee",
+              background: "var(--surface-2)",
+              "border-left": "1px solid var(--border)",
               position: "relative",
             }}
             title="conflict markers"
@@ -431,12 +431,12 @@ const ConflictResolver: Component<{
             display: "flex",
             gap: "0.5rem",
             padding: "0.4rem 0.6rem",
-            "border-top": "1px solid #ddd",
+            "border-top": "1px solid var(--border)",
             "flex-shrink": 0,
             "align-items": "center",
           }}
         >
-          <span style={{ "font-size": "0.78rem", color: "#666" }}>
+          <span style={{ "font-size": "0.78rem", color: "var(--fg-muted)" }}>
             In {props.conflictState.toLowerCase()}
           </span>
           <span style={{ flex: "1" }} />

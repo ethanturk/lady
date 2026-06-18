@@ -120,7 +120,7 @@ const SettingsView: Component<{ repoId: RepoId }> = (props) => {
   return (
     <div style={{ height: "100%", "overflow-y": "auto", padding: "0.9rem 1rem", "max-width": "40rem" }}>
       <h3 style={{ margin: "0 0 0.4rem", "font-size": "0.95rem" }}>License</h3>
-      <p style={{ "font-size": "0.85rem", color: "#444", margin: "0 0 0.4rem" }}>{describeLicense(license())}</p>
+      <p style={{ "font-size": "0.85rem", color: "var(--fg)", margin: "0 0 0.4rem" }}>{describeLicense(license())}</p>
       <div style={{ display: "flex", gap: "0.4rem", "align-items": "center" }}>
         <input
           style={{ flex: "1", padding: "0.3rem 0.5rem", "font-family": "monospace", "font-size": "0.8rem" }}
@@ -134,24 +134,24 @@ const SettingsView: Component<{ repoId: RepoId }> = (props) => {
         </button>
       </div>
       <Show when={licenseErr()}>
-        <p style={{ color: "crimson", "font-size": "0.82rem" }}>{licenseErr()}</p>
+        <p style={{ color: "var(--error)", "font-size": "0.82rem" }}>{licenseErr()}</p>
       </Show>
 
       <h3 style={{ margin: "1.2rem 0 0.6rem", "font-size": "0.95rem" }}>Hosting — {forgeName()}</h3>
 
       <Show when={err()}>
-        <p style={{ color: "crimson", "font-size": "0.85rem" }}>{err()}</p>
+        <p style={{ color: "var(--error)", "font-size": "0.85rem" }}>{err()}</p>
       </Show>
 
       <Show
         when={status().kind}
-        fallback={<p style={{ color: "#888", "font-size": "0.82rem" }}>No supported forge remote detected.</p>}
+        fallback={<p style={{ color: "var(--fg-muted)", "font-size": "0.82rem" }}>No supported forge remote detected.</p>}
       >
         <Show
           when={status().connected}
           fallback={
             <div>
-              <p style={{ "font-size": "0.85rem", color: "#444" }}>
+              <p style={{ "font-size": "0.85rem", color: "var(--fg)" }}>
                 Connect to {forgeName()} with a personal access token (stored in your OS keychain —
                 never on disk or in logs).
               </p>
@@ -184,7 +184,7 @@ const SettingsView: Component<{ repoId: RepoId }> = (props) => {
         <h4 style={{ margin: "1rem 0 0.3rem", "font-size": "0.85rem" }}>Detected repository</h4>
         <Show
           when={status().slug}
-          fallback={<p style={{ color: "#888", "font-size": "0.82rem" }}>Could not parse a repo from the remote.</p>}
+          fallback={<p style={{ color: "var(--fg-muted)", "font-size": "0.82rem" }}>Could not parse a repo from the remote.</p>}
         >
           <p style={{ "font-family": "monospace", "font-size": "0.85rem" }}>
             {status().slug!.project
@@ -197,7 +197,7 @@ const SettingsView: Component<{ repoId: RepoId }> = (props) => {
       {/* Create remote repository (PH4-005) */}
       <h3 style={{ margin: "1.2rem 0 0.6rem", "font-size": "0.95rem" }}>Create remote repository</h3>
       <Show when={crErr()}>
-        <p style={{ color: "crimson", "font-size": "0.82rem" }}>{crErr()}</p>
+        <p style={{ color: "var(--error)", "font-size": "0.82rem" }}>{crErr()}</p>
       </Show>
       <Show
         when={crResult()}

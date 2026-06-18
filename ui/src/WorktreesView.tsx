@@ -72,8 +72,8 @@ const WorktreesView: Component<{
 
   const inputStyle = { padding: "0.3rem 0.5rem", "font-size": "0.85rem" };
   const smallBtn = {
-    border: "1px solid #ccc",
-    background: "#fff",
+    border: "1px solid var(--border)",
+    background: "var(--surface)",
     "border-radius": "3px",
     "font-size": "0.72rem",
     padding: "0 0.45rem",
@@ -110,7 +110,7 @@ const WorktreesView: Component<{
       </div>
 
       <Show when={err()}>
-        <p style={{ color: "crimson", "font-size": "0.85rem" }}>{err()}</p>
+        <p style={{ color: "var(--error)", "font-size": "0.85rem" }}>{err()}</p>
       </Show>
 
       <ul style={{ margin: 0, padding: 0, "list-style": "none" }}>
@@ -122,7 +122,7 @@ const WorktreesView: Component<{
                 "align-items": "center",
                 gap: "0.5rem",
                 padding: "0.3rem 0",
-                "border-bottom": "1px solid #f0f0f0",
+                "border-bottom": "1px solid var(--border)",
                 "font-size": "0.85rem",
               }}
             >
@@ -132,7 +132,7 @@ const WorktreesView: Component<{
               <span style={{ color: "#0969da", "min-width": "8ch" }}>
                 {wt.branch ?? "(detached)"}
               </span>
-              <span style={{ "font-family": "monospace", color: "#888" }}>
+              <span style={{ "font-family": "monospace", color: "var(--fg-muted)" }}>
                 {wt.head ? wt.head.slice(0, 8) : "—"}
               </span>
               <Show when={wt.locked}>

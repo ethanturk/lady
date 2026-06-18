@@ -100,8 +100,8 @@ const CustomCommandsView: Component<{
   const branches = () => props.refs.filter((r) => r.kind === "Branch" || r.kind === "Remote").map((r) => r.name);
 
   const smallBtn = {
-    border: "1px solid #ccc",
-    background: "#fff",
+    border: "1px solid var(--border)",
+    background: "var(--surface)",
     "border-radius": "3px",
     "font-size": "0.72rem",
     padding: "0 0.45rem",
@@ -114,7 +114,7 @@ const CustomCommandsView: Component<{
       <h3 style={{ margin: "0 0 0.5rem", "font-size": "0.95rem" }}>Custom commands</h3>
 
       <Show when={err()}>
-        <p style={{ color: "crimson", "font-size": "0.85rem" }}>{err()}</p>
+        <p style={{ color: "var(--error)", "font-size": "0.85rem" }}>{err()}</p>
       </Show>
 
       {/* Builder */}
@@ -130,7 +130,7 @@ const CustomCommandsView: Component<{
           {editing() == null ? "Add" : "Save"}
         </button>
       </div>
-      <p style={{ color: "#888", "font-size": "0.72rem", "margin-top": 0 }}>
+      <p style={{ color: "var(--fg-muted)", "font-size": "0.72rem", "margin-top": 0 }}>
         Placeholders: <code>{"{name:text}"}</code>, <code>{"{name:branch}"}</code>, <code>{"{name:file}"}</code>. Values are
         passed as separate arguments (never a shell string).
       </p>
@@ -139,9 +139,9 @@ const CustomCommandsView: Component<{
       <ul style={{ margin: "0.4rem 0", padding: 0, "list-style": "none" }}>
         <For each={commands()}>
           {(c, i) => (
-            <li style={{ display: "flex", "align-items": "center", gap: "0.5rem", padding: "0.3rem 0", "border-bottom": "1px solid #f0f0f0" }}>
+            <li style={{ display: "flex", "align-items": "center", gap: "0.5rem", padding: "0.3rem 0", "border-bottom": "1px solid var(--border)" }}>
               <span style={{ "font-weight": 600, "min-width": "8rem", "font-size": "0.85rem" }}>{c.name}</span>
-              <span style={{ flex: "1", "font-family": "monospace", "font-size": "0.78rem", color: "#555", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }} title={c.template}>
+              <span style={{ flex: "1", "font-family": "monospace", "font-size": "0.78rem", color: "var(--fg-muted)", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }} title={c.template}>
                 {c.template}
               </span>
               <button style={smallBtn} onClick={() => openRunner(c)}>Run</button>
@@ -154,7 +154,7 @@ const CustomCommandsView: Component<{
 
       {/* Runner */}
       <Show when={running()}>
-        <div style={{ border: "1px solid #ddd", "border-radius": "4px", padding: "0.6rem", "margin-top": "0.6rem" }}>
+        <div style={{ border: "1px solid var(--border)", "border-radius": "4px", padding: "0.6rem", "margin-top": "0.6rem" }}>
           <div style={{ display: "flex", "align-items": "center", gap: "0.5rem", "margin-bottom": "0.4rem" }}>
             <strong style={{ "font-size": "0.88rem" }}>Run: {running()!.name}</strong>
             <span style={{ flex: "1" }} />
@@ -165,7 +165,7 @@ const CustomCommandsView: Component<{
             {(ph) => (
               <div style={{ display: "flex", "align-items": "center", gap: "0.5rem", "margin-bottom": "0.3rem" }}>
                 <label style={{ "min-width": "8rem", "font-size": "0.82rem" }}>
-                  {ph.name} <span style={{ color: "#888" }}>({ph.kind.toLowerCase()})</span>
+                  {ph.name} <span style={{ color: "var(--fg-muted)" }}>({ph.kind.toLowerCase()})</span>
                 </label>
                 <Show when={ph.kind === "Branch"} fallback={
                   <Show when={ph.kind === "File"} fallback={
@@ -196,7 +196,7 @@ const CustomCommandsView: Component<{
                 exit code: {output()!.exit_code}
               </div>
               <Show when={output()!.stdout}>
-                <pre style={{ background: "#f6f8fa", padding: "0.5rem", "font-size": "0.76rem", "max-height": "16rem", overflow: "auto", "white-space": "pre-wrap" }}>
+                <pre style={{ background: "var(--surface-2)", padding: "0.5rem", "font-size": "0.76rem", "max-height": "16rem", overflow: "auto", "white-space": "pre-wrap" }}>
                   {output()!.stdout}
                 </pre>
               </Show>

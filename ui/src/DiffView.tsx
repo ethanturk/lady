@@ -120,7 +120,7 @@ const HunkSplit: Component<{ hunk: DiffHunk; lang: string | undefined }> = (prop
       return (
         <div style={{ display: "flex" }}>
           <span
-            style={{ ...monoCell, flex: "1", background: lbg, "border-right": "1px solid #eee" }}
+            style={{ ...monoCell, flex: "1", background: lbg, "border-right": "1px solid var(--border)" }}
             innerHTML={row.left ? highlight(row.left.content, props.lang) : "&nbsp;"}
           />
           <span
@@ -134,8 +134,8 @@ const HunkSplit: Component<{ hunk: DiffHunk; lang: string | undefined }> = (prop
 );
 
 const actionBtn = {
-  border: "1px solid #ccc",
-  background: "#fff",
+  border: "1px solid var(--border)",
+  background: "var(--surface)",
   "border-radius": "3px",
   "font-size": "0.7rem",
   cursor: "pointer",
@@ -166,14 +166,14 @@ const HunkBlock: Component<{
   const clear = () => setSel([]);
 
   return (
-    <div style={{ "border-top": "1px solid #eee" }}>
+    <div style={{ "border-top": "1px solid var(--border)" }}>
       <div
         style={{
           display: "flex",
           "align-items": "center",
           gap: "0.4rem",
-          background: "#f0f3f6",
-          color: "#666",
+          background: "var(--surface-2)",
+          color: "var(--fg-muted)",
           "font-family": "monospace",
           "font-size": "0.75rem",
           padding: "0.15rem 0.5rem",
@@ -239,7 +239,7 @@ const HunkBlock: Component<{
                 <Show
                   when={canSelect()}
                   fallback={
-                    <span style={{ ...monoCell, color: "#999", "min-width": "1.8ch", padding: "0 0.25rem" }}>
+                    <span style={{ ...monoCell, color: "var(--fg-muted)", "min-width": "1.8ch", padding: "0 0.25rem" }}>
                       {sign}
                     </span>
                   }
@@ -274,12 +274,24 @@ const FileBlock: Component<{
 }> = (props) => {
   const lang = () => langFromPath(props.file.path);
   return (
-    <div style={{ "margin-bottom": "1rem", border: "1px solid #ddd", "border-radius": "4px" }}>
+    <div
+      style={{
+        "margin-bottom": "1rem",
+        border: "1px solid var(--border)",
+        "border-radius": "4px",
+        overflow: "hidden",
+        background: "var(--code-bg)",
+        color: "var(--code-fg)",
+      }}
+    >
       <div
         style={{
           padding: "0.4rem 0.6rem",
-          background: "#f6f8fa",
-          "border-bottom": "1px solid #ddd",
+          background: "var(--surface-2)",
+          // Header is chrome, not code — themed text (the block forces dark
+          // code-fg for the light code area below).
+          color: "var(--fg)",
+          "border-bottom": "1px solid var(--border)",
           "font-family": "monospace",
           "font-size": "0.8rem",
           "font-weight": 600,
@@ -288,7 +300,7 @@ const FileBlock: Component<{
         }}
       >
         {props.file.path}
-        <span style={{ color: "#888", "font-weight": 400, "margin-left": "0.5rem" }}>
+        <span style={{ color: "var(--fg-muted)", "font-weight": 400, "margin-left": "0.5rem" }}>
           {props.file.kind}
         </span>
         <span style={{ flex: "1" }} />
@@ -302,7 +314,7 @@ const FileBlock: Component<{
         <div style={{ display: "flex", gap: "1rem", padding: "0.6rem", "flex-wrap": "wrap" }}>
           <Show when={props.file.old_image_b64}>
             <figure style={{ margin: 0 }}>
-              <figcaption style={{ "font-size": "0.75rem", color: "#888" }}>old</figcaption>
+              <figcaption style={{ "font-size": "0.75rem", color: "var(--fg-muted)" }}>old</figcaption>
               <img
                 src={`data:${imageMime(props.file.path)};base64,${props.file.old_image_b64}`}
                 style={{ "max-width": "300px", "max-height": "300px" }}
@@ -311,7 +323,7 @@ const FileBlock: Component<{
           </Show>
           <Show when={props.file.new_image_b64}>
             <figure style={{ margin: 0 }}>
-              <figcaption style={{ "font-size": "0.75rem", color: "#888" }}>new</figcaption>
+              <figcaption style={{ "font-size": "0.75rem", color: "var(--fg-muted)" }}>new</figcaption>
               <img
                 src={`data:${imageMime(props.file.path)};base64,${props.file.new_image_b64}`}
                 style={{ "max-width": "300px", "max-height": "300px" }}
@@ -321,7 +333,7 @@ const FileBlock: Component<{
         </div>
       </Show>
       <Show when={props.file.kind === "Binary"}>
-        <div style={{ padding: "0.6rem", color: "#888", "font-size": "0.8rem" }}>
+        <div style={{ padding: "0.6rem", color: "var(--fg-muted)", "font-size": "0.8rem" }}>
           Binary file — no text diff.
         </div>
       </Show>
@@ -407,7 +419,7 @@ const DiffView: Component<{
         style={{
           padding: "0.4rem 0.6rem",
           "flex-shrink": 0,
-          "border-bottom": "1px solid #ddd",
+          "border-bottom": "1px solid var(--border)",
           display: "flex",
           "align-items": "center",
           gap: "0.5rem",
@@ -432,13 +444,13 @@ const DiffView: Component<{
       </div>
       <div style={{ flex: "1", "overflow-y": "auto", padding: "0.6rem" }}>
         <Show when={err()}>
-          <p style={{ color: "crimson", "font-size": "0.85rem" }}>{err()}</p>
+          <p style={{ color: "var(--error)", "font-size": "0.85rem" }}>{err()}</p>
         </Show>
         <Show when={loading()}>
-          <p style={{ color: "#888", "font-size": "0.85rem" }}>Loading diff…</p>
+          <p style={{ color: "var(--fg-muted)", "font-size": "0.85rem" }}>Loading diff…</p>
         </Show>
         <Show when={!loading() && files().length === 0 && !err()}>
-          <p style={{ color: "#888", "font-size": "0.85rem" }}>No changes.</p>
+          <p style={{ color: "var(--fg-muted)", "font-size": "0.85rem" }}>No changes.</p>
         </Show>
         <For each={files()}>
           {(file) => (

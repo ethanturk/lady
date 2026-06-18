@@ -10,7 +10,7 @@ const KIND_BADGE: Record<ChangeKind, { label: string; color: string }> = {
   Modified: { label: "M", color: "#9a6700" },
   Deleted: { label: "D", color: "#cf222e" },
   Renamed: { label: "R", color: "#0969da" },
-  Untracked: { label: "?", color: "#6e7781" },
+  Untracked: { label: "?", color: "var(--fg-muted)" },
   Conflicted: { label: "!", color: "#cf222e" },
 };
 
@@ -35,8 +35,8 @@ const Badge: Component<{ kind: ChangeKind }> = (props) => {
 };
 
 const smallBtn = {
-  border: "1px solid #ccc",
-  background: "#fff",
+  border: "1px solid var(--border)",
+  background: "var(--surface)",
   "border-radius": "3px",
   "font-size": "0.7rem",
   padding: "0 0.4rem",
@@ -59,7 +59,7 @@ const Row: Component<{
       padding: "0.1rem 0.25rem",
       "font-family": "monospace",
       "font-size": "0.8rem",
-      background: props.selected ? "#dbeafe" : "transparent",
+      background: props.selected ? "var(--selection)" : "transparent",
       "border-radius": "3px",
     }}
   >
@@ -76,7 +76,7 @@ const Row: Component<{
       }}
     >
       <Show when={props.file.old_path}>
-        <span style={{ color: "#888" }}>{props.file.old_path} → </span>
+        <span style={{ color: "var(--fg-muted)" }}>{props.file.old_path} → </span>
       </Show>
       {props.file.path}
     </span>
@@ -266,9 +266,9 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
   const commitBox = () => (
     <div
       style={{
-        "border-top": "1px solid #ddd",
+        "border-top": "1px solid var(--border)",
         padding: "0.5rem 1rem",
-        background: "#fafbfc",
+        background: "var(--surface-2)",
         display: "flex",
         "flex-direction": "column",
         gap: "0.4rem",
@@ -286,7 +286,7 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
           "font-family": "inherit",
           "font-size": "0.85rem",
           padding: "0.35rem",
-          border: "1px solid #ccc",
+          border: "1px solid var(--border)",
           "border-radius": "4px",
         }}
       />
@@ -295,7 +295,7 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
           style={{
             border: "1px solid #1a7f37",
             background: canCommit() ? "#1a7f37" : "#9bd2a8",
-            color: "#fff",
+            color: "var(--on-accent)",
             "border-radius": "4px",
             padding: "0.25rem 0.8rem",
             "font-size": "0.8rem",
@@ -345,10 +345,10 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
       >
       <div style={{ flex: "1", "min-width": "0", "overflow-y": "auto", padding: "0.5rem 1rem" }}>
         <Show when={err()}>
-          <p style={{ color: "crimson", "font-size": "0.85rem" }}>{err()}</p>
+          <p style={{ color: "var(--error)", "font-size": "0.85rem" }}>{err()}</p>
         </Show>
         <Show when={isClean()}>
-          <p style={{ color: "#888", "font-size": "0.85rem" }}>Working tree clean.</p>
+          <p style={{ color: "var(--fg-muted)", "font-size": "0.85rem" }}>Working tree clean.</p>
         </Show>
 
         {/* Stash controls: save the working tree, manage the stack. */}
@@ -356,7 +356,7 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
           <button style={smallBtn} disabled={isClean()} onClick={stashSave}>
             Stash changes
           </button>
-          <label style={{ display: "flex", "align-items": "center", gap: "0.2rem", "font-size": "0.72rem", color: "#555" }}>
+          <label style={{ display: "flex", "align-items": "center", gap: "0.2rem", "font-size": "0.72rem", color: "var(--fg-muted)" }}>
             <input
               type="checkbox"
               checked={stashUntracked()}
@@ -473,7 +473,7 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
 
       {/* Right: the diff for the selected file. */}
       <Show when={selectedSpec()}>
-        <div style={{ flex: "1", "min-width": "0", "border-left": "1px solid #ddd", overflow: "hidden" }}>
+        <div style={{ flex: "1", "min-width": "0", "border-left": "1px solid var(--border)", overflow: "hidden" }}>
           <DiffView
             repoId={props.repoId}
             spec={selectedSpec()!}

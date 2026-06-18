@@ -23,8 +23,8 @@ interface RefsViewProps {
 }
 
 const smallBtn = {
-  border: "1px solid #ccc",
-  background: "#fff",
+  border: "1px solid var(--border)",
+  background: "var(--surface)",
   "border-radius": "3px",
   "font-size": "0.7rem",
   padding: "0 0.4rem",
@@ -255,7 +255,7 @@ const RefsView: Component<RefsViewProps> = (props) => {
   };
 
   const inputStyle = {
-    border: "1px solid #ccc",
+    border: "1px solid var(--border)",
     "border-radius": "3px",
     "font-size": "0.75rem",
     padding: "0.1rem 0.3rem",
@@ -279,7 +279,7 @@ const RefsView: Component<RefsViewProps> = (props) => {
         >
           <div
             style={{
-              background: "#fff",
+              background: "var(--surface)",
               "border-radius": "6px",
               width: "560px",
               "max-width": "92vw",
@@ -292,7 +292,7 @@ const RefsView: Component<RefsViewProps> = (props) => {
               Create {noun()} — {prBranch()}
             </div>
             <Show when={err()}>
-              <p style={{ color: "crimson", "font-size": "0.82rem", "white-space": "pre-wrap" }}>{err()}</p>
+              <p style={{ color: "var(--error)", "font-size": "0.82rem", "white-space": "pre-wrap" }}>{err()}</p>
             </Show>
             <Show
               when={prUrl()}
@@ -321,7 +321,7 @@ const RefsView: Component<RefsViewProps> = (props) => {
                     <button
                       onClick={submitPr}
                       disabled={prBusy()}
-                      style={{ background: "#1a7f37", color: "#fff", border: "none", "border-radius": "3px", padding: "0.3rem 0.9rem", cursor: "pointer" }}
+                      style={{ background: "#1a7f37", color: "var(--on-accent)", border: "none", "border-radius": "3px", padding: "0.3rem 0.9rem", cursor: "pointer" }}
                     >
                       {prBusy() ? "Creating…" : `Create ${nounTitle()}`}
                     </button>
@@ -336,7 +336,7 @@ const RefsView: Component<RefsViewProps> = (props) => {
                   <button onClick={() => setPrBranch(null)}>Close</button>
                   <button
                     onClick={() => invoke("open_url", { url: prUrl() }).catch((e) => setErr(String(e)))}
-                    style={{ background: "#0070f3", color: "#fff", border: "none", "border-radius": "3px", padding: "0.3rem 0.9rem", cursor: "pointer" }}
+                    style={{ background: "var(--accent)", color: "var(--on-accent)", border: "none", "border-radius": "3px", padding: "0.3rem 0.9rem", cursor: "pointer" }}
                   >
                     Open in browser
                   </button>
@@ -348,7 +348,7 @@ const RefsView: Component<RefsViewProps> = (props) => {
       </Show>
 
       <Show when={err()}>
-        <p style={{ color: "crimson", "font-size": "0.8rem", "white-space": "pre-wrap" }}>{err()}</p>
+        <p style={{ color: "var(--error)", "font-size": "0.8rem", "white-space": "pre-wrap" }}>{err()}</p>
       </Show>
       <Show when={notice()}>
         <p style={{ color: "#1a7f37", "font-size": "0.8rem", "white-space": "pre-wrap" }}>{notice()}</p>
@@ -414,7 +414,7 @@ const RefsView: Component<RefsViewProps> = (props) => {
               >
                 <span style={{ width: "0.8rem", color: "#1a7f37" }}>{isCurrent(r) ? "●" : ""}</span>
                 <span style={{ flex: "1", "font-weight": isCurrent(r) ? 700 : 400 }}>{r.name}</span>
-                <span style={{ color: "#888" }}>{r.target.slice(0, 8)}</span>
+                <span style={{ color: "var(--fg-muted)" }}>{r.target.slice(0, 8)}</span>
                 <button
                   style={smallBtn}
                   title={`Create a ${noun()} from this branch`}
@@ -477,7 +477,7 @@ const RefsView: Component<RefsViewProps> = (props) => {
               >
                 <span style={{ width: "0.8rem" }} />
                 <span style={{ flex: "1" }}>{r.name}</span>
-                <span style={{ color: "#888" }}>{r.target.slice(0, 8)}</span>
+                <span style={{ color: "var(--fg-muted)" }}>{r.target.slice(0, 8)}</span>
                 <button style={smallBtn} onClick={() => checkout(r.name)}>
                   Checkout
                 </button>
@@ -508,7 +508,7 @@ const RefsView: Component<RefsViewProps> = (props) => {
                 >
                   <span style={{ width: "0.8rem" }} />
                   <span style={{ flex: "1" }}>{r.name}</span>
-                  <span style={{ color: "#888" }}>{r.target.slice(0, 8)}</span>
+                  <span style={{ color: "var(--fg-muted)" }}>{r.target.slice(0, 8)}</span>
                   <button style={smallBtn} onClick={() => checkoutSafely(r.name)}>
                     Checkout
                   </button>

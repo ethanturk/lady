@@ -33,7 +33,7 @@ function fuzzyScore(query: string, text: string): number | null {
 }
 
 const KIND_COLOR: Record<PaletteEntry["kind"], string> = {
-  action: "#0070f3",
+  action: "var(--accent)",
   branch: "#0a8a0a",
   file: "#8a0a8a",
 };
@@ -121,7 +121,7 @@ const CommandPalette: Component<{
           onClick={(e) => e.stopPropagation()}
           style={{
             width: "min(640px, 90vw)",
-            background: "#fff",
+            background: "var(--surface)",
             "border-radius": "8px",
             "box-shadow": "0 12px 40px rgba(0,0,0,0.3)",
             overflow: "hidden",
@@ -143,7 +143,7 @@ const CommandPalette: Component<{
               padding: "0.7rem 0.9rem",
               "font-size": "1rem",
               border: "none",
-              "border-bottom": "1px solid #eee",
+              "border-bottom": "1px solid var(--border)",
               outline: "none",
             }}
           />
@@ -151,7 +151,7 @@ const CommandPalette: Component<{
             <Show
               when={results().length > 0}
               fallback={
-                <div style={{ padding: "0.8rem", color: "#888", "font-size": "0.85rem" }}>
+                <div style={{ padding: "0.8rem", color: "var(--fg-muted)", "font-size": "0.85rem" }}>
                   No matches.
                 </div>
               }
@@ -167,7 +167,7 @@ const CommandPalette: Component<{
                       gap: "0.6rem",
                       padding: "0.45rem 0.9rem",
                       cursor: "pointer",
-                      background: cursor() === i() ? "#eef4ff" : "transparent",
+                      background: cursor() === i() ? "var(--selection)" : "transparent",
                       "font-size": "0.88rem",
                     }}
                   >

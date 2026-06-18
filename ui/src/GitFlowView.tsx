@@ -80,7 +80,7 @@ const GitFlowView: Component<{
       <h3 style={{ margin: "0 0 0.5rem", "font-size": "0.95rem" }}>git-flow</h3>
 
       <Show when={err()}>
-        <p style={{ color: "crimson", "font-size": "0.85rem", "white-space": "pre-wrap" }}>{err()}</p>
+        <p style={{ color: "var(--error)", "font-size": "0.85rem", "white-space": "pre-wrap" }}>{err()}</p>
       </Show>
       <Show when={notice()}>
         <p style={{ color: "#1a7f37", "font-size": "0.85rem" }}>{notice()}</p>
@@ -100,7 +100,7 @@ const GitFlowView: Component<{
           </div>
         }
       >
-        <p style={{ "font-size": "0.82rem", color: "#666" }}>
+        <p style={{ "font-size": "0.82rem", color: "var(--fg-muted)" }}>
           master <b>{config()!.master}</b> · develop <b>{config()!.develop}</b> · prefixes{" "}
           <span style={{ "font-family": "monospace" }}>
             {config()!.feature_prefix} {config()!.release_prefix} {config()!.hotfix_prefix}
@@ -120,7 +120,7 @@ const GitFlowView: Component<{
           <button onClick={start} style={{ padding: "0.3rem 0.8rem" }}>Start</button>
           <button onClick={finish} style={{ padding: "0.3rem 0.8rem" }}>Finish</button>
         </div>
-        <p style={{ color: "#888", "font-size": "0.72rem" }}>
+        <p style={{ color: "var(--fg-muted)", "font-size": "0.72rem" }}>
           Finish merges Feature → develop; Release/Hotfix → master (tagged) + develop. A merge
           conflict pauses for resolution in the Conflicts tab.
         </p>

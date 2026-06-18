@@ -67,8 +67,8 @@ const SubmodulesView: Component<{
   };
 
   const smallBtn = {
-    border: "1px solid #ccc",
-    background: "#fff",
+    border: "1px solid var(--border)",
+    background: "var(--surface)",
     "border-radius": "3px",
     "font-size": "0.72rem",
     padding: "0 0.45rem",
@@ -85,7 +85,7 @@ const SubmodulesView: Component<{
       </div>
 
       <Show when={err()}>
-        <p style={{ color: "crimson", "font-size": "0.85rem", "white-space": "pre-wrap" }}>{err()}</p>
+        <p style={{ color: "var(--error)", "font-size": "0.85rem", "white-space": "pre-wrap" }}>{err()}</p>
       </Show>
 
       <div style={{ display: "flex", gap: "0.4rem", "flex-wrap": "wrap", "align-items": "center", "margin-bottom": "0.6rem" }}>
@@ -97,17 +97,17 @@ const SubmodulesView: Component<{
       <ul style={{ margin: 0, padding: 0, "list-style": "none" }}>
         <For each={subs()}>
           {(s) => (
-            <li style={{ display: "flex", "align-items": "center", gap: "0.5rem", padding: "0.3rem 0", "border-bottom": "1px solid #f0f0f0", "font-size": "0.83rem" }}>
+            <li style={{ display: "flex", "align-items": "center", gap: "0.5rem", padding: "0.3rem 0", "border-bottom": "1px solid var(--border)", "font-size": "0.83rem" }}>
               <span
                 title={!s.initialized ? "not initialized" : s.dirty ? "out of date / modified" : "up to date"}
-                style={{ color: !s.initialized ? "#999" : s.dirty ? "#bc4c00" : "#1a7f37" }}
+                style={{ color: !s.initialized ? "var(--fg-muted)" : s.dirty ? "#bc4c00" : "#1a7f37" }}
               >
                 {!s.initialized ? "○" : s.dirty ? "◑" : "●"}
               </span>
               <span style={{ flex: "1", "font-family": "monospace", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }} title={s.url}>
                 {s.path}
               </span>
-              <span style={{ color: "#888", "font-family": "monospace", "font-size": "0.72rem" }}>{s.sha.slice(0, 8)}</span>
+              <span style={{ color: "var(--fg-muted)", "font-family": "monospace", "font-size": "0.72rem" }}>{s.sha.slice(0, 8)}</span>
               <Show when={s.initialized}>
                 <button style={smallBtn} onClick={() => props.onOpen(joinPath(props.repoPath, s.path))}>Open</button>
               </Show>
@@ -117,7 +117,7 @@ const SubmodulesView: Component<{
         </For>
       </ul>
       <Show when={subs().length === 0 && !err()}>
-        <p style={{ color: "#888", "font-size": "0.85rem" }}>No submodules.</p>
+        <p style={{ color: "var(--fg-muted)", "font-size": "0.85rem" }}>No submodules.</p>
       </Show>
     </div>
   );

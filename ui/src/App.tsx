@@ -22,6 +22,7 @@ import LfsView from "./LfsView";
 import GitFlowView from "./GitFlowView";
 import SubmodulesView from "./SubmodulesView";
 import LicenseGate from "./LicenseGate";
+import ThemeToggle from "./ThemeToggle";
 import SignatureBadge from "./SignatureBadge";
 import type { LicenseStatus, SignatureStatus } from "./commands";
 import CommandPalette from "./CommandPalette";
@@ -219,8 +220,8 @@ const App: Component = () => {
     padding: "0.3rem 0.9rem",
     cursor: "pointer",
     border: "none",
-    background: tab() === t ? "#0070f3" : "#eee",
-    color: tab() === t ? "#fff" : "#333",
+    background: tab() === t ? "var(--accent)" : "var(--border)",
+    color: tab() === t ? "var(--on-accent)" : "var(--fg)",
     "border-radius": "4px 4px 0 0",
     "font-size": "0.875rem",
   });
@@ -251,6 +252,8 @@ const App: Component = () => {
         <Show when={license()?.kind === "Licensed"}>
           <span style={{ color: "#1a7f37", "font-size": "0.72rem" }}>● Licensed</span>
         </Show>
+        <span style={{ flex: "1" }} />
+        <ThemeToggle />
       </div>
 
       {/* Licensing gate: blocks the UI when the trial has expired (ADR-0007). */}
@@ -262,7 +265,7 @@ const App: Component = () => {
       <RepoBar active={repoId()} onActiveChange={setActive} apiRef={(open) => (openRepoPath = open)} />
 
       <Show when={err()}>
-        <p style={{ color: "crimson", margin: "0.25rem 1rem", "font-size": "0.85rem" }}>{err()}</p>
+        <p style={{ color: "var(--error)", margin: "0.25rem 1rem", "font-size": "0.85rem" }}>{err()}</p>
       </Show>
       <Show when={opNotice()}>
         <p style={{ color: "#1a7f37", margin: "0.25rem 1rem", "font-size": "0.85rem" }}>{opNotice()}</p>
@@ -325,14 +328,14 @@ const App: Component = () => {
           <button style={tabStyle("notifications")} onClick={() => setTab("notifications")}>
             Notifications
             <Show when={unread() > 0}>
-              <span style={{ "margin-left": "0.3rem", background: "#cf222e", color: "#fff", "border-radius": "8px", padding: "0 0.35rem", "font-size": "0.7rem" }}>
+              <span style={{ "margin-left": "0.3rem", background: "#cf222e", color: "var(--on-accent)", "border-radius": "8px", padding: "0 0.35rem", "font-size": "0.7rem" }}>
                 {unread()}
               </span>
             </Show>
           </button>
           <Show when={conflictState() !== "None"}>
             <button
-              style={{ ...tabStyle("conflicts"), background: tab() === "conflicts" ? "#d1242f" : "#ffe0e0", color: tab() === "conflicts" ? "#fff" : "#d1242f" }}
+              style={{ ...tabStyle("conflicts"), background: tab() === "conflicts" ? "#d1242f" : "#ffe0e0", color: tab() === "conflicts" ? "var(--on-accent)" : "#d1242f" }}
               onClick={() => setTab("conflicts")}
             >
               Conflicts ⚠
@@ -370,13 +373,13 @@ const App: Component = () => {
                   style={{
                     flex: "1",
                     "min-width": "0",
-                    "border-left": "1px solid #ddd",
+                    "border-left": "1px solid var(--border)",
                     overflow: "hidden",
                     display: "flex",
                     "flex-direction": "column",
                   }}
                 >
-                  <div style={{ display: "flex", gap: "0.4rem", padding: "0.35rem", "border-bottom": "1px solid #eee", "font-size": "0.8rem" }}>
+                  <div style={{ display: "flex", gap: "0.4rem", padding: "0.35rem", "border-bottom": "1px solid var(--border)", "font-size": "0.8rem" }}>
                     <button onClick={() => runCommitAction("cherry_pick", "Cherry-pick")}>
                       Cherry-pick
                     </button>

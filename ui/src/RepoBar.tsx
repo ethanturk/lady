@@ -112,16 +112,16 @@ const RepoBar: Component<{
   const tabStyle = (repo: OpenRepo) => ({
     padding: "0.25rem 0.6rem",
     cursor: "pointer",
-    border: "1px solid #ccc",
+    border: "1px solid var(--border)",
     "border-radius": "4px",
     "font-size": "0.8rem",
-    background: props.active === repo.id ? "#0070f3" : "#f3f3f3",
-    color: props.active === repo.id ? "#fff" : "#333",
+    background: props.active === repo.id ? "var(--accent)" : "var(--surface-2)",
+    color: props.active === repo.id ? "var(--on-accent)" : "var(--fg)",
     "white-space": "nowrap",
   });
 
   return (
-    <div style={{ "flex-shrink": 0, "border-bottom": "1px solid #ddd", padding: "0.5rem 1rem" }}>
+    <div style={{ "flex-shrink": 0, "border-bottom": "1px solid var(--border)", padding: "0.5rem 1rem" }}>
       <div style={{ display: "flex", gap: "0.5rem", "flex-wrap": "wrap" }}>
         <input
           type="text"
@@ -168,7 +168,7 @@ const RepoBar: Component<{
             Clone
           </button>
           <Show when={progress()}>
-            <span style={{ color: "#888", "font-size": "0.8rem", "align-self": "center" }}>
+            <span style={{ color: "var(--fg-muted)", "font-size": "0.8rem", "align-self": "center" }}>
               {progress()}
             </span>
           </Show>
@@ -176,7 +176,7 @@ const RepoBar: Component<{
       </Show>
 
       <Show when={err()}>
-        <p style={{ color: "crimson", margin: "0.3rem 0 0", "font-size": "0.8rem" }}>{err()}</p>
+        <p style={{ color: "var(--error)", margin: "0.3rem 0 0", "font-size": "0.8rem" }}>{err()}</p>
       </Show>
 
       {/* Opened-repo tabs, grouped */}
@@ -185,7 +185,7 @@ const RepoBar: Component<{
           <For each={groups()}>
             {(g) => (
               <div style={{ display: "flex", "align-items": "center", gap: "0.4rem", "flex-wrap": "wrap" }}>
-                <span style={{ color: "#888", "font-size": "0.72rem", "min-width": "5rem" }}>
+                <span style={{ color: "var(--fg-muted)", "font-size": "0.72rem", "min-width": "5rem" }}>
                   {g ?? "Ungrouped"}
                 </span>
                 <For each={opened().filter((r) => (r.group ?? null) === g)}>
@@ -207,7 +207,7 @@ const RepoBar: Component<{
       {/* Recent repositories */}
       <Show when={recent().length > 0}>
         <div style={{ "margin-top": "0.4rem", display: "flex", gap: "0.4rem", "align-items": "center", "flex-wrap": "wrap" }}>
-          <span style={{ color: "#888", "font-size": "0.72rem" }}>Recent:</span>
+          <span style={{ color: "var(--fg-muted)", "font-size": "0.72rem" }}>Recent:</span>
           <For each={recent()}>
             {(r) => (
               <button
@@ -216,9 +216,9 @@ const RepoBar: Component<{
                 style={{
                   padding: "0.15rem 0.5rem",
                   "font-size": "0.78rem",
-                  border: "1px solid #ddd",
+                  border: "1px solid var(--border)",
                   "border-radius": "4px",
-                  background: "#fafafa",
+                  background: "var(--surface-2)",
                   cursor: "pointer",
                 }}
               >

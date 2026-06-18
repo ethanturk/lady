@@ -9,10 +9,62 @@ body,
 body {
   overflow: hidden;
   font-family: sans-serif;
+  background: var(--bg);
+  color: var(--fg);
 }
 
 *,
 *::before,
 *::after {
   box-sizing: border-box;
+}
+
+/* ── Theme tokens ──────────────────────────────────────────────────────────── */
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f6f8fa;
+  --border: #dddddd;
+  --fg: #2d2d2d;
+  --fg-muted: #6e7781;
+  --accent: #0070f3;
+  --on-accent: #ffffff;
+  --selection: #e6f0ff;
+  --error: #cf222e;
+  /* Code/diff panes keep a light surface so syntax highlighting stays
+     readable regardless of theme. */
+  --code-bg: #ffffff;
+  --code-fg: #24292e;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #1e1e1e;
+  --surface: #252526;
+  --surface-2: #2d2d30;
+  --border: #3a3a3d;
+  --fg: #e6e6e6;
+  --fg-muted: #9aa0a6;
+  --accent: #3b82f6;
+  --on-accent: #ffffff;
+  --selection: #0b3a66;
+  --error: #f85149;
+  --code-bg: #ffffff;
+  --code-fg: #24292e;
+}
+
+/* Inputs/buttons/selects inherit the theme rather than the UA's white. */
+input,
+textarea,
+select,
+button {
+  color: var(--fg);
+  background: var(--surface);
+  border-color: var(--border);
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--fg-muted);
 }

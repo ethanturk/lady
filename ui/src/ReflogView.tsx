@@ -66,8 +66,8 @@ const ReflogView: Component<{
   };
 
   const smallBtn = {
-    border: "1px solid #ccc",
-    background: "#fff",
+    border: "1px solid var(--border)",
+    background: "var(--surface)",
     "border-radius": "3px",
     "font-size": "0.72rem",
     padding: "0 0.45rem",
@@ -88,7 +88,7 @@ const ReflogView: Component<{
       </div>
 
       <Show when={err()}>
-        <p style={{ color: "crimson", "font-size": "0.85rem" }}>{err()}</p>
+        <p style={{ color: "var(--error)", "font-size": "0.85rem" }}>{err()}</p>
       </Show>
       <Show when={notice()}>
         <p style={{ color: "#1a7f37", "font-size": "0.85rem" }}>{notice()}</p>
@@ -103,19 +103,19 @@ const ReflogView: Component<{
                 "align-items": "center",
                 gap: "0.5rem",
                 padding: "0.3rem 0",
-                "border-bottom": "1px solid #f0f0f0",
+                "border-bottom": "1px solid var(--border)",
                 "font-size": "0.83rem",
               }}
             >
-              <span style={{ "font-family": "monospace", color: "#888", "min-width": "9ch" }}>
+              <span style={{ "font-family": "monospace", color: "var(--fg-muted)", "min-width": "9ch" }}>
                 {`${refname()}@{${i()}}`}
               </span>
-              <span style={{ "font-family": "monospace", color: "#666", "min-width": "8ch" }}>
+              <span style={{ "font-family": "monospace", color: "var(--fg-muted)", "min-width": "8ch" }}>
                 {e.oid.slice(0, 8)}
               </span>
               <span
                 style={{
-                  color: ACTION_COLOR[e.action] ?? "#444",
+                  color: ACTION_COLOR[e.action] ?? "var(--fg)",
                   "font-weight": 600,
                   "min-width": "6ch",
                 }}
@@ -125,7 +125,7 @@ const ReflogView: Component<{
               <span style={{ flex: "1", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }} title={e.message}>
                 {e.message}
               </span>
-              <span style={{ color: "#888", "white-space": "nowrap" }}>{relTime(e.time)}</span>
+              <span style={{ color: "var(--fg-muted)", "white-space": "nowrap" }}>{relTime(e.time)}</span>
               <button style={smallBtn} onClick={() => branchAt(e.oid)}>
                 Branch
               </button>

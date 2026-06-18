@@ -90,7 +90,7 @@ const CommitList: Component<{ repoId: RepoId }> = (props) => {
                     "align-items": "center",
                     gap: "0.75rem",
                     padding: "0 0.75rem",
-                    "border-bottom": "1px solid #eee",
+                    "border-bottom": "1px solid var(--border)",
                     "box-sizing": "border-box",
                     "font-size": "0.875rem",
                   }}
@@ -98,7 +98,7 @@ const CommitList: Component<{ repoId: RepoId }> = (props) => {
                   <span
                     style={{
                       "font-family": "monospace",
-                      color: "#888",
+                      color: "var(--fg-muted)",
                       "min-width": "6.5ch",
                     }}
                   >
@@ -116,7 +116,7 @@ const CommitList: Component<{ repoId: RepoId }> = (props) => {
                   </span>
                   <span
                     style={{
-                      color: "#555",
+                      color: "var(--fg-muted)",
                       "white-space": "nowrap",
                       "max-width": "14ch",
                       overflow: "hidden",
@@ -127,7 +127,7 @@ const CommitList: Component<{ repoId: RepoId }> = (props) => {
                   </span>
                   <span
                     style={{
-                      color: "#888",
+                      color: "var(--fg-muted)",
                       "white-space": "nowrap",
                       "min-width": "7ch",
                       "text-align": "right",
@@ -146,7 +146,7 @@ const CommitList: Component<{ repoId: RepoId }> = (props) => {
           style={{
             padding: "0.4rem",
             "text-align": "center",
-            color: "#888",
+            color: "var(--fg-muted)",
             "font-size": "0.8rem",
             "flex-shrink": 0,
           }}

@@ -99,7 +99,7 @@ const InteractiveRebase: Component<{
     "z-index": "50",
   };
   const card = {
-    background: "#fff",
+    background: "var(--surface)",
     "border-radius": "6px",
     width: "640px",
     "max-width": "92vw",
@@ -112,17 +112,17 @@ const InteractiveRebase: Component<{
   return (
     <div style={overlay} onClick={props.onClose}>
       <div style={card} onClick={(e) => e.stopPropagation()}>
-        <div style={{ padding: "0.6rem 0.8rem", "border-bottom": "1px solid #eee", "font-weight": 600 }}>
+        <div style={{ padding: "0.6rem 0.8rem", "border-bottom": "1px solid var(--border)", "font-weight": 600 }}>
           Interactive rebase — {rows().length} commit{rows().length === 1 ? "" : "s"}
           <Show when={onto()}>
-            <span style={{ color: "#888", "font-weight": 400, "font-size": "0.8rem", "margin-left": "0.5rem" }}>
+            <span style={{ color: "var(--fg-muted)", "font-weight": 400, "font-size": "0.8rem", "margin-left": "0.5rem" }}>
               onto {onto()!.slice(0, 8)}
             </span>
           </Show>
         </div>
 
         <Show when={err()}>
-          <p style={{ color: "crimson", margin: "0.4rem 0.8rem", "font-size": "0.85rem" }}>{err()}</p>
+          <p style={{ color: "var(--error)", margin: "0.4rem 0.8rem", "font-size": "0.85rem" }}>{err()}</p>
         </Show>
 
         <div style={{ flex: "1", overflow: "auto", padding: "0.5rem 0.8rem" }}>
@@ -138,12 +138,12 @@ const InteractiveRebase: Component<{
                   "align-items": "center",
                   gap: "0.4rem",
                   padding: "0.3rem 0.2rem",
-                  "border-bottom": "1px solid #f3f3f3",
-                  background: dragIdx() === i() ? "#eef5ff" : "transparent",
+                  "border-bottom": "1px solid var(--surface-2)",
+                  background: dragIdx() === i() ? "var(--selection)" : "transparent",
                   opacity: row.action === "Drop" ? 0.45 : 1,
                 }}
               >
-                <span style={{ cursor: "grab", color: "#bbb", "user-select": "none" }} title="drag to reorder">
+                <span style={{ cursor: "grab", color: "var(--fg-muted)", "user-select": "none" }} title="drag to reorder">
                   ⠿
                 </span>
                 <select
@@ -153,7 +153,7 @@ const InteractiveRebase: Component<{
                 >
                   <For each={ACTIONS}>{(a) => <option value={a}>{a.toLowerCase()}</option>}</For>
                 </select>
-                <span style={{ "font-family": "monospace", "font-size": "0.75rem", color: "#888" }}>
+                <span style={{ "font-family": "monospace", "font-size": "0.75rem", color: "var(--fg-muted)" }}>
                   {row.oid.slice(0, 8)}
                 </span>
                 <span style={{ flex: "1", "font-size": "0.82rem", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>
@@ -168,7 +168,7 @@ const InteractiveRebase: Component<{
             {(row, i) => (
               <Show when={row.action === "Reword"}>
                 <div style={{ margin: "0.4rem 0" }}>
-                  <div style={{ "font-size": "0.72rem", color: "#888" }}>
+                  <div style={{ "font-size": "0.72rem", color: "var(--fg-muted)" }}>
                     reword {row.oid.slice(0, 8)}
                   </div>
                   <textarea
@@ -190,14 +190,14 @@ const InteractiveRebase: Component<{
           </For>
         </div>
 
-        <div style={{ padding: "0.6rem 0.8rem", "border-top": "1px solid #eee", display: "flex", gap: "0.5rem", "justify-content": "flex-end" }}>
+        <div style={{ padding: "0.6rem 0.8rem", "border-top": "1px solid var(--border)", display: "flex", gap: "0.5rem", "justify-content": "flex-end" }}>
           <button onClick={props.onClose} disabled={busy()}>
             Cancel
           </button>
           <button
             onClick={run}
             disabled={busy() || onto() == null || rows().length === 0}
-            style={{ background: "#0070f3", color: "#fff", border: "none", "border-radius": "3px", padding: "0.3rem 0.8rem", cursor: "pointer" }}
+            style={{ background: "var(--accent)", color: "var(--on-accent)", border: "none", "border-radius": "3px", padding: "0.3rem 0.8rem", cursor: "pointer" }}
           >
             {busy() ? "Running…" : "Run rebase"}
           </button>

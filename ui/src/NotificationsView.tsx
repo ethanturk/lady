@@ -56,8 +56,8 @@ const NotificationsView: Component<{
   };
 
   const smallBtn = {
-    border: "1px solid #ccc",
-    background: "#fff",
+    border: "1px solid var(--border)",
+    background: "var(--surface)",
     "border-radius": "3px",
     "font-size": "0.72rem",
     padding: "0 0.45rem",
@@ -74,11 +74,11 @@ const NotificationsView: Component<{
       </div>
 
       <Show when={err()}>
-        <p style={{ color: "crimson", "font-size": "0.85rem" }}>{err()}</p>
+        <p style={{ color: "var(--error)", "font-size": "0.85rem" }}>{err()}</p>
       </Show>
 
       <Show when={notes().length === 0 && !err()}>
-        <p style={{ color: "#888", "font-size": "0.85rem" }}>No notifications.</p>
+        <p style={{ color: "var(--fg-muted)", "font-size": "0.85rem" }}>No notifications.</p>
       </Show>
 
       <ul style={{ margin: 0, padding: 0, "list-style": "none" }}>
@@ -90,7 +90,7 @@ const NotificationsView: Component<{
                 "align-items": "center",
                 gap: "0.5rem",
                 padding: "0.35rem 0",
-                "border-bottom": "1px solid #f0f0f0",
+                "border-bottom": "1px solid var(--border)",
                 "font-size": "0.84rem",
               }}
             >
@@ -104,14 +104,14 @@ const NotificationsView: Component<{
                 }}
                 title={n.unread ? "unread" : "read"}
               />
-              <span style={{ color: "#888", "font-size": "0.72rem", "min-width": "8ch" }}>{n.kind}</span>
+              <span style={{ color: "var(--fg-muted)", "font-size": "0.72rem", "min-width": "8ch" }}>{n.kind}</span>
               <span style={{ flex: "1", "font-weight": n.unread ? 600 : 400, overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }} title={n.title}>
                 {n.title}
               </span>
-              <span style={{ color: "#666", "font-family": "monospace", "font-size": "0.72rem", "max-width": "16ch", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>
+              <span style={{ color: "var(--fg-muted)", "font-family": "monospace", "font-size": "0.72rem", "max-width": "16ch", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>
                 {n.repo}
               </span>
-              <span style={{ color: "#888", "white-space": "nowrap" }}>{relTime(isoToUnix(n.updated))}</span>
+              <span style={{ color: "var(--fg-muted)", "white-space": "nowrap" }}>{relTime(isoToUnix(n.updated))}</span>
               <button style={smallBtn} onClick={() => open(n)}>Open</button>
               <Show when={n.unread}>
                 <button style={smallBtn} onClick={() => markRead(n)}>Mark read</button>

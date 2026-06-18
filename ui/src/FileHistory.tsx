@@ -49,15 +49,15 @@ const FileHistory: Component<{ repoId: RepoId }> = (props) => {
         </button>
       </div>
       <div style={{ flex: "1", display: "flex", overflow: "hidden" }}>
-        <div style={{ flex: "1", "min-width": "0", "overflow-y": "auto", "border-right": "1px solid #ddd" }}>
+        <div style={{ flex: "1", "min-width": "0", "overflow-y": "auto", "border-right": "1px solid var(--border)" }}>
           <Show when={err()}>
-            <p style={{ color: "crimson", padding: "0.5rem", "font-size": "0.85rem" }}>{err()}</p>
+            <p style={{ color: "var(--error)", padding: "0.5rem", "font-size": "0.85rem" }}>{err()}</p>
           </Show>
           <Show when={loading()}>
-            <p style={{ color: "#888", padding: "0.5rem", "font-size": "0.85rem" }}>Loading…</p>
+            <p style={{ color: "var(--fg-muted)", padding: "0.5rem", "font-size": "0.85rem" }}>Loading…</p>
           </Show>
           <Show when={!loading() && commits().length === 0 && !err() && file()}>
-            <p style={{ color: "#888", padding: "0.5rem", "font-size": "0.85rem" }}>
+            <p style={{ color: "var(--fg-muted)", padding: "0.5rem", "font-size": "0.85rem" }}>
               No history for this path.
             </p>
           </Show>
@@ -67,21 +67,21 @@ const FileHistory: Component<{ repoId: RepoId }> = (props) => {
                 onClick={() => setSelected(c.oid)}
                 style={{
                   padding: "0.4rem 0.6rem",
-                  "border-bottom": "1px solid #eee",
+                  "border-bottom": "1px solid var(--border)",
                   cursor: "pointer",
                   "font-size": "0.85rem",
-                  background: selected() === c.oid ? "#e6f0ff" : "transparent",
+                  background: selected() === c.oid ? "var(--selection)" : "transparent",
                 }}
               >
                 <div style={{ display: "flex", gap: "0.5rem" }}>
-                  <span style={{ "font-family": "monospace", color: "#888" }}>
+                  <span style={{ "font-family": "monospace", color: "var(--fg-muted)" }}>
                     {c.oid.slice(0, 8)}
                   </span>
                   <span style={{ flex: "1", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>
                     {c.summary}
                   </span>
                 </div>
-                <div style={{ color: "#888", "font-size": "0.75rem" }}>
+                <div style={{ color: "var(--fg-muted)", "font-size": "0.75rem" }}>
                   {c.author.name} • {relTime(c.time)}
                 </div>
               </div>

@@ -59,10 +59,10 @@ const BlameView: Component<{ repoId: RepoId; initialPath?: string }> = (props) =
       </div>
       <div style={{ flex: "1", "overflow-y": "auto", "font-family": "monospace", "font-size": "0.8rem" }}>
         <Show when={err()}>
-          <p style={{ color: "crimson", padding: "0.5rem" }}>{err()}</p>
+          <p style={{ color: "var(--error)", padding: "0.5rem" }}>{err()}</p>
         </Show>
         <Show when={loading()}>
-          <p style={{ color: "#888", padding: "0.5rem" }}>Loading blame…</p>
+          <p style={{ color: "var(--fg-muted)", padding: "0.5rem" }}>Loading blame…</p>
         </Show>
         <For each={blame()?.lines ?? []}>
           {(line) => (
@@ -71,10 +71,12 @@ const BlameView: Component<{ repoId: RepoId; initialPath?: string }> = (props) =
                 title={`${line.author} • ${new Date(line.time * 1000).toLocaleDateString()}`}
                 style={{
                   background: commitColor(line.commit),
-                  color: "#555",
+                  // Gutter bg is always a light pastel → use dark text in both
+                  // themes so it stays readable.
+                  color: "var(--code-fg)",
                   padding: "0 0.4rem",
                   "white-space": "nowrap",
-                  "border-right": "1px solid #ddd",
+                  "border-right": "1px solid var(--border)",
                   "min-width": "16ch",
                   overflow: "hidden",
                   "text-overflow": "ellipsis",
@@ -84,7 +86,7 @@ const BlameView: Component<{ repoId: RepoId; initialPath?: string }> = (props) =
               </span>
               <span
                 style={{
-                  color: "#bbb",
+                  color: "var(--fg-muted)",
                   padding: "0 0.4rem",
                   "text-align": "right",
                   "min-width": "4ch",

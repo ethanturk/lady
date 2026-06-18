@@ -36,9 +36,9 @@ const LicenseGate: Component<{ onActivated: (status: LicenseStatus) => void }> =
         "font-family": "sans-serif",
       }}
     >
-      <div style={{ background: "#fff", "border-radius": "8px", padding: "1.5rem", width: "460px", "max-width": "92vw" }}>
+      <div style={{ background: "var(--surface)", "border-radius": "8px", padding: "1.5rem", width: "460px", "max-width": "92vw" }}>
         <h2 style={{ margin: "0 0 0.5rem", "font-size": "1.1rem" }}>Trial expired</h2>
-        <p style={{ "font-size": "0.88rem", color: "#444" }}>
+        <p style={{ "font-size": "0.88rem", color: "var(--fg)" }}>
           Your 30-day trial has ended. Enter a license key to continue using Lady.
         </p>
         <input
@@ -49,11 +49,11 @@ const LicenseGate: Component<{ onActivated: (status: LicenseStatus) => void }> =
           onInput={(e) => setKey(e.currentTarget.value)}
           onKeyDown={(e) => e.key === "Enter" && activate()}
         />
-        {err() && <p style={{ color: "crimson", "font-size": "0.82rem" }}>{err()}</p>}
+        {err() && <p style={{ color: "var(--error)", "font-size": "0.82rem" }}>{err()}</p>}
         <button
           onClick={activate}
           disabled={busy()}
-          style={{ "margin-top": "0.6rem", background: "#0070f3", color: "#fff", border: "none", "border-radius": "4px", padding: "0.4rem 1rem", cursor: "pointer" }}
+          style={{ "margin-top": "0.6rem", background: "var(--accent)", color: "var(--on-accent)", border: "none", "border-radius": "4px", padding: "0.4rem 1rem", cursor: "pointer" }}
         >
           {busy() ? "Activating…" : "Activate"}
         </button>
