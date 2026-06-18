@@ -14,7 +14,7 @@
         "Unit test: create a real merge conflict in a tempdir repo, parse regions, take-ours, mark resolved, assert the file is unconflicted and staged; cargo fmt/clippy -D warnings/test green; cargo deny passes"
       ],
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §4 lady-diff::merge, §6.5. Foundation for the 3-pane UI and interactive-rebase conflict handoff."
     },
     {
@@ -28,7 +28,7 @@
         "npm run build green; cargo build green; manual window verification noted in progress.txt"
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §6.5. Reuses PH3-001 engine + Phase 1 DiffView styling. Never auto-write a resolution without showing it."
     },
     {
@@ -42,7 +42,7 @@
         "Unit tests against tempdir repos: squash two commits; drop one; reorder two; a conflicting reorder stops then aborts cleanly; cargo fmt/clippy -D warnings/test green; cargo deny passes"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §6.4 — drive real git rebase for correctness. The sequence-editor shim can be a tiny helper binary or a `sh -c` writing the todo. Test continue/abort paths hard."
     },
     {
@@ -56,7 +56,7 @@
         "npm run build green; cargo build green; manual window verification noted in progress.txt"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §1 interactive rebase. Ties PH3-003 to PH3-002."
     },
     {
@@ -70,7 +70,7 @@
         "cargo fmt/clippy -D warnings/test green; cargo deny passes; npm run build green"
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §1 + §6.6, ADR-0006. SSH signing is fully testable in the loop; GPG needs a keyring so note manual verification."
     },
     {
@@ -83,7 +83,7 @@
         "Unit test: add a worktree in a tempdir repo, assert it lists, then remove it; cargo fmt/clippy -D warnings/test green; cargo deny passes; npm run build green"
       ],
       "priority": 6,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §1 worktrees."
     },
     {
@@ -96,7 +96,7 @@
         "Unit test: make + reset a commit in a tempdir repo, assert the dangling oid appears in the reflog and a branch can be created at it; cargo fmt/clippy -D warnings/test green; cargo deny passes; npm run build green"
       ],
       "priority": 7,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §1 'Restore lost commits with Reflog'."
     },
     {
@@ -109,7 +109,7 @@
         "Unit test: scripted bisect over a tempdir repo with a known bad commit converges to it; cargo fmt/clippy -D warnings/test green; cargo deny passes; npm run build green"
       ],
       "priority": 8,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §1 bisect."
     },
     {
@@ -123,7 +123,7 @@
         "Unit test on placeholder parsing + safe argv substitution; cargo fmt/clippy -D warnings/test green; cargo deny passes; npm run build green"
       ],
       "priority": 9,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §1 custom commands. Security: build an argv, never interpolate user input into a shell string."
     },
     {
@@ -136,7 +136,7 @@
         "Graceful error when no tool is configured; cargo fmt/clippy -D warnings/build green; cargo deny passes; npm run build green; manual window note in progress.txt"
       ],
       "priority": 10,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §1 external diff/merge tools. Reuse git's tool config where possible (ADR-0003 spirit)."
     },
     {
@@ -150,7 +150,7 @@
         "Unit test the remote-detection + token storage abstraction with a mocked keychain/HTTP (wiremock); cargo fmt/clippy -D warnings/test green; cargo deny passes (reqwest/rustls are permissive); npm run build green"
       ],
       "priority": 11,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §7. GitHub only at v1; other forges are Fast-follow (Phase 4). Never log tokens."
     },
     {
@@ -164,7 +164,7 @@
         "Unit test create_pull_request against a mocked GitHub API (wiremock); cargo fmt/clippy -D warnings/test green; cargo deny passes; npm run build green; manual window note in progress.txt"
       ],
       "priority": 12,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §1/§7 — matches Fork's branch-context-menu PR creation. Release-blocker for Core Parity."
     },
     {
@@ -178,7 +178,7 @@
         "Unit tests: generate a throwaway Ed25519 keypair, sign a valid license -> verifies; tamper a byte -> rejected; expired key -> rejected; trial countdown math; cargo fmt/clippy -D warnings/test green; cargo deny passes; npm run build green"
       ],
       "priority": 13,
-      "passes": false,
+      "passes": true,
       "notes": "ADR-0007 — release-blocking, in Core Parity scope. Use an ed25519 crate (e.g. ed25519-dalek, permissive). The real signing private key stays offline; tests use an ephemeral one."
     },
     {
@@ -192,7 +192,7 @@
         "progress.txt notes that PACKAGING / notarization / auto-update are Phase 6 (this gate is feature-completeness, not the actual ship)"
       ],
       "priority": 14,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §0 Core Parity + §9 Phase 3 exit. Confirms the RELEASE LINE; actual packaging is Phase 6. After this, the next PRD is Phase 4 (Fast-follow) or Phase 5 (AI)."
     }
   ]
