@@ -408,6 +408,18 @@ fn prune_worktrees(repo: RepoId, engine: State<GixEngine>) -> Result<(), String>
     engine.prune_worktrees(&repo).map_err(|e| e.to_string())
 }
 
+/// Git LFS status for a repo: availability, tracked patterns, files (PH4-007).
+#[tauri::command]
+fn lfs_status(repo: RepoId, engine: State<GixEngine>) -> Result<lady_proto::LfsStatus, String> {
+    engine.lfs_status(&repo).map_err(|e| e.to_string())
+}
+
+/// Track `pattern` with Git LFS (`git lfs track`).
+#[tauri::command]
+fn lfs_track(repo: RepoId, pattern: String, engine: State<GixEngine>) -> Result<(), String> {
+    engine.lfs_track(&repo, &pattern).map_err(|e| e.to_string())
+}
+
 /// The reflog for `refname` (default HEAD), newest first (PH3-007).
 #[tauri::command]
 fn reflog(
@@ -1377,6 +1389,8 @@ pub fn run() {
             remove_worktree,
             prune_worktrees,
             reflog,
+            lfs_status,
+            lfs_track,
             bisect_start,
             bisect_mark,
             bisect_reset,

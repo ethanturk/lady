@@ -270,6 +270,20 @@ export interface BisectState {
   suspected: string | null;
 }
 
+/** Mirrors lady_proto::LfsFile. */
+export interface LfsFile {
+  path: string;
+  oid: string;
+  downloaded: boolean;
+}
+
+/** Mirrors lady_proto::LfsStatus. */
+export interface LfsStatus {
+  available: boolean;
+  patterns: string[];
+  files: LfsFile[];
+}
+
 /** Mirrors lady_proto::ConflictState. */
 export type ConflictState = "None" | "Merge" | "Rebase" | "CherryPick" | "Revert";
 

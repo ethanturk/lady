@@ -413,6 +413,28 @@ pub struct CommandOutput {
     pub exit_code: i32,
 }
 
+/// One Git LFS-tracked file (`git lfs ls-files`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LfsFile {
+    /// Path relative to the repo root.
+    pub path: String,
+    /// The LFS object's (short) oid.
+    pub oid: String,
+    /// Whether the real bytes are materialized locally (vs a pointer).
+    pub downloaded: bool,
+}
+
+/// Git LFS status for a repository (PH4-007).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LfsStatus {
+    /// Whether `git-lfs` is installed and usable.
+    pub available: bool,
+    /// Tracked path patterns (from `.gitattributes`).
+    pub patterns: Vec<String>,
+    /// LFS-tracked files and whether each is materialized.
+    pub files: Vec<LfsFile>,
+}
+
 /// Snapshot of an in-progress `git bisect`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BisectState {

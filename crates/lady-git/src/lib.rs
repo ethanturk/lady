@@ -13,10 +13,20 @@ pub mod custom;
 
 use lady_proto::{
     AheadBehind, ApplyOutcome, BisectState, Blame, BlameLine, ChangeKind, CommandOutput,
-    CommitMeta, ConflictSides, ConflictState, FfMode, FileDiff, FileDiffKind, FileStatus,
-    MergeOutcome, Oid, ParsedConflict, RebaseOutcome, RebaseStep, RefInfo, RefKind, ReflogEntry,
-    RepoId, Signature, SignatureStatus, StashEntry, WorkingTree, Worktree,
+    CommitMeta, ConflictSides, ConflictState, FfMode, FileDiff, FileDiffKind, FileStatus, LfsFile,
+    LfsStatus, MergeOutcome, Oid, ParsedConflict, RebaseOutcome, RebaseStep, RefInfo, RefKind,
+    ReflogEntry, RepoId, Signature, SignatureStatus, StashEntry, WorkingTree, Worktree,
 };
+
+/// Whether `git-lfs` is installed and usable (`git lfs version`). Free function
+/// because availability is independent of any repository (PH4-007).
+pub fn lfs_available() -> bool {
+    Command::new("git")
+        .args(["lfs", "version"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
 
 /// Errors surfaced by a [`GitEngine`].
 #[derive(Debug, thiserror::Error)]
@@ -399,6 +409,16 @@ pub trait GitEngine: Send + Sync {
     /// Add a remote `name` pointing at `url` (`git remote add`), e.g. wiring a
     /// freshly created remote as `origin` (PH4-005).
     fn add_remote(&self, repo: &RepoId, name: &str, url: &str) -> Result<()>;
+
+    /// Git LFS status: availability, tracked patterns, and tracked files with
+    /// their materialized/pointer state (PH4-007). Empty when git-lfs is
+    /// unavailable. Clone/fetch/checkout already run smudge/clean filters
+    /// because every mutation shells out to the user's git (ADR-0003).
+    fn lfs_status(&self, repo: &RepoId) -> Result<LfsStatus>;
+
+    /// Track `pattern` with LFS (`git lfs track <pattern>`), writing
+    /// `.gitattributes`. Errors clearly when git-lfs is not installed.
+    fn lfs_track(&self, repo: &RepoId, pattern: &str) -> Result<()>;
 }
 
 /// A [`GitEngine`] backed by [`gix`] for read-only access (ADR-0003).
@@ -1833,6 +1853,68 @@ exit 0\n";
     fn add_remote(&self, repo: &RepoId, name: &str, url: &str) -> Result<()> {
         let wd = self.workdir(repo)?;
         run_git(&wd, &["remote", "add", name, url]).map(|_| ())
+    }
+
+    fn lfs_status(&self, repo: &RepoId) -> Result<LfsStatus> {
+        if !lfs_available() {
+            return Ok(LfsStatus::default());
+        }
+        let wd = self.workdir(repo)?;
+
+        // Tracked patterns: `git lfs track` lists them, one per indented line
+        // like "    *.bin (.gitattributes)".
+        let patterns = run_git_raw(&wd, &["lfs", "track"])
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+            .map(|text| {
+                text.lines()
+                    .filter(|l| l.starts_with(char::is_whitespace) && l.contains(" ("))
+                    .filter_map(|l| l.trim().split(" (").next().map(str::to_string))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        // Tracked files: `git lfs ls-files` prints "<oid> <*|-> <path>" where
+        // `*` = materialized, `-` = pointer only.
+        let files = run_git_raw(&wd, &["lfs", "ls-files"])
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+            .map(|text| {
+                text.lines()
+                    .filter_map(|line| {
+                        let mut parts = line.split_whitespace();
+                        let oid = parts.next()?.to_string();
+                        let marker = parts.next()?;
+                        let path: Vec<&str> = parts.collect();
+                        if path.is_empty() {
+                            return None;
+                        }
+                        Some(LfsFile {
+                            path: path.join(" "),
+                            oid,
+                            downloaded: marker == "*",
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        Ok(LfsStatus {
+            available: true,
+            patterns,
+            files,
+        })
+    }
+
+    fn lfs_track(&self, repo: &RepoId, pattern: &str) -> Result<()> {
+        if !lfs_available() {
+            return Err(Error::Git(
+                "git-lfs is not installed. Install it from https://git-lfs.com to track files."
+                    .to_string(),
+            ));
+        }
+        let wd = self.workdir(repo)?;
+        run_git(&wd, &["lfs", "track", pattern]).map(|_| ())
     }
 }
 
@@ -3768,6 +3850,59 @@ mod tests {
         assert_eq!(commits.len(), 2, "two commits in the range");
         assert_eq!(commits[0].summary, "add a.txt", "oldest first");
         assert_eq!(commits[1].summary, "add b.txt");
+    }
+
+    #[test]
+    fn lfs_tracked_file_round_trips_pointer_in_index_real_bytes_in_worktree() {
+        if !lfs_available() {
+            eprintln!("git-lfs unavailable — skipping LFS round-trip test");
+            return;
+        }
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open");
+
+        // Enable LFS locally + track *.bin, then commit a binary file.
+        git(p, &["lfs", "install", "--local"]);
+        engine.lfs_track(&id, "*.bin").expect("lfs track");
+        git(p, &["add", ".gitattributes"]);
+        git(p, &["commit", "-q", "-m", "track bin with lfs"]);
+
+        let real_bytes = b"\x00\x01\x02LADY-LFS-PAYLOAD\xff";
+        std::fs::write(p.join("asset.bin"), real_bytes).expect("write bin");
+        git(p, &["add", "asset.bin"]);
+        git(p, &["commit", "-q", "-m", "add asset"]);
+
+        // The committed blob (HEAD) is an LFS pointer, not the real bytes.
+        let head_blob = git_out(p, &["show", "HEAD:asset.bin"]);
+        assert!(
+            head_blob.contains("version https://git-lfs"),
+            "committed blob should be an LFS pointer, got: {head_blob}"
+        );
+        // The working-tree file holds the real (materialized) bytes.
+        assert_eq!(
+            std::fs::read(p.join("asset.bin")).expect("read worktree bin"),
+            real_bytes,
+            "working tree should hold the real bytes (smudge filter ran)"
+        );
+
+        // Engine status reflects availability, the pattern, and the file.
+        let status = engine.lfs_status(&id).expect("lfs status");
+        assert!(status.available);
+        assert!(
+            status.patterns.iter().any(|p| p == "*.bin"),
+            "tracked patterns: {:?}",
+            status.patterns
+        );
+        assert!(
+            status
+                .files
+                .iter()
+                .any(|f| f.path == "asset.bin" && f.downloaded),
+            "lfs files: {:?}",
+            status.files
+        );
     }
 
     #[test]
