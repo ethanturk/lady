@@ -12,7 +12,7 @@ These were resolved in a grilling session and are authoritative — where anythi
 
 | # | Decision | Record |
 |---|----------|--------|
-| North star | ***Ship fast*** = build velocity to ***Core Parity*** (Tauri + the Ralph autonomous loop), **not** early public release. | [CONTEXT](CONTEXT.md) |
+| North star | ***Ship fast*** = build velocity to ***Core Parity***, **not** early public release. | [CONTEXT](CONTEXT.md) |
 | GUI | **Tauri v2** (Rust core + web frontend); domain logic stays GUI-agnostic so a native shell can swap in later. | [ADR-0001](docs/adr/0001-gui-framework-tauri.md) |
 | Release | **Big-bang at parity** — first public release gates on ***Core Parity*** (Phases 1–3). No thin MVP. AI ships after. | [ADR-0002](docs/adr/0002-release-at-fork-parity.md) |
 | Parity bar | ***Core Parity*** = Fork's daily-use surface; niche long-tail (LFS, git-flow, submodule edges, non-GitHub forge PRs) is ***Fast-follow***. | [CONTEXT](CONTEXT.md) |
@@ -29,7 +29,7 @@ These were resolved in a grilling session and are authoritative — where anythi
 - **Release line** sits at the end of **Phase 3** (Core Parity). Phase 4 (hosting) is GitHub-only at v1; other forges are ***Fast-follow***. Phase 5 (AI) is strictly post-release.
 - A **licensing-gate module** (trial + signed-key verify) is added to Core Parity — it is release-blocking, not Fast-follow.
 - **`cargo-deny`** license + advisory checks run in CI from **Phase 0**.
-- **Open (grill at their phase):** AI provider abstraction (`reqwest` trait vs `genai`/`rig`), MCP tool scope, Tauri frontend framework (Solid/Svelte), commit-graph lane algorithm, Ralph PRD story granularity.
+- **Open (grill at their phase):** AI provider abstraction (`reqwest` trait vs `genai`/`rig`), MCP tool scope, Tauri frontend framework (Solid/Svelte), commit-graph lane algorithm.
 
 ---
 

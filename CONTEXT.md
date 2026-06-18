@@ -5,7 +5,7 @@ A fast, friendly cross-platform Git client (Fork clone + GitKraken-style AI), bu
 ## Language
 
 **Ship fast**:
-Lady's north star — maximize *build* velocity to Core Parity (via Tauri + the autonomous Ralph loop). It does NOT mean releasing an early partial product.
+Lady's north star — maximize *build* velocity to Core Parity. It does NOT mean releasing an early partial product.
 _Avoid_: MVP-first, early release, ship early
 
 **Core Parity**:
