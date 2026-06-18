@@ -2,7 +2,7 @@ import { createSignal, For, onMount, Show } from "solid-js";
 import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import type { AppInfo, RefInfo, RefKind, RepoId } from "./commands";
-import CommitList from "./CommitList";
+import GraphView from "./GraphView";
 
 interface RefGroupProps {
   title: string;
@@ -132,7 +132,7 @@ const App: Component = () => {
       <Show when={repoId()}>
         <div style={{ flex: "1", overflow: "hidden" }}>
           <Show when={tab() === "commits"}>
-            <CommitList repoId={repoId()!} />
+            <GraphView repoId={repoId()!} />
           </Show>
           <Show when={tab() === "refs"}>
             <div style={{ padding: "0.5rem 1rem", "overflow-y": "auto", height: "100%" }}>

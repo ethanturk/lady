@@ -39,3 +39,29 @@ export interface WalkLogQuery {
   start?: string;
   limit: number;
 }
+
+/** A single graph edge (canvas line segment). */
+export interface EdgeData {
+  from_lane: number;
+  to_lane: number;
+}
+
+/** Combined commit metadata + graph layout row for the hybrid renderer. */
+export interface CommitGraphRow {
+  oid: string;
+  parents: string[];
+  author_name: string;
+  summary: string;
+  time: number;
+  lane: number;
+  num_lanes: number;
+  edges: EdgeData[];
+  refs: string[];
+}
+
+/** Result of walk_log_graph — rows plus opaque lane state for next page. */
+export interface WalkLogGraphResult {
+  rows: CommitGraphRow[];
+  /** Opaque lane state; pass as layout_state on the next page request. */
+  layout_state: (string | null)[];
+}

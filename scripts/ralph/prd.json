@@ -86,7 +86,7 @@
         "Manual window verification noted in progress.txt (cannot verify headless)"
       ],
       "priority": 6,
-      "passes": false,
+      "passes": true,
       "notes": "ADR-0005 — signature view; render-target kept swappable behind the row-data interface."
     },
     {

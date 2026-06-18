@@ -36,6 +36,13 @@ pub struct GraphRow {
     pub refs: Vec<String>,
 }
 
+/// Active-lane state between layout pages (opaque to the caller).
+///
+/// Pass this back to [`layout_continuation`] to correctly extend the graph
+/// when a second batch of commits arrives.  `None` entries are empty lane
+/// slots that can be recycled.
+pub type ActiveLanes = Vec<Option<Oid>>;
+
 /// Assign lanes and route edges for a topologically-ordered commit slice.
 ///
 /// The slice must be in topological order (newest first), as produced by
@@ -44,12 +51,28 @@ pub struct GraphRow {
 /// octopus merges deterministically — identical input always yields identical
 /// output.
 pub fn layout(commits: &[CommitMeta]) -> Vec<GraphRow> {
-    // active[i] = Some(oid) → lane i is waiting for commit `oid` to appear.
-    let mut active: Vec<Option<Oid>> = Vec::new();
+    let mut active: ActiveLanes = Vec::new();
+    layout_inner(commits, &mut active)
+}
+
+/// Continue layout from a prior page's [`ActiveLanes`] state.
+///
+/// Returns the new rows together with the updated state for the next page.
+/// Use when loading commits incrementally: pass the state returned by the
+/// previous call so lane assignments remain consistent across pages.
+pub fn layout_continuation(
+    commits: &[CommitMeta],
+    state: ActiveLanes,
+) -> (Vec<GraphRow>, ActiveLanes) {
+    let mut active = state;
+    let rows = layout_inner(commits, &mut active);
+    (rows, active)
+}
+
+fn layout_inner(commits: &[CommitMeta], active: &mut Vec<Option<Oid>>) -> Vec<GraphRow> {
     let mut rows = Vec::with_capacity(commits.len());
 
     for c in commits {
-        // Collect all lanes currently waiting for this commit (fan-in detection).
         let waiting: Vec<usize> = active
             .iter()
             .enumerate()
@@ -63,10 +86,11 @@ pub fn layout(commits: &[CommitMeta]) -> Vec<GraphRow> {
             .collect();
 
         // Assign this commit to the first waiting lane, or open a fresh one.
-        let my_lane = waiting
-            .first()
-            .copied()
-            .unwrap_or_else(|| first_empty_or_new(&mut active));
+        let my_lane = if let Some(&first) = waiting.first() {
+            first
+        } else {
+            first_empty_or_new(active)
+        };
 
         // ── Build the next-row active-lane state ──────────────────────────
         let mut next = active.clone();
@@ -144,7 +168,7 @@ pub fn layout(commits: &[CommitMeta]) -> Vec<GraphRow> {
             refs: Vec::new(),
         });
 
-        active = next;
+        *active = next;
     }
 
     rows

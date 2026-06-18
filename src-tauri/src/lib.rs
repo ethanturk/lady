@@ -1,4 +1,5 @@
 use lady_git::{GitEngine, GixEngine, GraphQuery};
+use lady_graph::layout_continuation;
 use lady_proto::{CommitMeta, Oid, RefInfo, RepoId};
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -50,11 +51,100 @@ fn walk_log(
     engine.walk_log(&repo, gq).map_err(|e| e.to_string())
 }
 
+/// A single line segment for the canvas graph renderer.
+#[derive(Serialize)]
+pub struct EdgeData {
+    pub from_lane: usize,
+    pub to_lane: usize,
+}
+
+/// Combined commit metadata + graph layout row, ready for the hybrid renderer.
+#[derive(Serialize)]
+pub struct CommitGraphRow {
+    pub oid: String,
+    pub parents: Vec<String>,
+    pub author_name: String,
+    pub summary: String,
+    pub time: i64,
+    pub lane: usize,
+    pub num_lanes: usize,
+    pub edges: Vec<EdgeData>,
+    pub refs: Vec<String>,
+}
+
+/// Result of walk_log_graph — rows plus the opaque lane state for the next page.
+#[derive(Serialize)]
+pub struct WalkLogGraphResult {
+    pub rows: Vec<CommitGraphRow>,
+    /// Serialized ActiveLanes state; pass back as `layout_state` for the next page.
+    pub layout_state: Vec<Option<String>>,
+}
+
+#[tauri::command]
+fn walk_log_graph(
+    repo: RepoId,
+    query: WalkLogQuery,
+    layout_state: Option<Vec<Option<String>>>,
+    engine: State<GixEngine>,
+) -> Result<WalkLogGraphResult, String> {
+    let gq = GraphQuery {
+        start: query.start.map(Oid::from),
+        limit: query.limit,
+    };
+    let commits = engine.walk_log(&repo, gq).map_err(|e| e.to_string())?;
+
+    // Deserialize the opaque lane state (Option<String> → Option<Oid>).
+    let state: Vec<Option<Oid>> = layout_state
+        .unwrap_or_default()
+        .into_iter()
+        .map(|s| s.map(Oid::from))
+        .collect();
+
+    let (graph_rows, next_state) = layout_continuation(&commits, state);
+
+    let rows = commits
+        .into_iter()
+        .zip(graph_rows)
+        .map(|(c, r)| CommitGraphRow {
+            oid: c.oid.as_str().to_owned(),
+            parents: c.parents.iter().map(|p| p.as_str().to_owned()).collect(),
+            author_name: c.author.name,
+            summary: c.summary,
+            time: c.time,
+            lane: r.lane,
+            num_lanes: r.num_lanes,
+            edges: r
+                .edges
+                .into_iter()
+                .map(|e| EdgeData {
+                    from_lane: e.from_lane,
+                    to_lane: e.to_lane,
+                })
+                .collect(),
+            refs: r.refs,
+        })
+        .collect();
+
+    let layout_state_out = next_state
+        .into_iter()
+        .map(|opt| opt.map(|oid| oid.as_str().to_owned()))
+        .collect();
+
+    Ok(WalkLogGraphResult {
+        rows,
+        layout_state: layout_state_out,
+    })
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(GixEngine::new())
         .invoke_handler(tauri::generate_handler![
-            app_info, open_repo, list_refs, walk_log
+            app_info,
+            open_repo,
+            list_refs,
+            walk_log,
+            walk_log_graph
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
