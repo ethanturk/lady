@@ -228,10 +228,11 @@ const App: Component = () => {
   return (
     <div
       style={{
-        height: "100vh",
+        height: "100%",
         display: "flex",
         "flex-direction": "column",
         "font-family": "sans-serif",
+        overflow: "hidden",
       }}
     >
       {/* App title + trial banner */}
@@ -281,7 +282,7 @@ const App: Component = () => {
 
       {/* View tabs for the active repo */}
       <Show when={active()}>
-        <div style={{ display: "flex", gap: "0.25rem", padding: "0.5rem 1rem 0", "flex-shrink": 0 }}>
+        <div style={{ display: "flex", "flex-wrap": "wrap", gap: "0.25rem", padding: "0.5rem 1rem 0", "flex-shrink": 0 }}>
           <button style={tabStyle("changes")} onClick={() => setTab("changes")}>
             Changes
           </button>
