@@ -190,6 +190,12 @@ export interface RebaseStep {
 /** Mirrors lady_proto::SignatureStatus. */
 export type SignatureStatus = "Good" | "Bad" | "Untrusted" | "None";
 
+/** Mirrors lady_license::LicenseStatus (serde tag "kind"). */
+export type LicenseStatus =
+  | { kind: "Trial"; days_left: number }
+  | { kind: "Expired" }
+  | { kind: "Licensed"; licensee: string };
+
 /** Mirrors lady_hosting::RepoSlug. */
 export interface RepoSlug {
   owner: string;
@@ -286,6 +292,8 @@ export interface CommandOutput {
 export interface Settings {
   recent: RecentRepo[];
   custom_commands: CustomCommand[];
+  /** License key; owned by the licensing commands and preserved on other saves. */
+  license?: string | null;
 }
 
 /** An opened repo backing one tab in the repository manager (UI-only). */

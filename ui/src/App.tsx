@@ -17,8 +17,9 @@ import ReflogView from "./ReflogView";
 import BisectView from "./BisectView";
 import CustomCommandsView from "./CustomCommandsView";
 import SettingsView from "./SettingsView";
+import LicenseGate from "./LicenseGate";
 import SignatureBadge from "./SignatureBadge";
-import type { SignatureStatus } from "./commands";
+import type { LicenseStatus, SignatureStatus } from "./commands";
 import CommandPalette from "./CommandPalette";
 import type { PaletteEntry } from "./CommandPalette";
 
@@ -37,6 +38,7 @@ type Tab =
 
 const App: Component = () => {
   const [info, setInfo] = createSignal<AppInfo | null>(null);
+  const [license, setLicense] = createSignal<LicenseStatus | null>(null);
   const [active, setActive] = createSignal<OpenRepo | null>(null);
   const [refs, setRefs] = createSignal<RefInfo[]>([]);
   const [tab, setTab] = createSignal<Tab>("changes");
@@ -151,6 +153,7 @@ const App: Component = () => {
   onMount(async () => {
     const data = await invoke<AppInfo>("app_info");
     setInfo(data);
+    invoke<LicenseStatus>("license_status").then(setLicense).catch(() => {});
   });
 
   const repoId = () => active()?.id ?? null;
@@ -214,14 +217,28 @@ const App: Component = () => {
         "font-family": "sans-serif",
       }}
     >
-      {/* App title */}
-      <div style={{ padding: "0.5rem 1rem 0", "flex-shrink": 0 }}>
+      {/* App title + trial banner */}
+      <div style={{ padding: "0.5rem 1rem 0", "flex-shrink": 0, display: "flex", "align-items": "center", gap: "0.6rem" }}>
         <Show when={info()}>
           <span style={{ "font-weight": 600 }}>
             {info()?.name} {info()?.version}
           </span>
         </Show>
+        <Show when={license()?.kind === "Trial"}>
+          <span style={{ background: "#fff8c5", color: "#9a6700", "border-radius": "3px", padding: "0.05rem 0.5rem", "font-size": "0.75rem" }}>
+            Trial — {(license() as { days_left: number }).days_left} day
+            {(license() as { days_left: number }).days_left === 1 ? "" : "s"} left
+          </span>
+        </Show>
+        <Show when={license()?.kind === "Licensed"}>
+          <span style={{ color: "#1a7f37", "font-size": "0.72rem" }}>● Licensed</span>
+        </Show>
       </div>
+
+      {/* Licensing gate: blocks the UI when the trial has expired (ADR-0007). */}
+      <Show when={license()?.kind === "Expired"}>
+        <LicenseGate onActivated={setLicense} />
+      </Show>
 
       {/* Repository manager */}
       <RepoBar active={repoId()} onActiveChange={setActive} apiRef={(open) => (openRepoPath = open)} />

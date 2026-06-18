@@ -916,13 +916,17 @@ pub struct RecentRepo {
     pub group: Option<String>,
 }
 
-/// Persisted user settings (recent repos + their groups + custom commands).
+/// Persisted user settings (recent repos + their groups + custom commands +
+/// an optional license key — not a secret per ADR-0007, so stored in plaintext
+/// settings).
 #[derive(Serialize, Deserialize, Default)]
 pub struct Settings {
     #[serde(default)]
     pub recent: Vec<RecentRepo>,
     #[serde(default)]
     pub custom_commands: Vec<lady_proto::CustomCommand>,
+    #[serde(default)]
+    pub license: Option<String>,
 }
 
 /// Path to `settings.toml` in the platform config dir (via `directories`).
@@ -933,23 +937,34 @@ fn settings_file() -> Result<std::path::PathBuf, String> {
 }
 
 #[tauri::command]
-fn load_settings() -> Result<Settings, String> {
-    let path = settings_file()?;
-    match std::fs::read_to_string(&path) {
-        Ok(s) => toml::from_str(&s).map_err(|e| e.to_string()),
-        // Missing file → first run; return defaults.
-        Err(_) => Ok(Settings::default()),
-    }
+fn load_settings_inner() -> Settings {
+    settings_file()
+        .ok()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| toml::from_str(&s).ok())
+        .unwrap_or_default()
 }
 
-#[tauri::command]
-fn save_settings(settings: Settings) -> Result<(), String> {
+fn write_settings(settings: &Settings) -> Result<(), String> {
     let path = settings_file()?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let body = toml::to_string_pretty(&settings).map_err(|e| e.to_string())?;
+    let body = toml::to_string_pretty(settings).map_err(|e| e.to_string())?;
     std::fs::write(&path, body).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn load_settings() -> Result<Settings, String> {
+    Ok(load_settings_inner())
+}
+
+#[tauri::command]
+fn save_settings(mut settings: Settings) -> Result<(), String> {
+    // The license is owned by the licensing commands; preserve whatever is on
+    // disk so a recents/commands save can never clobber it (ADR-0007).
+    settings.license = load_settings_inner().license;
+    write_settings(&settings)
 }
 
 // ── Hosting (GitHub) — PH3-011 / PH3-012 ────────────────────────────────────────
@@ -1109,6 +1124,66 @@ fn open_url(url: String) -> Result<(), String> {
     cmd.spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
+// ── Licensing gate — PH3-013 (ADR-0007: client-side speed bump, NOT DRM) ────────
+
+/// Current Unix time in seconds.
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// Path to the first-run timestamp file in the platform config dir.
+fn trial_file() -> Result<std::path::PathBuf, String> {
+    let dirs = directories::ProjectDirs::from("dev", "Lady", "Lady")
+        .ok_or_else(|| "could not resolve a config directory".to_string())?;
+    Ok(dirs.config_dir().join("trial"))
+}
+
+/// Read the recorded first-run timestamp, creating it (now) on first run.
+fn trial_started() -> Result<i64, String> {
+    let path = trial_file()?;
+    if let Ok(s) = std::fs::read_to_string(&path) {
+        if let Ok(ts) = s.trim().parse::<i64>() {
+            return Ok(ts);
+        }
+    }
+    let now = now_secs();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&path, now.to_string()).map_err(|e| e.to_string())?;
+    Ok(now)
+}
+
+/// The app's current licensing status (Trial / Expired / Licensed). Records the
+/// first-run timestamp on first call.
+#[tauri::command]
+fn license_status() -> Result<lady_license::LicenseStatus, String> {
+    let started = trial_started()?;
+    let license = load_settings_inner().license;
+    Ok(lady_license::evaluate_embedded(
+        license.as_deref(),
+        started,
+        now_secs(),
+    ))
+}
+
+/// Activate a license key: verify it offline against the embedded key; on
+/// success persist it and return the new status. Rejects tampered / expired /
+/// wrong-product keys with git-free, clear errors.
+#[tauri::command]
+fn license_activate(key: String) -> Result<lady_license::LicenseStatus, String> {
+    let key = key.trim().to_string();
+    // Verify before persisting; surface the precise rejection reason.
+    lady_license::verify_embedded(&key, now_secs()).map_err(|e| e.to_string())?;
+    let mut settings = load_settings_inner();
+    settings.license = Some(key);
+    write_settings(&settings)?;
+    license_status()
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(GixEngine::new())
@@ -1193,6 +1268,8 @@ pub fn run() {
             github_detect,
             github_create_pr,
             open_url,
+            license_status,
+            license_activate,
             clone_repo,
             load_settings,
             save_settings

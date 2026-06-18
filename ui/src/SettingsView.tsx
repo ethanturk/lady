@@ -1,7 +1,7 @@
 import { createSignal, onMount, Show } from "solid-js";
 import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
-import type { GithubStatus, RepoSlug, RepoId } from "./commands";
+import type { GithubStatus, LicenseStatus, RepoSlug, RepoId } from "./commands";
 
 /**
  * Settings panel (PH3-011): GitHub connect/disconnect via a personal access
@@ -15,6 +15,29 @@ const SettingsView: Component<{ repoId: RepoId }> = (props) => {
   const [err, setErr] = createSignal<string | null>(null);
   const [busy, setBusy] = createSignal(false);
 
+  // Licensing (PH3-013).
+  const [license, setLicense] = createSignal<LicenseStatus | null>(null);
+  const [licenseKey, setLicenseKey] = createSignal("");
+  const [licenseErr, setLicenseErr] = createSignal<string | null>(null);
+
+  const describeLicense = (s: LicenseStatus | null) => {
+    if (!s) return "…";
+    if (s.kind === "Licensed") return `Licensed to ${s.licensee}`;
+    if (s.kind === "Trial") return `Trial — ${s.days_left} day(s) left`;
+    return "Trial expired";
+  };
+
+  const activateLicense = () => {
+    if (!licenseKey().trim()) return;
+    setLicenseErr(null);
+    invoke<LicenseStatus>("license_activate", { key: licenseKey().trim() })
+      .then((s) => {
+        setLicense(s);
+        setLicenseKey("");
+      })
+      .catch((e) => setLicenseErr(String(e)));
+  };
+
   const loadStatus = () => {
     invoke<GithubStatus>("github_auth_status")
       .then(setStatus)
@@ -26,6 +49,7 @@ const SettingsView: Component<{ repoId: RepoId }> = (props) => {
     invoke<RepoSlug | null>("github_detect", { repo: props.repoId })
       .then(setSlug)
       .catch(() => setSlug(null));
+    invoke<LicenseStatus>("license_status").then(setLicense).catch(() => {});
   });
 
   const connect = () => {
@@ -51,7 +75,25 @@ const SettingsView: Component<{ repoId: RepoId }> = (props) => {
 
   return (
     <div style={{ height: "100%", "overflow-y": "auto", padding: "0.9rem 1rem", "max-width": "40rem" }}>
-      <h3 style={{ margin: "0 0 0.6rem", "font-size": "0.95rem" }}>GitHub</h3>
+      <h3 style={{ margin: "0 0 0.4rem", "font-size": "0.95rem" }}>License</h3>
+      <p style={{ "font-size": "0.85rem", color: "#444", margin: "0 0 0.4rem" }}>{describeLicense(license())}</p>
+      <div style={{ display: "flex", gap: "0.4rem", "align-items": "center" }}>
+        <input
+          style={{ flex: "1", padding: "0.3rem 0.5rem", "font-family": "monospace", "font-size": "0.8rem" }}
+          placeholder="license key"
+          value={licenseKey()}
+          onInput={(e) => setLicenseKey(e.currentTarget.value)}
+          onKeyDown={(e) => e.key === "Enter" && activateLicense()}
+        />
+        <button onClick={activateLicense} style={{ padding: "0.3rem 0.9rem" }}>
+          Activate
+        </button>
+      </div>
+      <Show when={licenseErr()}>
+        <p style={{ color: "crimson", "font-size": "0.82rem" }}>{licenseErr()}</p>
+      </Show>
+
+      <h3 style={{ margin: "1.2rem 0 0.6rem", "font-size": "0.95rem" }}>GitHub</h3>
 
       <Show when={err()}>
         <p style={{ color: "crimson", "font-size": "0.85rem" }}>{err()}</p>

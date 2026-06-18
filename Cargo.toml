@@ -7,6 +7,7 @@ members = [
     "crates/lady-graph",
     "crates/lady-diff",
     "crates/lady-hosting",
+    "crates/lady-license",
     "src-tauri",
 ]
 
@@ -34,7 +35,10 @@ lady-git = { path = "crates/lady-git" }
 lady-graph = { path = "crates/lady-graph" }
 lady-diff = { path = "crates/lady-diff" }
 lady-hosting = { path = "crates/lady-hosting" }
+lady-license = { path = "crates/lady-license" }
 base64 = "0.22"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = [
     "json",
     "rustls-tls",
