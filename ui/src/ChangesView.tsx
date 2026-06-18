@@ -109,12 +109,18 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
   const [wt, setWt] = createSignal<WorkingTree | null>(null);
   const [err, setErr] = createSignal<string | null>(null);
   const [selected, setSelected] = createSignal<Selection | null>(null);
+  const [message, setMessage] = createSignal("");
+  const [amend, setAmend] = createSignal(false);
+  const [recent, setRecent] = createSignal<string[]>([]);
 
   const reload = () => {
     setErr(null);
     invoke<WorkingTree>("status", { repo: props.repoId })
       .then(setWt)
       .catch((e) => setErr(String(e)));
+    invoke<string[]>("recent_messages", { repo: props.repoId, limit: 10 })
+      .then(setRecent)
+      .catch(() => setRecent([]));
   };
 
   // The DiffSpec for the current selection (staged → index-vs-HEAD).
@@ -181,6 +187,31 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
       .catch((e) => setErr(String(e)));
   };
 
+  // Toggle amend; turning it on prefills the last message if the box is empty.
+  const toggleAmend = () => {
+    const on = !amend();
+    setAmend(on);
+    if (on && message().trim() === "" && recent().length > 0) {
+      setMessage(recent()[0]);
+    }
+  };
+
+  // Commit is allowed when there's a message and either something is staged or
+  // we're amending the tip (which can rewrite just the message).
+  const canCommit = () =>
+    message().trim().length > 0 && ((wt()?.staged.length ?? 0) > 0 || amend());
+
+  const doCommit = () => {
+    if (!canCommit()) return;
+    invoke<string>("commit", { repo: props.repoId, message: message(), amend: amend() })
+      .then(() => {
+        setMessage("");
+        setAmend(false);
+        afterMutation();
+      })
+      .catch((e) => setErr(String(e)));
+  };
+
   const untrackedAsFiles = (): FileStatus[] =>
     (wt()?.untracked ?? []).map((path) => ({ path, old_path: null, kind: "Untracked" as const }));
 
@@ -210,9 +241,82 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
     </div>
   );
 
+  const commitBox = () => (
+    <div
+      style={{
+        "border-top": "1px solid #ddd",
+        padding: "0.5rem 1rem",
+        background: "#fafbfc",
+        display: "flex",
+        "flex-direction": "column",
+        gap: "0.4rem",
+      }}
+    >
+      <textarea
+        value={message()}
+        onInput={(e) => setMessage(e.currentTarget.value)}
+        placeholder={amend() ? "Amend commit message…" : "Commit message…"}
+        rows={3}
+        style={{
+          width: "100%",
+          "box-sizing": "border-box",
+          resize: "vertical",
+          "font-family": "inherit",
+          "font-size": "0.85rem",
+          padding: "0.35rem",
+          border: "1px solid #ccc",
+          "border-radius": "4px",
+        }}
+      />
+      <div style={{ display: "flex", "align-items": "center", gap: "0.6rem", "flex-wrap": "wrap" }}>
+        <button
+          style={{
+            border: "1px solid #1a7f37",
+            background: canCommit() ? "#1a7f37" : "#9bd2a8",
+            color: "#fff",
+            "border-radius": "4px",
+            padding: "0.25rem 0.8rem",
+            "font-size": "0.8rem",
+            cursor: canCommit() ? "pointer" : "not-allowed",
+          }}
+          disabled={!canCommit()}
+          onClick={doCommit}
+        >
+          {amend() ? "Amend" : "Commit"}
+        </button>
+        <label style={{ display: "flex", "align-items": "center", gap: "0.25rem", "font-size": "0.8rem" }}>
+          <input type="checkbox" checked={amend()} onChange={toggleAmend} />
+          Amend last commit
+        </label>
+        <Show when={recent().length > 0}>
+          <select
+            onChange={(e) => {
+              if (e.currentTarget.value) setMessage(e.currentTarget.value);
+              e.currentTarget.selectedIndex = 0;
+            }}
+            style={{ "font-size": "0.75rem", "max-width": "12rem" }}
+            title="Reuse a recent message"
+          >
+            <option value="">Recent…</option>
+            <For each={recent()}>{(m) => <option value={m}>{m}</option>}</For>
+          </select>
+        </Show>
+      </div>
+    </div>
+  );
+
   return (
     <div style={{ height: "100%", display: "flex", overflow: "hidden" }}>
-      {/* Left: the staged / unstaged / untracked lists. */}
+      {/* Left: changes lists (scroll) above a pinned commit box. */}
+      <div
+        style={{
+          flex: "1",
+          "min-width": "0",
+          display: "flex",
+          "flex-direction": "column",
+          overflow: "hidden",
+        }}
+      >
       <div style={{ flex: "1", "min-width": "0", "overflow-y": "auto", padding: "0.5rem 1rem" }}>
         <Show when={err()}>
           <p style={{ color: "crimson", "font-size": "0.85rem" }}>{err()}</p>
@@ -277,6 +381,8 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
             </For>
           </ul>
         </Show>
+      </div>
+        {commitBox()}
       </div>
 
       {/* Right: the diff for the selected file. */}

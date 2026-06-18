@@ -85,7 +85,7 @@
         "Unit test: stage + commit creates a commit whose diff matches; amend rewrites the tip without adding a commit; cargo fmt/clippy -D warnings/test green; cargo deny passes; npm run build green; manual window note in progress.txt"
       ],
       "priority": 6,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §1 commit/amend with recent-message access. Signing is NOT here (Phase 3) — leave the user's commit.gpgsign config untouched; do not force-disable it."
     },
     {

@@ -67,6 +67,14 @@ pub enum DiffSpec {
     IndexVsHead(String),
 }
 
+/// Options for [`GitEngine::commit`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CommitOpts {
+    /// Replace the tip commit (`git commit --amend`) instead of adding a new
+    /// one. The author and date are preserved; the message is replaced.
+    pub amend: bool,
+}
+
 /// A read backend over a git repository.
 ///
 /// Implementations open a repo to a [`RepoId`] handle, then serve refs and
@@ -129,6 +137,15 @@ pub trait GitEngine: Send + Sync {
     /// Delete untracked `paths` from the working tree via `git clean -fd`
     /// (DESTRUCTIVE — the caller must confirm first). A no-op when empty.
     fn discard_untracked(&self, repo: &RepoId, paths: &[String]) -> Result<()>;
+
+    /// Commit the staged changes with `message` (`git commit -m`), or rewrite
+    /// the tip when `opts.amend` is set (`git commit --amend -m`). Returns the
+    /// new commit's [`Oid`]. The user's `commit.gpgsign` config is left intact.
+    fn commit(&self, repo: &RepoId, message: &str, opts: &CommitOpts) -> Result<Oid>;
+
+    /// The most recent commit subjects (first lines), newest first, capped at
+    /// `limit`. Empty on an unborn branch. Powers message reuse/prefill.
+    fn recent_messages(&self, repo: &RepoId, limit: usize) -> Result<Vec<String>>;
 }
 
 /// A [`GitEngine`] backed by [`gix`] for read-only access (ADR-0003).
@@ -625,6 +642,36 @@ impl GitEngine for GixEngine {
         let mut args: Vec<&str> = vec!["clean", "-f", "-d", "-q", "--"];
         args.extend(paths.iter().map(String::as_str));
         run_git(&wd, &args).map(|_| ())
+    }
+
+    fn commit(&self, repo: &RepoId, message: &str, opts: &CommitOpts) -> Result<Oid> {
+        let wd = self.workdir(repo)?;
+        // Pass the message via stdin (`-F -`) so arbitrary text — newlines,
+        // quotes, leading dashes — survives without shell quoting. `--amend`
+        // rewrites the tip; signing config is inherited, never overridden.
+        let mut args: Vec<&str> = vec!["commit", "-F", "-"];
+        if opts.amend {
+            args.push("--amend");
+        }
+        run_git_stdin(&wd, &args, message.as_bytes())?;
+        // The new tip is the committed Oid.
+        let out = run_git(&wd, &["rev-parse", "HEAD"])?;
+        let oid = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        Ok(Oid::from(oid))
+    }
+
+    fn recent_messages(&self, repo: &RepoId, limit: usize) -> Result<Vec<String>> {
+        // No commits yet → no messages (git log would error on an unborn HEAD).
+        if self.repo(repo)?.head_id().is_err() {
+            return Ok(Vec::new());
+        }
+        let wd = self.workdir(repo)?;
+        let n = limit.to_string();
+        let out = run_git(&wd, &["log", "--format=%s", "-n", &n])?;
+        Ok(String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(str::to_string)
+            .collect())
     }
 }
 
@@ -1610,5 +1657,62 @@ mod tests {
         let wt = engine.status(&id).unwrap();
         assert!(wt.staged.is_empty(), "unstaged back to untracked");
         assert_eq!(wt.untracked, vec!["first.txt"]);
+    }
+
+    #[test]
+    fn commit_records_staged_then_amend_rewrites_tip() {
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open");
+
+        let count = |p: &Path| -> usize {
+            let out = std::process::Command::new("git")
+                .current_dir(p)
+                .args(["rev-list", "--count", "HEAD"])
+                .output()
+                .expect("rev-list");
+            String::from_utf8_lossy(&out.stdout).trim().parse().unwrap()
+        };
+        let before = count(p);
+
+        // Stage a new file and commit it.
+        std::fs::write(p.join("new.txt"), "fresh\n").expect("write");
+        engine
+            .stage_paths(&id, &["new.txt".to_string()])
+            .expect("stage");
+        let oid = engine
+            .commit(&id, "add new.txt", &CommitOpts::default())
+            .expect("commit");
+
+        assert_eq!(count(p), before + 1, "commit adds exactly one commit");
+        // The returned Oid is the new tip and its diff contains the staged file.
+        let diff = engine
+            .diff_spec(&id, &DiffSpec::Commit(oid.clone()))
+            .unwrap();
+        assert!(
+            diff.iter().any(|f| f.path == "new.txt"),
+            "tip commit diff includes the committed file"
+        );
+        let msgs = engine.recent_messages(&id, 5).expect("recent");
+        assert_eq!(msgs.first().map(String::as_str), Some("add new.txt"));
+
+        // Amend: stage one more change, rewrite the tip in place.
+        std::fs::write(p.join("new.txt"), "fresh\nmore\n").expect("write");
+        engine
+            .stage_paths(&id, &["new.txt".to_string()])
+            .expect("stage");
+        let amended = engine
+            .commit(&id, "add new.txt (amended)", &CommitOpts { amend: true })
+            .expect("amend");
+
+        assert_eq!(count(p), before + 1, "amend does NOT add a commit");
+        assert_ne!(amended, oid, "amend rewrites the tip to a new Oid");
+        let msgs = engine.recent_messages(&id, 5).expect("recent");
+        assert_eq!(
+            msgs.first().map(String::as_str),
+            Some("add new.txt (amended)"),
+            "amend replaced the tip message"
+        );
     }
 }

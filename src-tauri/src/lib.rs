@@ -1,4 +1,4 @@
-use lady_git::{DiffSpec, GitEngine, GixEngine, GraphQuery};
+use lady_git::{CommitOpts, DiffSpec, GitEngine, GixEngine, GraphQuery};
 use lady_graph::layout_continuation;
 use lady_proto::{Blame, CommitMeta, FileDiff, Oid, RefInfo, RepoId, WorkingTree};
 use serde::{Deserialize, Serialize};
@@ -340,6 +340,32 @@ fn discard_untracked(
         .map_err(|e| e.to_string())
 }
 
+/// Commit the staged changes, or amend the tip when `amend` is set. Returns the
+/// new commit Oid.
+#[tauri::command]
+fn commit(
+    repo: RepoId,
+    message: String,
+    amend: bool,
+    engine: State<GixEngine>,
+) -> Result<Oid, String> {
+    engine
+        .commit(&repo, &message, &CommitOpts { amend })
+        .map_err(|e| e.to_string())
+}
+
+/// The most recent commit subjects (newest first), capped at `limit`.
+#[tauri::command]
+fn recent_messages(
+    repo: RepoId,
+    limit: usize,
+    engine: State<GixEngine>,
+) -> Result<Vec<String>, String> {
+    engine
+        .recent_messages(&repo, limit)
+        .map_err(|e| e.to_string())
+}
+
 /// Clone `url` into `dest` via system git (ADR-0003 shell-out tier), streaming
 /// git's progress lines to the frontend as `clone-progress` events, and open
 /// the result.
@@ -444,6 +470,8 @@ pub fn run() {
             discard_hunks,
             discard_lines,
             discard_untracked,
+            commit,
+            recent_messages,
             clone_repo,
             load_settings,
             save_settings
