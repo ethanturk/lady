@@ -14,7 +14,7 @@ UI stories also note a manual window check here.
 - [x] PH4-005 Create remote repository (provider-agnostic)
 - [x] PH4-006 GitHub notifications inbox
 - [x] PH4-007 Git LFS support
-- [ ] PH4-008 git-flow support
+- [x] PH4-008 git-flow support
 - [ ] PH4-009 Submodule management
 - [ ] PH4-010 Phase 4 Fast-follow exit gate
 
@@ -32,3 +32,7 @@ UI stories also note a manual window check here.
   automatically via the shell-out git tier. Round-trip test runs when git-lfs is
   installed; SKIPS locally here (git-lfs absent) but runs on CI. Manual window
   check for the panel.
+- PH4-008: git-flow — GitFlowView panel (init, start/finish feature/release/
+  hotfix). Native semantics via shell-out git (no git-flow binary). Tested:
+  init + feature start/finish merges --no-ff into develop. Manual window check
+  for the panel + a release/hotfix run.

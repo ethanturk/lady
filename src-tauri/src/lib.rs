@@ -408,6 +408,48 @@ fn prune_worktrees(repo: RepoId, engine: State<GixEngine>) -> Result<(), String>
     engine.prune_worktrees(&repo).map_err(|e| e.to_string())
 }
 
+/// Read the persisted git-flow config (PH4-008).
+#[tauri::command]
+fn flow_config(repo: RepoId, engine: State<GixEngine>) -> Result<lady_proto::FlowConfig, String> {
+    engine.flow_config(&repo).map_err(|e| e.to_string())
+}
+
+/// Initialize git-flow with `config`.
+#[tauri::command]
+fn flow_init(
+    repo: RepoId,
+    config: lady_proto::FlowConfig,
+    engine: State<GixEngine>,
+) -> Result<(), String> {
+    engine.flow_init(&repo, &config).map_err(|e| e.to_string())
+}
+
+/// Start a flow branch of `kind` named `name`; returns the branch name.
+#[tauri::command]
+fn flow_start(
+    repo: RepoId,
+    kind: lady_proto::FlowKind,
+    name: String,
+    engine: State<GixEngine>,
+) -> Result<String, String> {
+    engine
+        .flow_start(&repo, kind, &name)
+        .map_err(|e| e.to_string())
+}
+
+/// Finish a flow branch of `kind` named `name`.
+#[tauri::command]
+fn flow_finish(
+    repo: RepoId,
+    kind: lady_proto::FlowKind,
+    name: String,
+    engine: State<GixEngine>,
+) -> Result<(), String> {
+    engine
+        .flow_finish(&repo, kind, &name)
+        .map_err(|e| e.to_string())
+}
+
 /// Git LFS status for a repo: availability, tracked patterns, files (PH4-007).
 #[tauri::command]
 fn lfs_status(repo: RepoId, engine: State<GixEngine>) -> Result<lady_proto::LfsStatus, String> {
@@ -1391,6 +1433,10 @@ pub fn run() {
             reflog,
             lfs_status,
             lfs_track,
+            flow_config,
+            flow_init,
+            flow_start,
+            flow_finish,
             bisect_start,
             bisect_mark,
             bisect_reset,

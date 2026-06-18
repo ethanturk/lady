@@ -284,6 +284,20 @@ export interface LfsStatus {
   files: LfsFile[];
 }
 
+/** Mirrors lady_proto::FlowKind. */
+export type FlowKind = "Feature" | "Release" | "Hotfix";
+
+/** Mirrors lady_proto::FlowConfig. */
+export interface FlowConfig {
+  initialized: boolean;
+  master: string;
+  develop: string;
+  feature_prefix: string;
+  release_prefix: string;
+  hotfix_prefix: string;
+  version_tag_prefix: string;
+}
+
 /** Mirrors lady_proto::ConflictState. */
 export type ConflictState = "None" | "Merge" | "Rebase" | "CherryPick" | "Revert";
 

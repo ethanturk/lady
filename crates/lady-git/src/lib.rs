@@ -13,9 +13,10 @@ pub mod custom;
 
 use lady_proto::{
     AheadBehind, ApplyOutcome, BisectState, Blame, BlameLine, ChangeKind, CommandOutput,
-    CommitMeta, ConflictSides, ConflictState, FfMode, FileDiff, FileDiffKind, FileStatus, LfsFile,
-    LfsStatus, MergeOutcome, Oid, ParsedConflict, RebaseOutcome, RebaseStep, RefInfo, RefKind,
-    ReflogEntry, RepoId, Signature, SignatureStatus, StashEntry, WorkingTree, Worktree,
+    CommitMeta, ConflictSides, ConflictState, FfMode, FileDiff, FileDiffKind, FileStatus,
+    FlowConfig, FlowKind, LfsFile, LfsStatus, MergeOutcome, Oid, ParsedConflict, RebaseOutcome,
+    RebaseStep, RefInfo, RefKind, ReflogEntry, RepoId, Signature, SignatureStatus, StashEntry,
+    WorkingTree, Worktree,
 };
 
 /// Whether `git-lfs` is installed and usable (`git lfs version`). Free function
@@ -419,6 +420,23 @@ pub trait GitEngine: Send + Sync {
     /// Track `pattern` with LFS (`git lfs track <pattern>`), writing
     /// `.gitattributes`. Errors clearly when git-lfs is not installed.
     fn lfs_track(&self, repo: &RepoId, pattern: &str) -> Result<()>;
+
+    /// Read the persisted git-flow config (`gitflow.*`), or defaults when not
+    /// initialized (PH4-008).
+    fn flow_config(&self, repo: &RepoId) -> Result<FlowConfig>;
+
+    /// Initialize git-flow: persist the config and create the `develop` branch
+    /// from `master` if missing.
+    fn flow_init(&self, repo: &RepoId, config: &FlowConfig) -> Result<()>;
+
+    /// Start a flow branch of `kind` named `name`; returns the created branch.
+    /// Feature/Release branch from `develop`; Hotfix branches from `master`.
+    fn flow_start(&self, repo: &RepoId, kind: FlowKind, name: &str) -> Result<String>;
+
+    /// Finish a flow branch: Feature merges into `develop`; Release/Hotfix merge
+    /// into `master` (tagged) and `develop`, then the branch is deleted. Native
+    /// git-flow semantics via shell-out git (no git-flow binary required).
+    fn flow_finish(&self, repo: &RepoId, kind: FlowKind, name: &str) -> Result<()>;
 }
 
 /// A [`GitEngine`] backed by [`gix`] for read-only access (ADR-0003).
@@ -1916,6 +1934,116 @@ exit 0\n";
         let wd = self.workdir(repo)?;
         run_git(&wd, &["lfs", "track", pattern]).map(|_| ())
     }
+
+    fn flow_config(&self, repo: &RepoId) -> Result<FlowConfig> {
+        let wd = self.workdir(repo)?;
+        let get = |key: &str| git_config_get(&wd, key);
+        let d = FlowConfig::default();
+        let develop = get("gitflow.branch.develop");
+        Ok(FlowConfig {
+            // Initialized when the develop branch is configured.
+            initialized: develop.is_some(),
+            master: get("gitflow.branch.master").unwrap_or(d.master),
+            develop: develop.unwrap_or(d.develop),
+            feature_prefix: get("gitflow.prefix.feature").unwrap_or(d.feature_prefix),
+            release_prefix: get("gitflow.prefix.release").unwrap_or(d.release_prefix),
+            hotfix_prefix: get("gitflow.prefix.hotfix").unwrap_or(d.hotfix_prefix),
+            version_tag_prefix: get("gitflow.prefix.versiontag").unwrap_or(d.version_tag_prefix),
+        })
+    }
+
+    fn flow_init(&self, repo: &RepoId, config: &FlowConfig) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        // Persist the config keys.
+        let sets = [
+            ("gitflow.branch.master", config.master.as_str()),
+            ("gitflow.branch.develop", config.develop.as_str()),
+            ("gitflow.prefix.feature", config.feature_prefix.as_str()),
+            ("gitflow.prefix.release", config.release_prefix.as_str()),
+            ("gitflow.prefix.hotfix", config.hotfix_prefix.as_str()),
+            (
+                "gitflow.prefix.versiontag",
+                config.version_tag_prefix.as_str(),
+            ),
+        ];
+        for (k, v) in sets {
+            run_git(&wd, &["config", k, v])?;
+        }
+        // Create the develop branch from master if it does not exist yet.
+        let exists = run_git_raw(&wd, &["rev-parse", "--verify", "--quiet", &config.develop])?
+            .status
+            .success();
+        if !exists {
+            run_git(&wd, &["branch", &config.develop, &config.master])?;
+        }
+        Ok(())
+    }
+
+    fn flow_start(&self, repo: &RepoId, kind: FlowKind, name: &str) -> Result<String> {
+        let cfg = self.flow_config(repo)?;
+        let wd = self.workdir(repo)?;
+        let (prefix, base) = match kind {
+            FlowKind::Feature => (&cfg.feature_prefix, &cfg.develop),
+            FlowKind::Release => (&cfg.release_prefix, &cfg.develop),
+            FlowKind::Hotfix => (&cfg.hotfix_prefix, &cfg.master),
+        };
+        let branch = format!("{prefix}{name}");
+        run_git(&wd, &["checkout", "-b", &branch, base])?;
+        Ok(branch)
+    }
+
+    fn flow_finish(&self, repo: &RepoId, kind: FlowKind, name: &str) -> Result<()> {
+        let cfg = self.flow_config(repo)?;
+        let wd = self.workdir(repo)?;
+        let merge = |target: &str, branch: &str| -> Result<()> {
+            run_git(&wd, &["checkout", target])?;
+            run_git(
+                &wd,
+                &[
+                    "merge",
+                    "--no-ff",
+                    "--no-edit",
+                    "-m",
+                    &format!("Merge branch '{branch}' into {target}"),
+                    branch,
+                ],
+            )
+            .map(|_| ())
+        };
+        match kind {
+            FlowKind::Feature => {
+                let branch = format!("{}{name}", cfg.feature_prefix);
+                merge(&cfg.develop, &branch)?;
+                run_git(&wd, &["branch", "-d", &branch])?;
+            }
+            FlowKind::Release | FlowKind::Hotfix => {
+                let prefix = if matches!(kind, FlowKind::Release) {
+                    &cfg.release_prefix
+                } else {
+                    &cfg.hotfix_prefix
+                };
+                let branch = format!("{prefix}{name}");
+                // Merge into master and tag the release/hotfix version.
+                merge(&cfg.master, &branch)?;
+                let tag = format!("{}{name}", cfg.version_tag_prefix);
+                run_git(&wd, &["tag", &tag])?;
+                // Merge into develop too, then delete the branch.
+                merge(&cfg.develop, &branch)?;
+                run_git(&wd, &["branch", "-d", &branch])?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Read a single git config value, or `None` when unset.
+fn git_config_get(workdir: &Path, key: &str) -> Option<String> {
+    let out = run_git_raw(workdir, &["config", "--get", key]).ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let val = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!val.is_empty()).then_some(val)
 }
 
 /// Pull an integer out of `text` immediately following `marker` (skipping any
@@ -3902,6 +4030,52 @@ mod tests {
                 .any(|f| f.path == "asset.bin" && f.downloaded),
             "lfs files: {:?}",
             status.files
+        );
+    }
+
+    #[test]
+    fn git_flow_feature_start_and_finish_merges_into_develop() {
+        use lady_proto::FlowKind;
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open");
+
+        // Init git-flow (master = main, develop created from it).
+        let cfg = FlowConfig {
+            master: "main".to_string(),
+            ..FlowConfig::default()
+        };
+        engine.flow_init(&id, &cfg).expect("flow init");
+        let loaded = engine.flow_config(&id).expect("flow config");
+        assert!(loaded.initialized);
+        assert_eq!(loaded.develop, "develop");
+
+        // Start a feature, add a commit on it.
+        let branch = engine
+            .flow_start(&id, FlowKind::Feature, "login")
+            .expect("flow start");
+        assert_eq!(branch, "feature/login");
+        std::fs::write(p.join("login.rs"), "fn login() {}\n").expect("write");
+        git(p, &["add", "login.rs"]);
+        git(p, &["commit", "-q", "-m", "add login"]);
+
+        // Finish: merges into develop and deletes the feature branch.
+        engine
+            .flow_finish(&id, FlowKind::Feature, "login")
+            .expect("flow finish");
+
+        // HEAD is develop, the feature file is present, the branch is gone.
+        let head_branch = git_out(p, &["rev-parse", "--abbrev-ref", "HEAD"]);
+        assert_eq!(head_branch, "develop");
+        assert!(p.join("login.rs").exists(), "feature merged into develop");
+        let branches = git_out(p, &["branch", "--list", "feature/login"]);
+        assert!(branches.is_empty(), "feature branch deleted: {branches:?}");
+        // The merge was --no-ff (a merge commit exists on develop).
+        let subject = git_out(p, &["log", "-1", "--format=%s"]);
+        assert!(
+            subject.contains("Merge branch 'feature/login'"),
+            "subject: {subject}"
         );
     }
 

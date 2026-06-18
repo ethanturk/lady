@@ -413,6 +413,53 @@ pub struct CommandOutput {
     pub exit_code: i32,
 }
 
+/// A git-flow branch family (PH4-008).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FlowKind {
+    /// Feature branches, started from and finished into `develop`.
+    Feature,
+    /// Release branches, started from `develop`, finished into `master` (tagged)
+    /// and `develop`.
+    Release,
+    /// Hotfix branches, started from `master`, finished into `master` (tagged)
+    /// and `develop`.
+    Hotfix,
+}
+
+/// Persisted git-flow configuration (mirrors the `git-flow` tool's config keys
+/// under `gitflow.*`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FlowConfig {
+    /// Whether git-flow has been initialized (develop branch + config present).
+    pub initialized: bool,
+    /// Production branch.
+    pub master: String,
+    /// Integration branch.
+    pub develop: String,
+    /// Feature branch prefix.
+    pub feature_prefix: String,
+    /// Release branch prefix.
+    pub release_prefix: String,
+    /// Hotfix branch prefix.
+    pub hotfix_prefix: String,
+    /// Version tag prefix (often empty).
+    pub version_tag_prefix: String,
+}
+
+impl Default for FlowConfig {
+    fn default() -> Self {
+        FlowConfig {
+            initialized: false,
+            master: "main".to_string(),
+            develop: "develop".to_string(),
+            feature_prefix: "feature/".to_string(),
+            release_prefix: "release/".to_string(),
+            hotfix_prefix: "hotfix/".to_string(),
+            version_tag_prefix: String::new(),
+        }
+    }
+}
+
 /// One Git LFS-tracked file (`git lfs ls-files`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LfsFile {
