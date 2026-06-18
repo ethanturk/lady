@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 
-use lady_proto::{CommitMeta, Oid, RefInfo, RefKind, RepoId};
+use lady_proto::{CommitMeta, Oid, RefInfo, RefKind, RepoId, Signature};
 
 /// Errors surfaced by a [`GitEngine`].
 #[derive(Debug, thiserror::Error)]
@@ -167,8 +167,64 @@ impl GitEngine for GixEngine {
         Ok(out)
     }
 
-    fn walk_log(&self, _repo: &RepoId, _query: GraphQuery) -> Result<Vec<CommitMeta>> {
-        todo!("walk_log lands in US-008")
+    fn walk_log(&self, repo: &RepoId, query: GraphQuery) -> Result<Vec<CommitMeta>> {
+        let repo = self.repo(repo)?;
+
+        // Start point: an explicit oid, else the resolved HEAD tip. An unborn
+        // HEAD (empty repo) surfaces as a clean backend error.
+        let start = match &query.start {
+            Some(oid) => gix::ObjectId::from_hex(oid.as_str().as_bytes()).map_err(backend)?,
+            None => repo.head_id().map_err(backend)?.detach(),
+        };
+
+        // `limit == 0` means "no cap" (the `GraphQuery::default` case); any
+        // positive value caps the number of commits returned.
+        let cap = if query.limit == 0 {
+            usize::MAX
+        } else {
+            query.limit
+        };
+
+        let mut out = Vec::new();
+        for info in repo.rev_walk([start]).all().map_err(backend)? {
+            if out.len() >= cap {
+                break;
+            }
+            let info = info.map_err(backend)?;
+            let commit = info.object().map_err(backend)?;
+            out.push(commit_meta(&commit)?);
+        }
+        Ok(out)
+    }
+}
+
+/// Convert a [`gix::Commit`] into the GUI-agnostic [`CommitMeta`] contract.
+fn commit_meta(commit: &gix::Commit) -> Result<CommitMeta> {
+    let oid = Oid::from(commit.id().detach().to_string());
+    let parents = commit
+        .parent_ids()
+        .map(|id| Oid::from(id.detach().to_string()))
+        .collect();
+    let author = signature(commit.author().map_err(backend)?);
+    let committer = signature(commit.committer().map_err(backend)?);
+    let summary = commit.message().map_err(backend)?.summary().to_string();
+    // Committer time, Unix seconds.
+    let time = commit.time().map_err(backend)?.seconds;
+    Ok(CommitMeta {
+        oid,
+        parents,
+        author,
+        committer,
+        summary,
+        time,
+    })
+}
+
+/// Map a borrowed gix signature into the owned [`Signature`] contract.
+fn signature(sig: gix::actor::SignatureRef<'_>) -> Signature {
+    Signature {
+        name: sig.name.to_string(),
+        email: sig.email.to_string(),
     }
 }
 
@@ -253,6 +309,59 @@ mod tests {
             refs.iter().filter(|r| r.kind == RefKind::Remote).count(),
             0,
             "fixture has no remotes"
+        );
+    }
+
+    #[test]
+    fn walk_log_returns_commits_newest_first_and_honors_limit() {
+        let dir = fixture_repo();
+        let engine = GixEngine::new();
+        let id = engine.open(dir.path()).expect("open the fixture repo");
+
+        // Default start (HEAD), no cap: all three commits, newest first.
+        let all = engine
+            .walk_log(&id, GraphQuery::default())
+            .expect("walk_log on the fixture");
+        assert_eq!(all.len(), 3, "fixture has three commits");
+        let summaries: Vec<&str> = all.iter().map(|c| c.summary.as_str()).collect();
+        assert_eq!(summaries, ["commit 3", "commit 2", "commit 1"]);
+
+        // The root commit has no parents; later commits have exactly one.
+        assert_eq!(all[2].parents.len(), 0, "commit 1 is the root");
+        assert_eq!(all[0].parents.len(), 1, "commit 3 has one parent");
+        assert_eq!(all[0].parents[0], all[1].oid, "parent links to commit 2");
+
+        // Signatures and time are populated from the fixture config.
+        assert_eq!(all[0].author.name, "Lady Test");
+        assert_eq!(all[0].committer.email, "test@example.com");
+        assert!(all[0].time > 0, "committer time should be set");
+
+        // `limit` caps the result.
+        let two = engine
+            .walk_log(
+                &id,
+                GraphQuery {
+                    start: None,
+                    limit: 2,
+                },
+            )
+            .expect("walk_log with a limit");
+        assert_eq!(two.len(), 2, "limit of 2 returns two commits");
+        assert_eq!(two[0].summary, "commit 3");
+    }
+
+    #[test]
+    fn walk_log_errors_on_unknown_repo() {
+        let engine = GixEngine::new();
+        let err = engine
+            .walk_log(
+                &RepoId::from("never-opened".to_string()),
+                GraphQuery::default(),
+            )
+            .expect_err("walk_log on an unopened handle must fail");
+        assert!(
+            matches!(err, Error::UnknownRepo(_)),
+            "expected Error::UnknownRepo, got {err:?}"
         );
     }
 

@@ -1,0 +1,13 @@
+[package]
+name = "lady-cli"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+lady-git = { workspace = true }
+lady-proto = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
