@@ -350,10 +350,24 @@ fn commit(
     repo: RepoId,
     message: String,
     amend: bool,
+    sign: bool,
     engine: State<GixEngine>,
 ) -> Result<Oid, String> {
     engine
-        .commit(&repo, &message, &CommitOpts { amend })
+        .commit(&repo, &message, &CommitOpts { amend, sign })
+        .map_err(|e| e.to_string())
+}
+
+/// Signature verification status for each commit oid (PH3-005 badge data).
+#[tauri::command]
+fn signature_statuses(
+    repo: RepoId,
+    oids: Vec<String>,
+    engine: State<GixEngine>,
+) -> Result<Vec<lady_proto::SignatureStatus>, String> {
+    let oids: Vec<Oid> = oids.into_iter().map(Oid::from).collect();
+    engine
+        .signature_statuses(&repo, &oids)
         .map_err(|e| e.to_string())
 }
 
@@ -873,6 +887,7 @@ pub fn run() {
             rebase_continue,
             rebase_skip,
             rebase_range,
+            signature_statuses,
             clone_repo,
             load_settings,
             save_settings

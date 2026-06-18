@@ -12,7 +12,8 @@ use std::sync::Mutex;
 use lady_proto::{
     AheadBehind, ApplyOutcome, Blame, BlameLine, ChangeKind, CommitMeta, ConflictSides,
     ConflictState, FfMode, FileDiff, FileDiffKind, FileStatus, MergeOutcome, Oid, ParsedConflict,
-    RebaseOutcome, RebaseStep, RefInfo, RefKind, RepoId, Signature, StashEntry, WorkingTree,
+    RebaseOutcome, RebaseStep, RefInfo, RefKind, RepoId, Signature, SignatureStatus, StashEntry,
+    WorkingTree,
 };
 
 /// Errors surfaced by a [`GitEngine`].
@@ -74,6 +75,10 @@ pub struct CommitOpts {
     /// Replace the tip commit (`git commit --amend`) instead of adding a new
     /// one. The author and date are preserved; the message is replaced.
     pub amend: bool,
+    /// Force-sign this commit (`git commit -S`) regardless of `commit.gpgsign`.
+    /// When `false`, the user's git config decides (ADR-0006); signing keys,
+    /// `gpg.format`, `gpg.program`, and passphrase prompts are git's own.
+    pub sign: bool,
 }
 
 /// Options for [`GitEngine::merge`].
@@ -327,6 +332,11 @@ pub trait GitEngine: Send + Sync {
     /// `onto` target (the parent of `from`) and the commits in the range, oldest
     /// first, ready to seed a [`RebaseStep`] plan (PH3-004 entry point).
     fn rebase_range(&self, repo: &RepoId, from: &Oid) -> Result<(Oid, Vec<CommitMeta>)>;
+
+    /// Verification status for each of `oids` (git's `%G?`), in the same order.
+    /// One `git log --no-walk` call covers the whole batch (PH3-005); unknown
+    /// oids map to [`SignatureStatus::None`].
+    fn signature_statuses(&self, repo: &RepoId, oids: &[Oid]) -> Result<Vec<SignatureStatus>>;
 }
 
 /// A [`GitEngine`] backed by [`gix`] for read-only access (ADR-0003).
@@ -986,6 +996,10 @@ impl GitEngine for GixEngine {
         if opts.amend {
             args.push("--amend");
         }
+        // Force a signature when asked; otherwise inherit `commit.gpgsign`.
+        if opts.sign {
+            args.push("-S");
+        }
         run_git_stdin(&wd, &args, message.as_bytes())?;
         // The new tip is the committed Oid.
         let out = run_git(&wd, &["rev-parse", "HEAD"])?;
@@ -1499,6 +1513,36 @@ exit 0\n";
             commits.push(commit_meta(&commit)?);
         }
         Ok((onto, commits))
+    }
+
+    fn signature_statuses(&self, repo: &RepoId, oids: &[Oid]) -> Result<Vec<SignatureStatus>> {
+        if oids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let wd = self.workdir(repo)?;
+        // One `git log --no-walk` over all requested commits: `%H<TAB>%G?` per
+        // line. `--no-walk=unsorted` keeps each named commit (no ancestry walk).
+        let mut args: Vec<&str> = vec!["log", "--no-walk=unsorted", "--format=%H%x09%G?"];
+        args.extend(oids.iter().map(|o| o.as_str()));
+        let out = run_git(&wd, &args)?;
+        let text = String::from_utf8_lossy(&out.stdout);
+
+        let mut by_oid: HashMap<&str, SignatureStatus> = HashMap::new();
+        for line in text.lines() {
+            let mut parts = line.splitn(2, '\t');
+            if let (Some(hash), Some(code)) = (parts.next(), parts.next()) {
+                by_oid.insert(hash, SignatureStatus::from_code(code));
+            }
+        }
+        Ok(oids
+            .iter()
+            .map(|o| {
+                by_oid
+                    .get(o.as_str())
+                    .copied()
+                    .unwrap_or(SignatureStatus::None)
+            })
+            .collect())
     }
 }
 
@@ -2530,7 +2574,14 @@ mod tests {
             .stage_paths(&id, &["new.txt".to_string()])
             .expect("stage");
         let amended = engine
-            .commit(&id, "add new.txt (amended)", &CommitOpts { amend: true })
+            .commit(
+                &id,
+                "add new.txt (amended)",
+                &CommitOpts {
+                    amend: true,
+                    sign: false,
+                },
+            )
             .expect("amend");
 
         assert_eq!(count(p), before + 1, "amend does NOT add a commit");
@@ -3376,6 +3427,119 @@ mod tests {
         assert_eq!(commits.len(), 2, "two commits in the range");
         assert_eq!(commits[0].summary, "add a.txt", "oldest first");
         assert_eq!(commits[1].summary, "add b.txt");
+    }
+
+    /// SSH commit signing end-to-end: generate an ephemeral ssh key + an
+    /// allowed-signers file in a tempdir, configure ssh signing, sign a commit
+    /// with `CommitOpts::sign`, and assert verification reads Good (PH3-005).
+    /// Skips cleanly when `ssh-keygen` is unavailable.
+    /// Parse `git --version` into (major, minor); `None` if unparseable.
+    fn git_version() -> Option<(u32, u32)> {
+        let out = Command::new("git").arg("--version").output().ok()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        let ver = text.split_whitespace().nth(2)?;
+        let mut parts = ver.split('.');
+        let major = parts.next()?.parse().ok()?;
+        let minor = parts.next()?.parse().ok()?;
+        Some((major, minor))
+    }
+
+    #[test]
+    fn ssh_signed_commit_verifies_good() {
+        // SSH commit signing requires git >= 2.34; skip on older toolchains.
+        match git_version() {
+            Some((maj, min)) if (maj, min) >= (2, 34) => {}
+            _ => {
+                eprintln!("git < 2.34 — skipping ssh_signed_commit_verifies_good");
+                return;
+            }
+        }
+
+        let dir = fixture_repo();
+        let p = dir.path();
+
+        // Generate an ed25519 key; skip the test if ssh-keygen isn't present.
+        let key = p.join("id_ed25519");
+        let keygen = Command::new("ssh-keygen")
+            .args([
+                "-t",
+                "ed25519",
+                "-N",
+                "",
+                "-C",
+                "lady-test",
+                "-q",
+                "-f",
+                key.to_str().expect("key path"),
+            ])
+            .status();
+        match keygen {
+            Ok(s) if s.success() => {}
+            _ => {
+                eprintln!("ssh-keygen unavailable — skipping ssh_signed_commit_verifies_good");
+                return;
+            }
+        }
+
+        let pub_key = std::fs::read_to_string(p.join("id_ed25519.pub")).expect("read pubkey");
+        // allowed_signers: "<principal> <keytype> <key> [comment]" — the
+        // principal must match the committer email used by the fixture.
+        let signers = p.join("allowed_signers");
+        std::fs::write(&signers, format!("test@example.com {pub_key}")).expect("write signers");
+
+        // Configure ssh signing for this repo only.
+        git(p, &["config", "gpg.format", "ssh"]);
+        git(
+            p,
+            &[
+                "config",
+                "user.signingkey",
+                key.with_extension("pub").to_str().expect("pub path"),
+            ],
+        );
+        git(
+            p,
+            &[
+                "config",
+                "gpg.ssh.allowedSignersFile",
+                signers.to_str().expect("signers path"),
+            ],
+        );
+
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open");
+
+        // Force-sign a fresh commit via the engine (-S path).
+        std::fs::write(p.join("signed.txt"), "signed\n").expect("write");
+        engine
+            .stage_paths(&id, &["signed.txt".to_string()])
+            .expect("stage");
+        let oid = engine
+            .commit(
+                &id,
+                "signed commit",
+                &CommitOpts {
+                    amend: false,
+                    sign: true,
+                },
+            )
+            .expect("signed commit");
+
+        let statuses = engine
+            .signature_statuses(&id, &[oid])
+            .expect("signature statuses");
+        assert_eq!(
+            statuses,
+            vec![SignatureStatus::Good],
+            "ssh-signed commit should verify Good"
+        );
+
+        // The previous (unsigned) fixture commit reads None.
+        let prev = git_out(p, &["rev-parse", "HEAD~1"]);
+        let base = engine
+            .signature_statuses(&id, &[Oid::from(prev)])
+            .expect("status");
+        assert_eq!(base, vec![SignatureStatus::None]);
     }
 
     #[test]

@@ -12,6 +12,8 @@ import SyncBar from "./SyncBar";
 import RepoBar from "./RepoBar";
 import ConflictResolver from "./ConflictResolver";
 import InteractiveRebase from "./InteractiveRebase";
+import SignatureBadge from "./SignatureBadge";
+import type { SignatureStatus } from "./commands";
 import CommandPalette from "./CommandPalette";
 import type { PaletteEntry } from "./CommandPalette";
 
@@ -23,6 +25,7 @@ const App: Component = () => {
   const [refs, setRefs] = createSignal<RefInfo[]>([]);
   const [tab, setTab] = createSignal<Tab>("changes");
   const [selectedCommit, setSelectedCommit] = createSignal<string | null>(null);
+  const [selectedSig, setSelectedSig] = createSignal<SignatureStatus | undefined>(undefined);
   const [files, setFiles] = createSignal<string[]>([]);
   const [navFile, setNavFile] = createSignal<string | undefined>(undefined);
   const [paletteOpen, setPaletteOpen] = createSignal(false);
@@ -115,6 +118,17 @@ const App: Component = () => {
     }
     refresh();
   };
+
+  // Fetch the selected commit's signature status for the details badge.
+  createEffect(() => {
+    const repo = active();
+    const oid = selectedCommit();
+    setSelectedSig(undefined);
+    if (!repo || !oid) return;
+    invoke<SignatureStatus[]>("signature_statuses", { repo: repo.id, oids: [oid] })
+      .then((s) => setSelectedSig(s[0]))
+      .catch(() => {});
+  });
 
   onMount(async () => {
     const data = await invoke<AppInfo>("app_info");
@@ -287,6 +301,8 @@ const App: Component = () => {
                     <button onClick={() => setRebaseFrom(selectedCommit())}>
                       Rebase i from here
                     </button>
+                    <span style={{ flex: "1" }} />
+                    <SignatureBadge status={selectedSig()} />
                   </div>
                   <div style={{ flex: "1", "min-height": "0" }}>
                     <DiffView repoId={repoId()!} commit={selectedCommit()!} />

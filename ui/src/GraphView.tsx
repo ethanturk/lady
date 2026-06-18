@@ -11,11 +11,13 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   CommitGraphRow,
   RepoId,
+  SignatureStatus,
   StashEntry,
   WalkLogGraphResult,
   WalkLogQuery,
 } from "./commands";
 import { relTime } from "./time";
+import SignatureBadge from "./SignatureBadge";
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 const ROW_H = 48;
@@ -102,6 +104,8 @@ const GraphView: Component<{
   const [cursor, setCursor] = createSignal<string | undefined>(undefined);
   const [layoutState, setLayoutState] = createSignal<(string | null)[]>([]);
   const [stashes, setStashes] = createSignal<StashEntry[]>([]);
+  // Signature verification status per commit oid (PH3-005), fetched per page.
+  const [sigs, setSigs] = createSignal<Record<string, SignatureStatus>>({});
 
   let listContainer!: HTMLDivElement;
   let canvasEl!: HTMLCanvasElement;
@@ -158,6 +162,19 @@ const GraphView: Component<{
       setHasMore(fresh.length === BATCH);
       setLayoutState(result.layout_state);
       if (fresh.length > 0) setCursor(fresh[fresh.length - 1].oid);
+      // Fetch signature statuses for this page in one batch call.
+      if (fresh.length > 0) {
+        const oids = fresh.map((r) => r.oid);
+        invoke<SignatureStatus[]>("signature_statuses", { repo: props.repoId, oids })
+          .then((statuses) => {
+            setSigs((prev) => {
+              const next = { ...prev };
+              oids.forEach((o, i) => (next[o] = statuses[i]));
+              return next;
+            });
+          })
+          .catch(() => {});
+      }
     } finally {
       setLoading(false);
     }
@@ -287,6 +304,7 @@ const GraphView: Component<{
                   >
                     {row.summary}
                   </span>
+                  <SignatureBadge status={sigs()[row.oid]} />
                   <span
                     style={{
                       color: "#555",

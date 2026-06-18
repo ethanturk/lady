@@ -111,6 +111,7 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
   const [selected, setSelected] = createSignal<Selection | null>(null);
   const [message, setMessage] = createSignal("");
   const [amend, setAmend] = createSignal(false);
+  const [sign, setSign] = createSignal(false);
   const [recent, setRecent] = createSignal<string[]>([]);
   const [stashes, setStashes] = createSignal<StashEntry[]>([]);
   const [stashUntracked, setStashUntracked] = createSignal(false);
@@ -208,7 +209,7 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
 
   const doCommit = () => {
     if (!canCommit()) return;
-    invoke<string>("commit", { repo: props.repoId, message: message(), amend: amend() })
+    invoke<string>("commit", { repo: props.repoId, message: message(), amend: amend(), sign: sign() })
       .then(() => {
         setMessage("");
         setAmend(false);
@@ -308,6 +309,10 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
         <label style={{ display: "flex", "align-items": "center", gap: "0.25rem", "font-size": "0.8rem" }}>
           <input type="checkbox" checked={amend()} onChange={toggleAmend} />
           Amend last commit
+        </label>
+        <label style={{ display: "flex", "align-items": "center", gap: "0.25rem", "font-size": "0.8rem" }}>
+          <input type="checkbox" checked={sign()} onChange={() => setSign((s) => !s)} />
+          Sign (-S)
         </label>
         <Show when={recent().length > 0}>
           <select

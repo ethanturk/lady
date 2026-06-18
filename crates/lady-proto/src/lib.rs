@@ -345,6 +345,33 @@ pub struct RebaseStep {
     pub message: Option<String>,
 }
 
+/// Verification status of a commit's signature (from git's `%G?`), surfaced as
+/// a badge. Maps git's many codes down to four user-facing states.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SignatureStatus {
+    /// A valid signature from a trusted key (`G`).
+    Good,
+    /// A bad / invalid signature (`B`).
+    Bad,
+    /// A signature that verifies but whose key is untrusted, expired, or
+    /// revoked (`U` / `X` / `Y` / `R`).
+    Untrusted,
+    /// No signature, or git cannot check it (`N` / `E`).
+    None,
+}
+
+impl SignatureStatus {
+    /// Map git's `%G?` code character to a status.
+    pub fn from_code(code: &str) -> SignatureStatus {
+        match code.trim() {
+            "G" => SignatureStatus::Good,
+            "B" => SignatureStatus::Bad,
+            "U" | "X" | "Y" | "R" => SignatureStatus::Untrusted,
+            _ => SignatureStatus::None,
+        }
+    }
+}
+
 /// What mid-operation state a repository is in, used to drive conflict
 /// resolution and the correct `--abort` path.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

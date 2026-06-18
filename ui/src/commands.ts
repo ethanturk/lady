@@ -187,6 +187,9 @@ export interface RebaseStep {
   message: string | null;
 }
 
+/** Mirrors lady_proto::SignatureStatus. */
+export type SignatureStatus = "Good" | "Bad" | "Untrusted" | "None";
+
 /** Mirrors lady_proto::ConflictState. */
 export type ConflictState = "None" | "Merge" | "Rebase" | "CherryPick" | "Revert";
 
