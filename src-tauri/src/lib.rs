@@ -1075,6 +1075,37 @@ async fn hosting_connect(
     })
 }
 
+/// List the authenticated user's GitHub notifications (PH4-006). Requires a
+/// stored GitHub token.
+#[tauri::command]
+async fn github_notifications(
+    hosting: State<'_, Hosting>,
+) -> Result<Vec<lady_hosting::Notification>, String> {
+    let token = hosting
+        .store
+        .get(lady_hosting::ForgeKind::GitHub.token_key())
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Not connected to GitHub — connect in Settings first.".to_string())?;
+    lady_hosting::GitHubClient::new()
+        .list_notifications(&token)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Mark a GitHub notification thread read (PH4-006).
+#[tauri::command]
+async fn github_mark_read(id: String, hosting: State<'_, Hosting>) -> Result<(), String> {
+    let token = hosting
+        .store
+        .get(lady_hosting::ForgeKind::GitHub.token_key())
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Not connected to GitHub.".to_string())?;
+    lady_hosting::GitHubClient::new()
+        .mark_read(&token, &id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Create a remote repository on `forge` and return its URLs (PH4-005).
 /// Optionally wires the clone URL as `origin` on `add_origin_to` repo.
 #[allow(clippy::too_many_arguments)]
@@ -1358,6 +1389,8 @@ pub fn run() {
             hosting_connect,
             hosting_sign_out,
             create_remote_repo,
+            github_notifications,
+            github_mark_read,
             github_create_pr,
             open_url,
             license_status,

@@ -12,7 +12,7 @@ UI stories also note a manual window check here.
 - [x] PH4-003 Bitbucket auth + create pull request
 - [x] PH4-004 Azure DevOps auth + create pull request
 - [x] PH4-005 Create remote repository (provider-agnostic)
-- [ ] PH4-006 GitHub notifications inbox
+- [x] PH4-006 GitHub notifications inbox
 - [ ] PH4-007 Git LFS support
 - [ ] PH4-008 git-flow support
 - [ ] PH4-009 Submodule management
@@ -24,3 +24,6 @@ UI stories also note a manual window check here.
   section (forge dropdown, name/private/description, owner+project for
   Bitbucket/Azure, add-as-origin). create_repo implemented + wiremock-tested for
   all four forges; add_remote engine op wires origin. Live creation is manual.
+- PH4-006: GitHub notifications — NotificationsView inbox (list, open, mark read,
+  60s poll) + a tab unread badge (App-level background poll). Needs a manual
+  window check with a connected GitHub account. (Build + typecheck green.)

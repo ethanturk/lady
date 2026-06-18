@@ -232,6 +232,17 @@ export interface RepoInfo {
   web_url: string;
 }
 
+/** Mirrors lady_hosting::Notification (GitHub). */
+export interface Notification {
+  id: string;
+  title: string;
+  repo: string;
+  kind: string;
+  url: string;
+  unread: boolean;
+  updated: string;
+}
+
 /** All forges, for selectors. */
 export const FORGE_KINDS: ForgeKind[] = ["GitHub", "GitLab", "Bitbucket", "AzureDevOps"];
 

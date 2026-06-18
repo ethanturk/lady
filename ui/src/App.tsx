@@ -17,6 +17,7 @@ import ReflogView from "./ReflogView";
 import BisectView from "./BisectView";
 import CustomCommandsView from "./CustomCommandsView";
 import SettingsView from "./SettingsView";
+import NotificationsView from "./NotificationsView";
 import LicenseGate from "./LicenseGate";
 import SignatureBadge from "./SignatureBadge";
 import type { LicenseStatus, SignatureStatus } from "./commands";
@@ -34,11 +35,13 @@ type Tab =
   | "reflog"
   | "bisect"
   | "commands"
-  | "settings";
+  | "settings"
+  | "notifications";
 
 const App: Component = () => {
   const [info, setInfo] = createSignal<AppInfo | null>(null);
   const [license, setLicense] = createSignal<LicenseStatus | null>(null);
+  const [unread, setUnread] = createSignal(0);
   const [active, setActive] = createSignal<OpenRepo | null>(null);
   const [refs, setRefs] = createSignal<RefInfo[]>([]);
   const [tab, setTab] = createSignal<Tab>("changes");
@@ -154,6 +157,14 @@ const App: Component = () => {
     const data = await invoke<AppInfo>("app_info");
     setInfo(data);
     invoke<LicenseStatus>("license_status").then(setLicense).catch(() => {});
+    // Background poll for the notifications badge (best-effort; needs a GitHub
+    // token, otherwise silently stays at 0).
+    const pollUnread = () =>
+      invoke<{ unread: boolean }[]>("github_notifications")
+        .then((n) => setUnread(n.filter((x) => x.unread).length))
+        .catch(() => {});
+    pollUnread();
+    setInterval(pollUnread, 60_000);
   });
 
   const repoId = () => active()?.id ?? null;
@@ -295,6 +306,14 @@ const App: Component = () => {
           <button style={tabStyle("settings")} onClick={() => setTab("settings")}>
             Settings
           </button>
+          <button style={tabStyle("notifications")} onClick={() => setTab("notifications")}>
+            Notifications
+            <Show when={unread() > 0}>
+              <span style={{ "margin-left": "0.3rem", background: "#cf222e", color: "#fff", "border-radius": "8px", padding: "0 0.35rem", "font-size": "0.7rem" }}>
+                {unread()}
+              </span>
+            </Show>
+          </button>
           <Show when={conflictState() !== "None"}>
             <button
               style={{ ...tabStyle("conflicts"), background: tab() === "conflicts" ? "#d1242f" : "#ffe0e0", color: tab() === "conflicts" ? "#fff" : "#d1242f" }}
@@ -394,6 +413,9 @@ const App: Component = () => {
           </Show>
           <Show when={tab() === "settings"}>
             <SettingsView repoId={repoId()!} />
+          </Show>
+          <Show when={tab() === "notifications"}>
+            <NotificationsView refreshNonce={refreshNonce()} onUnread={setUnread} />
           </Show>
           <Show when={tab() === "conflicts"}>
             <ConflictResolver

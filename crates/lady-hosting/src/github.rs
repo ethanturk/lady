@@ -4,8 +4,20 @@ use serde::Deserialize;
 
 use crate::{
     api_error_message, detect_github_slug, Error, ForgeKind, HostingProvider, NewPullRequest,
-    NewRepo, RepoInfo, RepoSlug, Result,
+    NewRepo, Notification, RepoInfo, RepoSlug, Result,
 };
+
+/// Convert a notification subject's API URL to a best-effort browser URL.
+fn notification_html_url(api_url: &str, full_name: &str) -> String {
+    if let Some(rest) = api_url.strip_prefix("https://api.github.com/repos/") {
+        // `.../pulls/N` → `.../pull/N`; issues/commits map through unchanged.
+        return format!(
+            "https://github.com/{}",
+            rest.replacen("/pulls/", "/pull/", 1)
+        );
+    }
+    format!("https://github.com/{full_name}")
+}
 
 #[derive(Deserialize)]
 struct GitHubUser {
@@ -40,6 +52,92 @@ impl GitHubClient {
                 .build()
                 .expect("build reqwest client"),
         }
+    }
+
+    /// List the authenticated user's notification threads (PH4-006).
+    pub async fn list_notifications(&self, token: &str) -> Result<Vec<Notification>> {
+        let resp = self
+            .http
+            .get(format!("{}/notifications", self.base_url))
+            .bearer_auth(token)
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+        let status = resp.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(Error::Unauthorized);
+        }
+        if !status.is_success() {
+            return Err(Error::Api {
+                status: status.as_u16(),
+                message: resp.text().await.unwrap_or_default(),
+            });
+        }
+        let arr: Vec<serde_json::Value> =
+            resp.json().await.map_err(|e| Error::Http(e.to_string()))?;
+        Ok(arr
+            .iter()
+            .map(|n| {
+                let repo = n
+                    .pointer("/repository/full_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let api_url = n
+                    .pointer("/subject/url")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                Notification {
+                    id: n
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    title: n
+                        .pointer("/subject/title")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    kind: n
+                        .pointer("/subject/type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    url: notification_html_url(api_url, &repo),
+                    repo,
+                    unread: n.get("unread").and_then(|v| v.as_bool()).unwrap_or(false),
+                    updated: n
+                        .get("updated_at")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                }
+            })
+            .collect())
+    }
+
+    /// Mark a notification thread read (PH4-006).
+    pub async fn mark_read(&self, token: &str, id: &str) -> Result<()> {
+        let resp = self
+            .http
+            .patch(format!("{}/notifications/threads/{}", self.base_url, id))
+            .bearer_auth(token)
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+        let status = resp.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(Error::Unauthorized);
+        }
+        if !status.is_success() {
+            return Err(Error::Api {
+                status: status.as_u16(),
+                message: resp.text().await.unwrap_or_default(),
+            });
+        }
+        Ok(())
     }
 }
 
@@ -275,5 +373,46 @@ mod tests {
             .expect("create repo");
         assert_eq!(info.clone_url, "https://github.com/octocat/newrepo.git");
         assert_eq!(info.web_url, "https://github.com/octocat/newrepo");
+    }
+
+    #[tokio::test]
+    async fn list_notifications_and_mark_read() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/notifications"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {
+                    "id": "123",
+                    "unread": true,
+                    "updated_at": "2026-06-01T10:00:00Z",
+                    "subject": {
+                        "title": "Fix the bug",
+                        "type": "PullRequest",
+                        "url": "https://api.github.com/repos/octocat/hello/pulls/7"
+                    },
+                    "repository": { "full_name": "octocat/hello" }
+                }
+            ])))
+            .mount(&server)
+            .await;
+        let c = GitHubClient::with_base_url(server.uri());
+        let notes = c.list_notifications("tok").await.expect("list");
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].id, "123");
+        assert_eq!(notes[0].title, "Fix the bug");
+        assert_eq!(notes[0].repo, "octocat/hello");
+        assert_eq!(notes[0].kind, "PullRequest");
+        assert!(notes[0].unread);
+        // PR API url is converted to a browser /pull/ url.
+        assert_eq!(notes[0].url, "https://github.com/octocat/hello/pull/7");
+
+        let server2 = MockServer::start().await;
+        Mock::given(method("PATCH"))
+            .and(path("/notifications/threads/123"))
+            .respond_with(ResponseTemplate::new(205))
+            .mount(&server2)
+            .await;
+        let c2 = GitHubClient::with_base_url(server2.uri());
+        c2.mark_read("tok", "123").await.expect("mark read");
     }
 }

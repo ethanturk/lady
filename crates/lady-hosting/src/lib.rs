@@ -150,6 +150,25 @@ pub struct RepoInfo {
     pub web_url: String,
 }
 
+/// A GitHub notification thread (PH4-006).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Notification {
+    /// Thread id (used to mark read).
+    pub id: String,
+    /// Subject title.
+    pub title: String,
+    /// Repository full name (`owner/repo`).
+    pub repo: String,
+    /// Subject type (e.g. `PullRequest`, `Issue`, `Release`).
+    pub kind: String,
+    /// Best-effort browser URL for the subject.
+    pub url: String,
+    /// Whether the thread is unread.
+    pub unread: bool,
+    /// Last-updated timestamp (ISO 8601).
+    pub updated: String,
+}
+
 /// A forge-agnostic hosting provider. One implementation per forge; resolved
 /// from a remote by [`provider_for`].
 #[async_trait::async_trait]
