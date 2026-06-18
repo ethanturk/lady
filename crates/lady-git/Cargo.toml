@@ -9,3 +9,7 @@ description = "Git engine abstraction (GitEngine trait) over read backends (gix/
 [dependencies]
 lady-proto = { workspace = true }
 thiserror = { workspace = true }
+gix = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

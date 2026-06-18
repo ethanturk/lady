@@ -22,6 +22,9 @@ allow = [
     "MPL-2.0",
     "ISC",
     "Unicode-3.0",
+    # zlib-rs (pure-Rust zlib backend pulled by gix `max-performance-safe`).
+    # The zlib license is OSI-approved and permissive (no copyleft). ADR-0004.
+    "Zlib",
 ]
 confidence-threshold = 0.8
 
