@@ -153,7 +153,12 @@ const HunkSplit: Component<{ hunk: DiffHunk; lang: string | undefined }> = (prop
   </For>
 );
 
-const FileBlock: Component<{ file: FileDiff; mode: Mode }> = (props) => {
+const FileBlock: Component<{
+  file: FileDiff;
+  mode: Mode;
+  hunkActionLabel?: string;
+  onHunkAction?: (path: string, hunkIndex: number) => void;
+}> = (props) => {
   const lang = () => langFromPath(props.file.path);
   return (
     <div style={{ "margin-bottom": "1rem", border: "1px solid #ddd", "border-radius": "4px" }}>
@@ -201,10 +206,13 @@ const FileBlock: Component<{ file: FileDiff; mode: Mode }> = (props) => {
       </Show>
       <Show when={props.file.hunks.length > 0}>
         <For each={props.file.hunks}>
-          {(hunk) => (
+          {(hunk, hunkIndex) => (
             <div style={{ "border-top": "1px solid #eee" }}>
               <div
                 style={{
+                  display: "flex",
+                  "align-items": "center",
+                  gap: "0.5rem",
                   background: "#f0f3f6",
                   color: "#666",
                   "font-family": "monospace",
@@ -212,7 +220,23 @@ const FileBlock: Component<{ file: FileDiff; mode: Mode }> = (props) => {
                   padding: "0.15rem 0.5rem",
                 }}
               >
-                @@ -{hunk.old_start},{hunk.old_lines} +{hunk.new_start},{hunk.new_lines} @@
+                <span style={{ flex: "1" }}>
+                  @@ -{hunk.old_start},{hunk.old_lines} +{hunk.new_start},{hunk.new_lines} @@
+                </span>
+                <Show when={props.onHunkAction}>
+                  <button
+                    style={{
+                      border: "1px solid #ccc",
+                      background: "#fff",
+                      "border-radius": "3px",
+                      "font-size": "0.7rem",
+                      cursor: "pointer",
+                    }}
+                    onClick={() => props.onHunkAction!(props.file.path, hunkIndex())}
+                  >
+                    {props.hunkActionLabel ?? "Stage hunk"}
+                  </button>
+                </Show>
               </div>
               <Show when={props.mode === "unified"} fallback={<HunkSplit hunk={hunk} lang={lang()} />}>
                 <HunkUnified hunk={hunk} lang={lang()} />
@@ -235,6 +259,9 @@ const DiffView: Component<{
   commit?: string;
   spec?: DiffSpec;
   filterPath?: string;
+  /** When set, each hunk shows this button calling onHunkAction(path, idx). */
+  hunkActionLabel?: string;
+  onHunkAction?: (path: string, hunkIndex: number) => void;
 }> = (props) => {
   const [files, setFiles] = createSignal<FileDiff[]>([]);
   const [mode, setMode] = createSignal<Mode>("unified");
@@ -302,7 +329,16 @@ const DiffView: Component<{
         <Show when={!loading() && files().length === 0 && !err()}>
           <p style={{ color: "#888", "font-size": "0.85rem" }}>No changes.</p>
         </Show>
-        <For each={files()}>{(file) => <FileBlock file={file} mode={mode()} />}</For>
+        <For each={files()}>
+          {(file) => (
+            <FileBlock
+              file={file}
+              mode={mode()}
+              hunkActionLabel={props.hunkActionLabel}
+              onHunkAction={props.onHunkAction}
+            />
+          )}
+        </For>
       </div>
     </div>
   );

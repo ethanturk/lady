@@ -152,6 +152,18 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
       .catch((e) => setErr(String(e)));
   };
 
+  // Stage / unstage a single hunk of a file by index (PH2-004).
+  const stageHunk = (path: string, hunk: number) => {
+    invoke("stage_hunks", { repo: props.repoId, path, hunks: [hunk] })
+      .then(afterMutation)
+      .catch((e) => setErr(String(e)));
+  };
+  const unstageHunk = (path: string, hunk: number) => {
+    invoke("unstage_hunks", { repo: props.repoId, path, hunks: [hunk] })
+      .then(afterMutation)
+      .catch((e) => setErr(String(e)));
+  };
+
   const untrackedAsFiles = (): FileStatus[] =>
     (wt()?.untracked ?? []).map((path) => ({ path, old_path: null, kind: "Untracked" as const }));
 
@@ -253,7 +265,12 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
       {/* Right: the diff for the selected file. */}
       <Show when={selectedSpec()}>
         <div style={{ flex: "1", "min-width": "0", "border-left": "1px solid #ddd", overflow: "hidden" }}>
-          <DiffView repoId={props.repoId} spec={selectedSpec()!} />
+          <DiffView
+            repoId={props.repoId}
+            spec={selectedSpec()!}
+            hunkActionLabel={selected()!.staged ? "Unstage hunk" : "Stage hunk"}
+            onHunkAction={selected()!.staged ? unstageHunk : stageHunk}
+          />
         </div>
       </Show>
     </div>

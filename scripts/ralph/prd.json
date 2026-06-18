@@ -57,7 +57,7 @@
         "Unit test: build a patch for 1 of 2 hunks, apply --cached, assert only that hunk is staged (status + staged diff) and the index is not corrupted; cargo fmt/clippy -D warnings/test green; cargo deny passes; npm run build green; manual window note in progress.txt"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §6.3 — the hard one; foundation for AI Commit Composer later. PH1-007 deferred the patch builder to here. Test against real `git apply` to guarantee patch validity."
     },
     {

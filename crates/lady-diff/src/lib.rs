@@ -43,6 +43,55 @@ pub fn text_diff(old_text: &str, new_text: &str) -> Vec<DiffHunk> {
     build_hunks(&old_lines, &new_lines, &changes, CONTEXT)
 }
 
+/// Build a unified diff for `path` containing only the `selected` hunks
+/// (indices into `hunks`), suitable for `git apply [--cached]`.
+///
+/// The `+` (new-side) start line of each emitted hunk is recomputed so the
+/// patch is self-consistent as if *only* the selected hunks existed — this is
+/// what makes partial staging of a hunk subset apply cleanly. The old-side
+/// start/counts come straight from the hunk (they address the unchanged base,
+/// e.g. the index when staging working changes).
+///
+/// Note: lines are emitted with a trailing `\n`; files without a final newline
+/// are not specially marked (acceptable for the common case).
+pub fn build_patch(path: &str, hunks: &[DiffHunk], selected: &[usize]) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("diff --git a/{path} b/{path}\n"));
+    out.push_str(&format!("--- a/{path}\n"));
+    out.push_str(&format!("+++ b/{path}\n"));
+
+    // Running new-vs-old line delta across previously emitted hunks.
+    let mut delta: i64 = 0;
+    for &idx in selected {
+        let Some(h) = hunks.get(idx) else { continue };
+
+        let old_count = h.lines.iter().filter(|l| l.kind != LineKind::Added).count() as u32;
+        let new_count = h
+            .lines
+            .iter()
+            .filter(|l| l.kind != LineKind::Deleted)
+            .count() as u32;
+        let new_start = (h.old_start as i64 + delta).max(1) as u32;
+
+        out.push_str(&format!(
+            "@@ -{},{} +{},{} @@\n",
+            h.old_start, old_count, new_start, new_count
+        ));
+        for line in &h.lines {
+            let sign = match line.kind {
+                LineKind::Context => ' ',
+                LineKind::Deleted => '-',
+                LineKind::Added => '+',
+            };
+            out.push(sign);
+            out.push_str(&line.content);
+            out.push('\n');
+        }
+        delta += new_count as i64 - old_count as i64;
+    }
+    out
+}
+
 /// Build `DiffHunk` structures from raw `(old_range, new_range)` change blocks.
 fn build_hunks(
     old_lines: &[&str],
@@ -177,6 +226,40 @@ mod tests {
             .collect();
         assert_eq!(deleted.len(), 1);
         assert_eq!(deleted[0].content, "b");
+    }
+
+    #[test]
+    fn build_patch_emits_only_selected_hunks_with_valid_headers() {
+        // Two well-separated changes → two hunks.
+        let old: String = (1..=40).map(|i| format!("line{i}\n")).collect();
+        let new: String = (1..=40)
+            .map(|i| match i {
+                5 => "FIRST\n".to_owned(),
+                35 => "SECOND\n".to_owned(),
+                _ => format!("line{i}\n"),
+            })
+            .collect();
+        let hunks = text_diff(&old, &new);
+        assert_eq!(hunks.len(), 2, "two separated changes → two hunks");
+
+        // Patch with only the first hunk.
+        let patch = build_patch("f.txt", &hunks, &[0]);
+        assert!(patch.starts_with("diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n"));
+        assert_eq!(patch.matches("@@ ").count(), 1, "exactly one hunk header");
+        assert!(patch.contains("+FIRST"), "selected hunk body present");
+        assert!(!patch.contains("SECOND"), "unselected hunk excluded");
+
+        // Header counts must match the emitted body for the one hunk.
+        let header = patch.lines().find(|l| l.starts_with("@@ ")).unwrap();
+        // For a 1-for-1 line swap the counts are equal old/new.
+        assert!(header.contains(",7 +"), "context(3)+change lines old count");
+    }
+
+    #[test]
+    fn build_patch_with_no_selection_is_header_only() {
+        let hunks = text_diff("a\nb\n", "a\nB\n");
+        let patch = build_patch("x", &hunks, &[]);
+        assert_eq!(patch, "diff --git a/x b/x\n--- a/x\n+++ b/x\n");
     }
 
     #[test]

@@ -119,6 +119,12 @@ pub trait GitEngine: Send + Sync {
     /// state, or removing it from the index on an unborn branch (no commits
     /// yet). A no-op when `paths` is empty.
     fn unstage_paths(&self, repo: &RepoId, paths: &[String]) -> Result<()>;
+
+    /// Apply a unified-diff `patch` via shell-out `git apply`, optionally to the
+    /// index (`cached`) and/or reversed (`reverse`). Powers partial staging:
+    /// forward+cached stages selected hunks, reverse+cached unstages them, and
+    /// reverse (no cached) discards them from the working tree.
+    fn apply_patch(&self, repo: &RepoId, patch: &str, reverse: bool, cached: bool) -> Result<()>;
 }
 
 /// A [`GitEngine`] backed by [`gix`] for read-only access (ADR-0003).
@@ -190,6 +196,41 @@ pub(crate) fn run_git(workdir: &Path, args: &[&str]) -> Result<std::process::Out
         }));
     }
     Ok(out)
+}
+
+/// Run system `git` in `workdir`, feeding `input` to its stdin (used for
+/// `git apply`, which reads the patch from stdin). Errors carry git's stderr.
+pub(crate) fn run_git_stdin(workdir: &Path, args: &[&str], input: &[u8]) -> Result<()> {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut child = Command::new("git")
+        .current_dir(workdir)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| Error::Git(format!("failed to run git: {e}")))?;
+    child
+        .stdin
+        .take()
+        .expect("git stdin was piped")
+        .write_all(input)
+        .map_err(|e| Error::Git(format!("failed to write to git stdin: {e}")))?;
+    let out = child
+        .wait_with_output()
+        .map_err(|e| Error::Git(e.to_string()))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let msg = stderr.trim();
+        return Err(Error::Git(if msg.is_empty() {
+            format!("git {args:?} failed ({})", out.status)
+        } else {
+            msg.to_string()
+        }));
+    }
+    Ok(())
 }
 
 impl Default for GixEngine {
@@ -557,6 +598,19 @@ impl GitEngine for GixEngine {
         args.extend(paths.iter().map(String::as_str));
         run_git(&wd, &args).map(|_| ())
     }
+
+    fn apply_patch(&self, repo: &RepoId, patch: &str, reverse: bool, cached: bool) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        let mut args: Vec<&str> = vec!["apply"];
+        if cached {
+            args.push("--cached");
+        }
+        if reverse {
+            args.push("--reverse");
+        }
+        // No file arg → git reads the patch from stdin.
+        run_git_stdin(&wd, &args, patch.as_bytes())
+    }
 }
 
 // ── Status parsing ────────────────────────────────────────────────────────────
@@ -719,7 +773,11 @@ fn cat_blob(workdir: &Path, rev_path: &str) -> Option<Vec<u8>> {
 /// Build a single-file [`FileDiff`] from two byte sides (`None` = absent).
 /// Returns an empty vec when the file is absent on both sides.
 fn single_file_diff(old: Option<&[u8]>, new: Option<&[u8]>, path: &str) -> Vec<FileDiff> {
+    // Absent on both sides, or byte-identical: no change to show.
     if old.is_none() && new.is_none() {
+        return Vec::new();
+    }
+    if old == new {
         return Vec::new();
     }
     let bd = blob_diff_bytes(old, new, path);
@@ -1314,6 +1372,90 @@ mod tests {
             .expect("commit diff");
         assert_eq!(commit_diff.len(), 1);
         assert_eq!(commit_diff[0].path, "a.txt");
+    }
+
+    #[test]
+    fn apply_patch_stages_one_hunk_of_two() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let p = dir.path();
+        git(p, &["init", "-q", "-b", "main"]);
+        git(p, &["config", "user.name", "Lady Test"]);
+        git(p, &["config", "user.email", "test@example.com"]);
+        git(p, &["config", "commit.gpgsign", "false"]);
+
+        // 40-line base; change line 5 and line 35 → two well-separated hunks.
+        let base: String = (1..=40).map(|i| format!("line{i}\n")).collect();
+        std::fs::write(p.join("f.txt"), &base).expect("write");
+        git(p, &["add", "."]);
+        git(p, &["commit", "-q", "-m", "base"]);
+
+        let modified: String = (1..=40)
+            .map(|i| match i {
+                5 => "FIRST\n".to_owned(),
+                35 => "SECOND\n".to_owned(),
+                _ => format!("line{i}\n"),
+            })
+            .collect();
+        std::fs::write(p.join("f.txt"), &modified).expect("write");
+
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open");
+
+        // The unstaged (working-vs-index) diff has two hunks.
+        let working = engine
+            .diff_spec(&id, &DiffSpec::WorkingVsIndex("f.txt".to_string()))
+            .expect("working diff");
+        assert_eq!(working[0].hunks.len(), 2, "two hunks before staging");
+
+        // Build a patch for only the first hunk and stage it.
+        let patch = lady_diff::build_patch("f.txt", &working[0].hunks, &[0]);
+        engine
+            .apply_patch(&id, &patch, false, true)
+            .expect("git apply --cached must accept the patch");
+
+        // Staged diff (index-vs-HEAD) must contain only the FIRST change.
+        let staged = engine
+            .diff_spec(&id, &DiffSpec::IndexVsHead("f.txt".to_string()))
+            .expect("staged diff");
+        let staged_added: Vec<&str> = staged[0]
+            .hunks
+            .iter()
+            .flat_map(|h| h.lines.iter())
+            .filter(|l| l.kind == lady_proto::LineKind::Added)
+            .map(|l| l.content.as_str())
+            .collect();
+        assert_eq!(staged_added, vec!["FIRST"], "only the first hunk is staged");
+
+        // The SECOND change remains unstaged (still in working-vs-index).
+        let working_after = engine
+            .diff_spec(&id, &DiffSpec::WorkingVsIndex("f.txt".to_string()))
+            .expect("working diff after");
+        let working_added: Vec<&str> = working_after[0]
+            .hunks
+            .iter()
+            .flat_map(|h| h.lines.iter())
+            .filter(|l| l.kind == lady_proto::LineKind::Added)
+            .map(|l| l.content.as_str())
+            .collect();
+        assert_eq!(
+            working_added,
+            vec!["SECOND"],
+            "the second hunk stays unstaged"
+        );
+
+        // Index is not corrupted: status parses and lists f.txt in both sets.
+        let wt = engine.status(&id).expect("status after partial stage");
+        assert!(wt.staged.iter().any(|f| f.path == "f.txt"));
+        assert!(wt.unstaged.iter().any(|f| f.path == "f.txt"));
+
+        // Reverse the same patch (cached) to unstage it again.
+        engine
+            .apply_patch(&id, &patch, true, true)
+            .expect("reverse apply --cached unstages");
+        let staged_empty = engine
+            .diff_spec(&id, &DiffSpec::IndexVsHead("f.txt".to_string()))
+            .expect("staged diff after unstage");
+        assert!(staged_empty.is_empty(), "nothing staged after reverse");
     }
 
     #[test]

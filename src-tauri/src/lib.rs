@@ -219,6 +219,48 @@ fn unstage_paths(repo: RepoId, paths: Vec<String>, engine: State<GixEngine>) -> 
         .map_err(|e| e.to_string())
 }
 
+/// Stage a subset of `hunks` (indices into the unstaged working-vs-index diff)
+/// of `path` by building a patch and `git apply --cached`-ing it.
+#[tauri::command]
+fn stage_hunks(
+    repo: RepoId,
+    path: String,
+    hunks: Vec<usize>,
+    engine: State<GixEngine>,
+) -> Result<(), String> {
+    let diffs = engine
+        .diff_spec(&repo, &DiffSpec::WorkingVsIndex(path.clone()))
+        .map_err(|e| e.to_string())?;
+    let Some(file) = diffs.into_iter().next() else {
+        return Ok(());
+    };
+    let patch = lady_diff::build_patch(&path, &file.hunks, &hunks);
+    engine
+        .apply_patch(&repo, &patch, false, true)
+        .map_err(|e| e.to_string())
+}
+
+/// Unstage a subset of `hunks` (indices into the staged index-vs-HEAD diff) of
+/// `path` by reverse-applying the patch against the index.
+#[tauri::command]
+fn unstage_hunks(
+    repo: RepoId,
+    path: String,
+    hunks: Vec<usize>,
+    engine: State<GixEngine>,
+) -> Result<(), String> {
+    let diffs = engine
+        .diff_spec(&repo, &DiffSpec::IndexVsHead(path.clone()))
+        .map_err(|e| e.to_string())?;
+    let Some(file) = diffs.into_iter().next() else {
+        return Ok(());
+    };
+    let patch = lady_diff::build_patch(&path, &file.hunks, &hunks);
+    engine
+        .apply_patch(&repo, &patch, true, true)
+        .map_err(|e| e.to_string())
+}
+
 /// Clone `url` into `dest` via system git (ADR-0003 shell-out tier), streaming
 /// git's progress lines to the frontend as `clone-progress` events, and open
 /// the result.
@@ -317,6 +359,8 @@ pub fn run() {
             status,
             stage_paths,
             unstage_paths,
+            stage_hunks,
+            unstage_hunks,
             clone_repo,
             load_settings,
             save_settings
