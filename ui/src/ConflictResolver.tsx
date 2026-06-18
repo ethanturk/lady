@@ -18,8 +18,8 @@ interface RegionState {
   text: string;
 }
 
-const OURS_BG = "#e6ffec";
-const THEIRS_BG = "#ddf4ff";
+const OURS_BG = "var(--diff-add-bg)";
+const THEIRS_BG = "var(--selection)";
 const BASE_BG = "var(--surface-2)";
 
 const pane = {
@@ -280,7 +280,7 @@ const ConflictResolver: Component<{
       <Show
         when={paths().length > 0}
         fallback={
-          <p style={{ color: "#1a7f37", padding: "1rem", "font-size": "0.9rem" }}>
+          <p style={{ color: "var(--success)", padding: "1rem", "font-size": "0.9rem" }}>
             <Show
               when={props.conflictState === "Rebase"}
               fallback="No conflicts to resolve. 🎉"
@@ -338,7 +338,7 @@ const ConflictResolver: Component<{
             {aiBusy() ? "Resolving…" : "✨ Auto-resolve with AI"}
           </button>
           <button
-            style={{ ...headerBtn, background: allChosen() ? "#1a7f37" : "var(--border)", color: allChosen() ? "var(--on-accent)" : "var(--fg-muted)" }}
+            style={{ ...headerBtn, background: allChosen() ? "var(--success)" : "var(--border)", color: allChosen() ? "var(--on-accent)" : "var(--fg-muted)" }}
             disabled={busy() || !allChosen()}
             onClick={saveResolution}
           >
@@ -359,7 +359,7 @@ const ConflictResolver: Component<{
                   Cancel
                 </button>
               </Show>
-              <button style={{ ...headerBtn, border: "1px solid #1a7f37", color: "#1a7f37" }} disabled={busy() || aiBusy()} onClick={applyAiSuggestion}>
+              <button style={{ ...headerBtn, border: "1px solid var(--success)", color: "var(--success)" }} disabled={busy() || aiBusy()} onClick={applyAiSuggestion}>
                 Apply &amp; next
               </button>
               <button style={headerBtn} onClick={() => setAiSuggestion(null)}>
@@ -385,11 +385,11 @@ const ConflictResolver: Component<{
             {sideText(sides().base)}
           </div>
           <div style={{ ...pane, background: OURS_BG, "border-right": "1px solid var(--border)" }}>
-            <div style={{ color: "#1a7f37", "font-weight": 700, "margin-bottom": "0.25rem" }}>OURS</div>
+            <div style={{ color: "var(--success)", "font-weight": 700, "margin-bottom": "0.25rem" }}>OURS</div>
             {sideText(sides().ours)}
           </div>
           <div style={{ ...pane, background: THEIRS_BG }}>
-            <div style={{ color: "#0969da", "font-weight": 700, "margin-bottom": "0.25rem" }}>THEIRS</div>
+            <div style={{ color: "var(--info)", "font-weight": 700, "margin-bottom": "0.25rem" }}>THEIRS</div>
             {sideText(sides().theirs)}
           </div>
         </div>
@@ -441,7 +441,7 @@ const ConflictResolver: Component<{
                     return (
                       <div
                         style={{
-                          border: "1px solid #f0c36d",
+                          border: "1px solid var(--warning-border)",
                           "border-radius": "4px",
                           margin: "0.3rem 0",
                           background: "var(--surface-2)",
@@ -465,7 +465,7 @@ const ConflictResolver: Component<{
                             "font-family": "monospace",
                             "font-size": "0.78rem",
                             border: "none",
-                            "border-top": "1px solid #f0e3c0",
+                            "border-top": "1px solid var(--warning-border)",
                             background: "transparent",
                             padding: "0.3rem 0.4rem",
                             "min-height": "3.2rem",
@@ -500,7 +500,7 @@ const ConflictResolver: Component<{
                     width: "8px",
                     height: "6px",
                     top: `${regions().length ? (i() / regions().length) * 100 : 0}%`,
-                    background: r.choice ? "#1a7f37" : "#d1242f",
+                    background: r.choice ? "var(--success)" : "var(--danger)",
                     "border-radius": "2px",
                   }}
                 />
@@ -535,7 +535,7 @@ const ConflictResolver: Component<{
             </button>
           </Show>
           <button
-            style={{ ...headerBtn, color: "#d1242f", "border-color": "#d1242f" }}
+            style={{ ...headerBtn, color: "var(--danger)", "border-color": "var(--danger)" }}
             disabled={busy()}
             onClick={abort}
           >

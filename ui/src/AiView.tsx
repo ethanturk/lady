@@ -196,13 +196,18 @@ const AiView: Component<{ repoId: RepoId; onChanged?: () => void }> = (props) =>
         </Show>
       </div>
 
+      {/* Screen-reader status: announces when the model is working (PH6-003). */}
+      <p class="sr-only" role="status" aria-live="polite">
+        {busy() ? "AI is generating a response…" : ""}
+      </p>
+
       <Show when={err()}>
-        <p style={{ color: "var(--error)", "font-size": "0.82rem" }}>{err()}</p>
+        <p role="alert" style={{ color: "var(--error)", "font-size": "0.82rem" }}>{err()}</p>
       </Show>
 
       {/* Composer */}
       <Show when={tool() === "composer"}>
-        <p style={{ "font-size": "0.82rem", color: "var(--fg-muted, #888)" }}>
+        <p style={{ "font-size": "0.82rem", color: "var(--fg-muted, var(--fg-muted))" }}>
           Organize your working changes into logical commits. Review and edit
           before applying — nothing is committed automatically.
         </p>
@@ -210,7 +215,7 @@ const AiView: Component<{ repoId: RepoId; onChanged?: () => void }> = (props) =>
           {busy() ? "Thinking…" : "✨ Propose commits"}
         </button>
         <Show when={applied()}>
-          <p style={{ color: "#1a7f37", "font-size": "0.82rem" }}>{applied()}</p>
+          <p style={{ color: "var(--success)", "font-size": "0.82rem" }}>{applied()}</p>
         </Show>
         <Show when={plan()}>
           <For each={plan()!.commits}>
@@ -221,7 +226,7 @@ const AiView: Component<{ repoId: RepoId; onChanged?: () => void }> = (props) =>
                   value={c.message}
                   onInput={(e) => editMessage(i(), e.currentTarget.value)}
                 />
-                <div style={{ "font-size": "0.74rem", color: "var(--fg-muted, #888)" }}>
+                <div style={{ "font-size": "0.74rem", color: "var(--fg-muted, var(--fg-muted))" }}>
                   {c.hunk_ids.length} hunk(s): {c.hunk_ids.join(", ")}
                 </div>
               </div>
@@ -229,7 +234,7 @@ const AiView: Component<{ repoId: RepoId; onChanged?: () => void }> = (props) =>
           </For>
           <div style={{ display: "flex", gap: "0.4rem" }}>
             <button
-              style={{ ...field, cursor: "pointer", border: "1px solid #1a7f37", color: "#1a7f37" }}
+              style={{ ...field, cursor: "pointer", border: "1px solid var(--success)", color: "var(--success)" }}
               disabled={busy()}
               onClick={applyPlan}
             >
@@ -268,7 +273,7 @@ const AiView: Component<{ repoId: RepoId; onChanged?: () => void }> = (props) =>
             Regenerate
           </button>
         </div>
-        <textarea style={out} readonly value={explainOut()} placeholder="Explanation appears here…" />
+        <textarea style={out} readonly aria-label="AI explanation output" aria-live="polite" value={explainOut()} placeholder="Explanation appears here…" />
       </Show>
 
       {/* Changelog */}
@@ -280,7 +285,7 @@ const AiView: Component<{ repoId: RepoId; onChanged?: () => void }> = (props) =>
             ✨ Generate
           </button>
         </div>
-        <textarea style={out} value={clOut()} onInput={(e) => setClOut(e.currentTarget.value)} placeholder="Changelog appears here…" />
+        <textarea style={out} aria-label="AI changelog output" aria-live="polite" value={clOut()} onInput={(e) => setClOut(e.currentTarget.value)} placeholder="Changelog appears here…" />
       </Show>
     </div>
   );

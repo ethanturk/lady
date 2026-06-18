@@ -129,7 +129,7 @@ const AiSettings: Component<{ repoId: RepoId }> = (props) => {
   return (
     <div>
       <h3 style={{ margin: "1.2rem 0 0.3rem", "font-size": "0.95rem" }}>AI</h3>
-      <p style={{ "font-size": "0.78rem", color: "var(--fg-muted, #888)", margin: "0 0 0.6rem" }}>
+      <p style={{ "font-size": "0.78rem", color: "var(--fg-muted, var(--fg-muted))", margin: "0 0 0.6rem" }}>
         Bring your own keys. Remote providers receive code/diffs only after you
         consent; Ollama runs locally and never leaves your machine. Redaction is
         best-effort, not a guarantee.
@@ -257,7 +257,7 @@ const AiSettings: Component<{ repoId: RepoId }> = (props) => {
       </Show>
 
       <h3 style={{ margin: "1.2rem 0 0.3rem", "font-size": "0.95rem" }}>MCP server</h3>
-      <p style={{ "font-size": "0.78rem", color: "var(--fg-muted, #888)", margin: "0 0 0.6rem" }}>
+      <p style={{ "font-size": "0.78rem", color: "var(--fg-muted, var(--fg-muted))", margin: "0 0 0.6rem" }}>
         Expose this repo's context (status, diff, log, file-at-rev, blame,
         commit search) to an external assistant (Claude/Cursor) via the{" "}
         <code>lady-mcp</code> server. It is read-only — no mutating tools. Add an
@@ -266,7 +266,7 @@ const AiSettings: Component<{ repoId: RepoId }> = (props) => {
       </p>
 
       <Show when={notice()}>
-        <p style={{ color: "#1a7f37", "font-size": "0.8rem", margin: "0.2rem 0" }}>{notice()}</p>
+        <p style={{ color: "var(--success)", "font-size": "0.8rem", margin: "0.2rem 0" }}>{notice()}</p>
       </Show>
       <Show when={err()}>
         <p style={{ color: "var(--error)", "font-size": "0.8rem", margin: "0.2rem 0" }}>{err()}</p>

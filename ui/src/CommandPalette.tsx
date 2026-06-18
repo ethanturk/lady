@@ -34,8 +34,8 @@ function fuzzyScore(query: string, text: string): number | null {
 
 const KIND_COLOR: Record<PaletteEntry["kind"], string> = {
   action: "var(--accent)",
-  branch: "#0a8a0a",
-  file: "#8a0a8a",
+  branch: "var(--success)",
+  file: "var(--accent-2)",
 };
 
 const CommandPalette: Component<{
@@ -118,6 +118,9 @@ const CommandPalette: Component<{
         }}
       >
         <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Command palette"
           onClick={(e) => e.stopPropagation()}
           style={{
             width: "min(640px, 90vw)",
@@ -132,6 +135,12 @@ const CommandPalette: Component<{
           <input
             ref={(el) => queueMicrotask(() => el.focus())}
             type="text"
+            role="combobox"
+            aria-label="Jump to action, branch, or file"
+            aria-expanded={results().length > 0}
+            aria-controls="palette-listbox"
+            aria-autocomplete="list"
+            aria-activedescendant={results().length > 0 ? `palette-opt-${cursor()}` : undefined}
             value={query()}
             onInput={(e) => {
               setQuery(e.currentTarget.value);
@@ -147,7 +156,7 @@ const CommandPalette: Component<{
               outline: "none",
             }}
           />
-          <div style={{ "max-height": "50vh", "overflow-y": "auto" }}>
+          <div id="palette-listbox" role="listbox" aria-label="Results" style={{ "max-height": "50vh", "overflow-y": "auto" }}>
             <Show
               when={results().length > 0}
               fallback={
@@ -159,6 +168,9 @@ const CommandPalette: Component<{
               <For each={results()}>
                 {(entry, i) => (
                   <div
+                    id={`palette-opt-${i()}`}
+                    role="option"
+                    aria-selected={cursor() === i()}
                     onClick={() => choose(entry)}
                     onMouseEnter={() => setCursor(i())}
                     style={{

@@ -27,7 +27,10 @@ const BATCH = 500;
 const LOAD_AHEAD_PX = 800;
 const BUFFER = 5;
 
-// Lane colors (cycled for different lanes)
+// Lane colors (cycled for different lanes). This is an intentional categorical
+// palette drawn on the canvas — mid-tone hues chosen to read on BOTH the light
+// and dark surfaces — not a theme-token leak (PH6-004). The commit-dot ring uses
+// the resolved --bg below so it adapts per theme.
 const LANE_COLORS = ["#0070f3", "#cc2200", "#0a8a0a", "#8a0a8a", "#cc7700", "#0a7a8a"];
 const laneColor = (lane: number) => LANE_COLORS[lane % LANE_COLORS.length];
 
@@ -43,6 +46,11 @@ function drawGraph(
   const graphW = canvas.width / dpr;
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
+
+  // Resolve the themed background once so the commit-dot ring matches the
+  // surface in light and dark (canvas can't reference CSS vars directly).
+  const ringColor =
+    getComputedStyle(canvas).getPropertyValue("--bg").trim() || "#ffffff";
 
   ctx.clearRect(0, 0, graphW, viewportH);
   ctx.save();
@@ -81,7 +89,7 @@ function drawGraph(
     ctx.arc(cx, cy, COMMIT_R, 0, 2 * Math.PI);
     ctx.fillStyle = laneColor(row.lane);
     ctx.fill();
-    ctx.strokeStyle = "#fff";
+    ctx.strokeStyle = ringColor;
     ctx.lineWidth = 1.5;
     ctx.stroke();
   }
@@ -217,11 +225,11 @@ const GraphView: Component<{
                   gap: "0.5rem",
                   padding: "0.2rem 0.5rem",
                   "font-size": "0.8rem",
-                  background: "#faf6ff",
+                  background: "var(--surface-2)",
                 }}
               >
-                <span style={{ color: "#8250df" }}>⬡</span>
-                <span style={{ "font-family": "monospace", color: "#8250df", "min-width": "8ch" }}>
+                <span style={{ color: "var(--accent-2)" }}>⬡</span>
+                <span style={{ "font-family": "monospace", color: "var(--accent-2)", "min-width": "8ch" }}>
                   {`stash@{${s.index}}`}
                 </span>
                 <span

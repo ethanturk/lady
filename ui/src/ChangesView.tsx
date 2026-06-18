@@ -7,12 +7,12 @@ import { cancelAi, isConsentError, runAiStream } from "./ai";
 
 /** A short colored badge for a file's change kind. */
 const KIND_BADGE: Record<ChangeKind, { label: string; color: string }> = {
-  Added: { label: "A", color: "#1a7f37" },
-  Modified: { label: "M", color: "#9a6700" },
-  Deleted: { label: "D", color: "#cf222e" },
-  Renamed: { label: "R", color: "#0969da" },
+  Added: { label: "A", color: "var(--success)" },
+  Modified: { label: "M", color: "var(--warning)" },
+  Deleted: { label: "D", color: "var(--danger)" },
+  Renamed: { label: "R", color: "var(--info)" },
   Untracked: { label: "?", color: "var(--fg-muted)" },
-  Conflicted: { label: "!", color: "#cf222e" },
+  Conflicted: { label: "!", color: "var(--danger)" },
 };
 
 const Badge: Component<{ kind: ChangeKind }> = (props) => {
@@ -358,8 +358,8 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
       <div style={{ display: "flex", "align-items": "center", gap: "0.6rem", "flex-wrap": "wrap" }}>
         <button
           style={{
-            border: "1px solid #1a7f37",
-            background: canCommit() ? "#1a7f37" : "#9bd2a8",
+            border: "1px solid var(--success)",
+            background: canCommit() ? "var(--success)" : "var(--success-border)",
             color: "var(--on-accent)",
             "border-radius": "4px",
             padding: "0.25rem 0.8rem",
@@ -468,7 +468,7 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
                     "font-size": "0.78rem",
                   }}
                 >
-                  <span style={{ color: "#8250df" }}>{`stash@{${s.index}}`}</span>
+                  <span style={{ color: "var(--accent-2)" }}>{`stash@{${s.index}}`}</span>
                   <span
                     style={{
                       flex: "1",

@@ -129,14 +129,14 @@ const WorktreesView: Component<{
               <span style={{ "font-family": "monospace", flex: "1", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }} title={wt.path}>
                 {wt.path}
               </span>
-              <span style={{ color: "#0969da", "min-width": "8ch" }}>
+              <span style={{ color: "var(--info)", "min-width": "8ch" }}>
                 {wt.branch ?? "(detached)"}
               </span>
               <span style={{ "font-family": "monospace", color: "var(--fg-muted)" }}>
                 {wt.head ? wt.head.slice(0, 8) : "—"}
               </span>
               <Show when={wt.locked}>
-                <span title="locked" style={{ color: "#9a6700" }}>🔒</span>
+                <span title="locked" style={{ color: "var(--warning)" }}>🔒</span>
               </Show>
               <button style={smallBtn} onClick={() => props.onOpen(wt.path)}>
                 Open

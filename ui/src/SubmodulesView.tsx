@@ -100,7 +100,7 @@ const SubmodulesView: Component<{
             <li style={{ display: "flex", "align-items": "center", gap: "0.5rem", padding: "0.3rem 0", "border-bottom": "1px solid var(--border)", "font-size": "0.83rem" }}>
               <span
                 title={!s.initialized ? "not initialized" : s.dirty ? "out of date / modified" : "up to date"}
-                style={{ color: !s.initialized ? "var(--fg-muted)" : s.dirty ? "#bc4c00" : "#1a7f37" }}
+                style={{ color: !s.initialized ? "var(--fg-muted)" : s.dirty ? "var(--warning)" : "var(--success)" }}
               >
                 {!s.initialized ? "○" : s.dirty ? "◑" : "●"}
               </span>

@@ -5,12 +5,12 @@ import type { ReflogEntry, RepoId } from "./commands";
 import { relTime } from "./time";
 
 const ACTION_COLOR: Record<string, string> = {
-  commit: "#1a7f37",
-  "commit (amend)": "#1a7f37",
-  reset: "#cf222e",
-  checkout: "#0969da",
-  rebase: "#8250df",
-  merge: "#bc4c00",
+  commit: "var(--success)",
+  "commit (amend)": "var(--success)",
+  reset: "var(--danger)",
+  checkout: "var(--info)",
+  rebase: "var(--accent-2)",
+  merge: "var(--warning)",
 };
 
 /**
@@ -91,7 +91,7 @@ const ReflogView: Component<{
         <p style={{ color: "var(--error)", "font-size": "0.85rem" }}>{err()}</p>
       </Show>
       <Show when={notice()}>
-        <p style={{ color: "#1a7f37", "font-size": "0.85rem" }}>{notice()}</p>
+        <p style={{ color: "var(--success)", "font-size": "0.85rem" }}>{notice()}</p>
       </Show>
 
       <ul style={{ margin: 0, padding: 0, "list-style": "none" }}>

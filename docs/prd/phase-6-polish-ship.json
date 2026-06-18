@@ -42,7 +42,7 @@
         "Documented manual a11y check (VoiceOver/NVDA pass over the core flows); npm run build green; cargo fmt/clippy/test green"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §6 UX, §8. SolidJS + WebView makes ARIA/contrast tractable (ADR-0001/0010). No backend change expected — UI-only."
     },
     {
@@ -56,7 +56,7 @@
         "npm run build green; cargo fmt/clippy/test green; manual window check across themes"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §6. Builds on the existing System/Dark/Light toggle + themed syntax highlighting (recent main commits). Audit + close gaps rather than rebuild."
     },
     {

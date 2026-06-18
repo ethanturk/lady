@@ -48,7 +48,7 @@ const LfsView: Component<{
       <Show
         when={status().available}
         fallback={
-          <p style={{ color: "#9a6700", background: "#fff8c5", padding: "0.4rem 0.6rem", "border-radius": "4px", "font-size": "0.85rem" }}>
+          <p style={{ color: "var(--warning)", background: "var(--warning-bg)", padding: "0.4rem 0.6rem", "border-radius": "4px", "font-size": "0.85rem" }}>
             git-lfs is not installed. Install it from{" "}
             <span style={{ "font-family": "monospace" }}>git-lfs.com</span> to track large files.
           </p>
@@ -84,7 +84,7 @@ const LfsView: Component<{
             <For each={status().files}>
               {(f) => (
                 <li style={{ display: "flex", "align-items": "center", gap: "0.5rem", padding: "0.2rem 0", "font-size": "0.83rem" }}>
-                  <span title={f.downloaded ? "materialized" : "pointer only"} style={{ color: f.downloaded ? "#1a7f37" : "var(--fg-muted)" }}>
+                  <span title={f.downloaded ? "materialized" : "pointer only"} style={{ color: f.downloaded ? "var(--success)" : "var(--fg-muted)" }}>
                     {f.downloaded ? "●" : "○"}
                   </span>
                   <span style={{ flex: "1", "font-family": "monospace", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>

@@ -173,7 +173,7 @@ const SettingsView: Component<{ repoId: RepoId }> = (props) => {
           }
         >
           <div style={{ display: "flex", "align-items": "center", gap: "0.6rem" }}>
-            <span style={{ color: "#1a7f37", "font-size": "0.9rem" }}>
+            <span style={{ color: "var(--success)", "font-size": "0.9rem" }}>
               ✓ Connected to {forgeName()}{status().login ? ` as ${status().login}` : ""}
             </span>
             <button onClick={disconnect} disabled={busy()} style={{ padding: "0.25rem 0.8rem" }}>
@@ -230,7 +230,7 @@ const SettingsView: Component<{ repoId: RepoId }> = (props) => {
         }
       >
         <div style={{ "font-size": "0.85rem" }}>
-          <p style={{ color: "#1a7f37" }}>Repository created.</p>
+          <p style={{ color: "var(--success)" }}>Repository created.</p>
           <p style={{ "font-family": "monospace", "font-size": "0.8rem", "word-break": "break-all" }}>{crResult()!.clone_url}</p>
           <button onClick={() => invoke("open_url", { url: crResult()!.web_url }).catch((e) => setCrErr(String(e)))} style={{ padding: "0.25rem 0.8rem" }}>
             Open in browser

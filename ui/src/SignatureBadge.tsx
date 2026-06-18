@@ -4,9 +4,9 @@ import type { SignatureStatus } from "./commands";
 
 /** Visual style per signature status. `None` renders nothing. */
 const STYLE: Record<Exclude<SignatureStatus, "None">, { bg: string; fg: string; label: string; title: string }> = {
-  Good: { bg: "#dafbe1", fg: "#1a7f37", label: "✓ signed", title: "Valid signature from a trusted key" },
-  Untrusted: { bg: "#fff8c5", fg: "#9a6700", label: "✓ untrusted", title: "Valid signature, untrusted/expired key" },
-  Bad: { bg: "#ffebe9", fg: "#cf222e", label: "✗ bad sig", title: "Bad / invalid signature" },
+  Good: { bg: "var(--success-bg)", fg: "var(--success)", label: "✓ signed", title: "Valid signature from a trusted key" },
+  Untrusted: { bg: "var(--warning-bg)", fg: "var(--warning)", label: "✓ untrusted", title: "Valid signature, untrusted/expired key" },
+  Bad: { bg: "var(--danger-bg)", fg: "var(--danger)", label: "✗ bad sig", title: "Bad / invalid signature" },
 };
 
 /** A small signature-verification badge for a commit (PH3-005). */

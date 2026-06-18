@@ -127,8 +127,8 @@ const BisectView: Component<{
                 Test the checked-out commit, then mark it:
               </p>
               <div style={{ display: "flex", gap: "0.5rem" }}>
-                {markBtn("good", "#1a7f37")}
-                {markBtn("bad", "#cf222e")}
+                {markBtn("good", "var(--success)")}
+                {markBtn("bad", "var(--danger)")}
                 {markBtn("skip", "var(--fg-muted)")}
               </div>
             </div>
@@ -136,13 +136,13 @@ const BisectView: Component<{
         >
           <div
             style={{
-              background: "#fff8e5",
-              border: "1px solid #f0c36d",
+              background: "var(--warning-bg)",
+              border: "1px solid var(--warning-border)",
               "border-radius": "4px",
               padding: "0.6rem",
             }}
           >
-            <div style={{ "font-weight": 700, color: "#bc4c00" }}>First bad commit found</div>
+            <div style={{ "font-weight": 700, color: "var(--warning)" }}>First bad commit found</div>
             <div style={{ "font-family": "monospace", "margin-top": "0.25rem" }}>
               {state().suspected}
             </div>

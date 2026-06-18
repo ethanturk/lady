@@ -342,7 +342,7 @@ const RefsView: Component<RefsViewProps> = (props) => {
                     </button>
                   </label>
                   <div style={{ display: "flex", "align-items": "center", gap: "0.4rem" }}>
-                    <span style={{ "font-size": "0.78rem", color: "var(--fg-muted, #888)" }}>description</span>
+                    <span style={{ "font-size": "0.78rem", color: "var(--fg-muted, var(--fg-muted))" }}>description</span>
                     <button type="button" disabled={aiBusy()} title="Generate description with AI" onClick={() => aiPrText("description")} style={{ "font-size": "0.75rem", padding: "0.2rem 0.5rem" }}>
                       {aiBusy() ? "Generating…" : "✨ Generate"}
                     </button>
@@ -362,7 +362,7 @@ const RefsView: Component<RefsViewProps> = (props) => {
                     <button
                       onClick={submitPr}
                       disabled={prBusy()}
-                      style={{ background: "#1a7f37", color: "var(--on-accent)", border: "none", "border-radius": "3px", padding: "0.3rem 0.9rem", cursor: "pointer" }}
+                      style={{ background: "var(--success)", color: "var(--on-accent)", border: "none", "border-radius": "3px", padding: "0.3rem 0.9rem", cursor: "pointer" }}
                     >
                       {prBusy() ? "Creating…" : `Create ${nounTitle()}`}
                     </button>
@@ -371,7 +371,7 @@ const RefsView: Component<RefsViewProps> = (props) => {
               }
             >
               <div>
-                <p style={{ color: "#1a7f37", "font-size": "0.85rem" }}>{nounTitle()} created.</p>
+                <p style={{ color: "var(--success)", "font-size": "0.85rem" }}>{nounTitle()} created.</p>
                 <p style={{ "font-family": "monospace", "font-size": "0.8rem", "word-break": "break-all" }}>{prUrl()}</p>
                 <div style={{ display: "flex", gap: "0.5rem", "justify-content": "flex-end" }}>
                   <button onClick={() => setPrBranch(null)}>Close</button>
@@ -392,10 +392,10 @@ const RefsView: Component<RefsViewProps> = (props) => {
         <p style={{ color: "var(--error)", "font-size": "0.8rem", "white-space": "pre-wrap" }}>{err()}</p>
       </Show>
       <Show when={notice()}>
-        <p style={{ color: "#1a7f37", "font-size": "0.8rem", "white-space": "pre-wrap" }}>{notice()}</p>
+        <p style={{ color: "var(--success)", "font-size": "0.8rem", "white-space": "pre-wrap" }}>{notice()}</p>
       </Show>
       <Show when={conflicts().length > 0}>
-        <div style={{ border: "1px solid #f0c36d", background: "#fff8e5", padding: "0.4rem", "font-size": "0.8rem" }}>
+        <div style={{ border: "1px solid var(--warning-border)", background: "var(--warning-bg)", padding: "0.4rem", "font-size": "0.8rem" }}>
           <div style={{ "font-weight": 700, "margin-bottom": "0.25rem" }}>Conflicted files</div>
           <ul style={{ margin: 0, padding: "0 0 0 1.2rem" }}>
             <For each={conflicts()}>{(path) => <li>{path}</li>}</For>
@@ -453,7 +453,7 @@ const RefsView: Component<RefsViewProps> = (props) => {
                   padding: "0.1rem 0",
                 }}
               >
-                <span style={{ width: "0.8rem", color: "#1a7f37" }}>{isCurrent(r) ? "●" : ""}</span>
+                <span style={{ width: "0.8rem", color: "var(--success)" }}>{isCurrent(r) ? "●" : ""}</span>
                 <span style={{ flex: "1", "font-weight": isCurrent(r) ? 700 : 400 }}>{r.name}</span>
                 <span style={{ color: "var(--fg-muted)" }}>{r.target.slice(0, 8)}</span>
                 <button

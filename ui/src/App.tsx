@@ -227,6 +227,12 @@ const App: Component = () => {
     "border-radius": "4px 4px 0 0",
     "font-size": "0.875rem",
   });
+  // ARIA tab semantics so a screen reader announces "tab, selected" (PH6-003).
+  const tabProps = (t: Tab) => ({
+    style: tabStyle(t),
+    role: "tab" as const,
+    "aria-selected": tab() === t,
+  });
 
   return (
     <div
@@ -246,13 +252,13 @@ const App: Component = () => {
           </span>
         </Show>
         <Show when={license()?.kind === "Trial"}>
-          <span style={{ background: "#fff8c5", color: "#9a6700", "border-radius": "3px", padding: "0.05rem 0.5rem", "font-size": "0.75rem" }}>
+          <span style={{ background: "var(--warning-bg)", color: "var(--warning)", "border-radius": "3px", padding: "0.05rem 0.5rem", "font-size": "0.75rem" }}>
             Trial — {(license() as { days_left: number }).days_left} day
             {(license() as { days_left: number }).days_left === 1 ? "" : "s"} left
           </span>
         </Show>
         <Show when={license()?.kind === "Licensed"}>
-          <span style={{ color: "#1a7f37", "font-size": "0.72rem" }}>● Licensed</span>
+          <span style={{ color: "var(--success)", "font-size": "0.72rem" }}>● Licensed</span>
         </Show>
         <span style={{ flex: "1" }} />
         <ThemeToggle />
@@ -267,13 +273,13 @@ const App: Component = () => {
       <RepoBar active={repoId()} onActiveChange={setActive} apiRef={(open) => (openRepoPath = open)} />
 
       <Show when={err()}>
-        <p style={{ color: "var(--error)", margin: "0.25rem 1rem", "font-size": "0.85rem" }}>{err()}</p>
+        <p role="alert" style={{ color: "var(--error)", margin: "0.25rem 1rem", "font-size": "0.85rem" }}>{err()}</p>
       </Show>
       <Show when={opNotice()}>
-        <p style={{ color: "#1a7f37", margin: "0.25rem 1rem", "font-size": "0.85rem" }}>{opNotice()}</p>
+        <p role="status" style={{ color: "var(--success)", margin: "0.25rem 1rem", "font-size": "0.85rem" }}>{opNotice()}</p>
       </Show>
       <Show when={opConflicts().length > 0}>
-        <div style={{ margin: "0.25rem 1rem", padding: "0.35rem", border: "1px solid #f0c36d", background: "#fff8e5", "font-size": "0.8rem" }}>
+        <div role="alert" style={{ margin: "0.25rem 1rem", padding: "0.35rem", border: "1px solid var(--warning-border)", background: "var(--warning-bg)", "font-size": "0.8rem" }}>
           <span style={{ "font-weight": 700 }}>Conflicts: </span>
           <span>{opConflicts().join(", ")}</span>
           <button style={{ margin: "0 0 0 0.5rem" }} onClick={() => setTab("conflicts")}>
@@ -287,60 +293,62 @@ const App: Component = () => {
 
       {/* View tabs for the active repo */}
       <Show when={active()}>
-        <div style={{ display: "flex", "flex-wrap": "wrap", gap: "0.25rem", padding: "0.5rem 1rem 0", "flex-shrink": 0 }}>
-          <button style={tabStyle("changes")} onClick={() => setTab("changes")}>
+        <div role="tablist" aria-label="Repository views" style={{ display: "flex", "flex-wrap": "wrap", gap: "0.25rem", padding: "0.5rem 1rem 0", "flex-shrink": 0 }}>
+          <button {...tabProps("changes")} onClick={() => setTab("changes")}>
             Changes
           </button>
-          <button style={tabStyle("commits")} onClick={() => setTab("commits")}>
+          <button {...tabProps("commits")} onClick={() => setTab("commits")}>
             Commits
           </button>
-          <button style={tabStyle("refs")} onClick={() => setTab("refs")}>
+          <button {...tabProps("refs")} onClick={() => setTab("refs")}>
             Refs
           </button>
-          <button style={tabStyle("blame")} onClick={() => setTab("blame")}>
+          <button {...tabProps("blame")} onClick={() => setTab("blame")}>
             Blame
           </button>
-          <button style={tabStyle("history")} onClick={() => setTab("history")}>
+          <button {...tabProps("history")} onClick={() => setTab("history")}>
             History
           </button>
-          <button style={tabStyle("worktrees")} onClick={() => setTab("worktrees")}>
+          <button {...tabProps("worktrees")} onClick={() => setTab("worktrees")}>
             Worktrees
           </button>
-          <button style={tabStyle("reflog")} onClick={() => setTab("reflog")}>
+          <button {...tabProps("reflog")} onClick={() => setTab("reflog")}>
             Reflog
           </button>
-          <button style={tabStyle("bisect")} onClick={() => setTab("bisect")}>
+          <button {...tabProps("bisect")} onClick={() => setTab("bisect")}>
             Bisect
           </button>
-          <button style={tabStyle("commands")} onClick={() => setTab("commands")}>
+          <button {...tabProps("commands")} onClick={() => setTab("commands")}>
             Commands
           </button>
-          <button style={tabStyle("lfs")} onClick={() => setTab("lfs")}>
+          <button {...tabProps("lfs")} onClick={() => setTab("lfs")}>
             LFS
           </button>
-          <button style={tabStyle("flow")} onClick={() => setTab("flow")}>
+          <button {...tabProps("flow")} onClick={() => setTab("flow")}>
             git-flow
           </button>
-          <button style={tabStyle("submodules")} onClick={() => setTab("submodules")}>
+          <button {...tabProps("submodules")} onClick={() => setTab("submodules")}>
             Submodules
           </button>
-          <button style={tabStyle("ai")} onClick={() => setTab("ai")}>
+          <button {...tabProps("ai")} onClick={() => setTab("ai")}>
             ✨ AI
           </button>
-          <button style={tabStyle("settings")} onClick={() => setTab("settings")}>
+          <button {...tabProps("settings")} onClick={() => setTab("settings")}>
             Settings
           </button>
-          <button style={tabStyle("notifications")} onClick={() => setTab("notifications")}>
+          <button {...tabProps("notifications")} onClick={() => setTab("notifications")}>
             Notifications
             <Show when={unread() > 0}>
-              <span style={{ "margin-left": "0.3rem", background: "#cf222e", color: "var(--on-accent)", "border-radius": "8px", padding: "0 0.35rem", "font-size": "0.7rem" }}>
+              <span style={{ "margin-left": "0.3rem", background: "var(--danger)", color: "var(--on-accent)", "border-radius": "8px", padding: "0 0.35rem", "font-size": "0.7rem" }}>
                 {unread()}
               </span>
             </Show>
           </button>
           <Show when={conflictState() !== "None"}>
             <button
-              style={{ ...tabStyle("conflicts"), background: tab() === "conflicts" ? "#d1242f" : "#ffe0e0", color: tab() === "conflicts" ? "var(--on-accent)" : "#d1242f" }}
+              role="tab"
+              aria-selected={tab() === "conflicts"}
+              style={{ ...tabStyle("conflicts"), background: tab() === "conflicts" ? "var(--danger)" : "var(--danger-bg)", color: tab() === "conflicts" ? "var(--on-accent)" : "var(--danger)" }}
               onClick={() => setTab("conflicts")}
             >
               Conflicts ⚠
@@ -356,7 +364,7 @@ const App: Component = () => {
 
       {/* Content */}
       <Show when={active()}>
-        <div style={{ flex: "1", overflow: "hidden" }}>
+        <div role="main" aria-label={`${tab()} view`} style={{ flex: "1", overflow: "hidden" }}>
           <Show when={tab() === "changes"}>
             <ChangesView
               repoId={repoId()!}

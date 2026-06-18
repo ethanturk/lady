@@ -83,7 +83,7 @@ const GitFlowView: Component<{
         <p style={{ color: "var(--error)", "font-size": "0.85rem", "white-space": "pre-wrap" }}>{err()}</p>
       </Show>
       <Show when={notice()}>
-        <p style={{ color: "#1a7f37", "font-size": "0.85rem" }}>{notice()}</p>
+        <p style={{ color: "var(--success)", "font-size": "0.85rem" }}>{notice()}</p>
       </Show>
 
       <Show

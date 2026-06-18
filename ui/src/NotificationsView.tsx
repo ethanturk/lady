@@ -100,7 +100,7 @@ const NotificationsView: Component<{
                   height: "7px",
                   "border-radius": "50%",
                   "flex-shrink": "0",
-                  background: n.unread ? "#0969da" : "transparent",
+                  background: n.unread ? "var(--info)" : "transparent",
                 }}
                 title={n.unread ? "unread" : "read"}
               />

@@ -30,9 +30,23 @@ body {
   --fg: #2d2d2d;
   --fg-muted: #6e7781;
   --accent: #0070f3;
+  --accent-2: #6639ba;
   --on-accent: #ffffff;
   --selection: #e6f0ff;
-  --error: #cf222e;
+  --focus-ring: #0969da;
+  --error: #c11626;
+  /* Semantic status tokens (WCAG AA on their paired surface in this theme). */
+  --success: #116329;
+  --success-bg: #dafbe1;
+  --success-border: #aceebb;
+  --warning: #7a5200;
+  --warning-bg: #fff8c5;
+  --warning-border: #f0c36d;
+  --danger: #c11626;
+  --danger-bg: #ffebe9;
+  --danger-border: #ff9ea3;
+  --danger-strong: #86181d;
+  --info: #0550ae;
   /* Code/diff surface (themed) + the highlight.js token palette. */
   --code-bg: #ffffff;
   --code-fg: #24292e;
@@ -64,9 +78,23 @@ body {
   --fg: #e6e6e6;
   --fg-muted: #9aa0a6;
   --accent: #3b82f6;
+  --accent-2: #d2a8ff;
   --on-accent: #ffffff;
   --selection: #0b3a66;
+  --focus-ring: #58a6ff;
   --error: #f85149;
+  /* Semantic status tokens (WCAG AA on the dark surface). */
+  --success: #3fb950;
+  --success-bg: rgba(63, 185, 80, 0.15);
+  --success-border: rgba(63, 185, 80, 0.4);
+  --warning: #d29922;
+  --warning-bg: rgba(187, 128, 9, 0.15);
+  --warning-border: rgba(187, 128, 9, 0.4);
+  --danger: #f85149;
+  --danger-bg: rgba(248, 81, 73, 0.15);
+  --danger-border: rgba(248, 81, 73, 0.4);
+  --danger-strong: #ffa198;
+  --info: #58a6ff;
   --code-bg: #1e1e1e;
   --code-fg: #d4d4d4;
   --on-light: #24292e;
@@ -167,4 +195,67 @@ button {
 input::placeholder,
 textarea::placeholder {
   color: var(--fg-muted);
+}
+
+/* ── Accessibility (PH6-003) ───────────────────────────────────────────────── */
+
+/* A consistently visible focus ring on every keyboard-focused control. Uses
+   :focus-visible so a mouse click doesn't paint a ring, but tab/arrow focus
+   always does. */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+/* Never remove focus visibility for keyboard users, even if a component clears
+   the UA outline inline. */
+a:focus-visible,
+button:focus-visible,
+[role="tab"]:focus-visible,
+[role="button"]:focus-visible,
+[tabindex]:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Visually-hidden helper for screen-reader-only labels (kept in the a11y tree). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Respect the OS "reduce motion" setting: collapse animations/transitions so
+   nothing moves for users who asked it not to (PH6-003 / PH6-004). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ── Optional extra theme (PH6-004) ────────────────────────────────────────── */
+/* Proves the token system: setting data-accent="teal" on <html> recolors the
+   accent everywhere (tabs, focus ring, links) without touching any component.
+   Composes with light or dark. */
+:root[data-accent="teal"] {
+  --accent: #0d9488;
+  --focus-ring: #0d9488;
+}
+:root[data-theme="dark"][data-accent="teal"] {
+  --accent: #2dd4bf;
+  --focus-ring: #2dd4bf;
 }

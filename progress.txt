@@ -11,8 +11,8 @@ repo; only the updater PUBLIC key is committed.
 ## Status
 - [x] PH6-001 Performance benchmarks + budgets
 - [x] PH6-002 Large-repo performance passes
-- [ ] PH6-003 Accessibility pass
-- [ ] PH6-004 Theming polish
+- [x] PH6-003 Accessibility pass
+- [x] PH6-004 Theming polish
 - [ ] PH6-005 Packaging — macOS (.dmg/.app, notarized)
 - [ ] PH6-006 Packaging — Windows (.msi/NSIS, Authenticode)
 - [ ] PH6-007 Packaging — Linux (AppImage + Flatpak)
@@ -38,3 +38,19 @@ repo; only the updater PUBLIC key is committed.
   (WalkLogQuery limit/start, walk_log_graph carries lane state) — no budget
   misses, no optimization required. Residual: walk_log is linear in limit; UI
   keeps paging. Whole gate green (fmt/clippy/test/deny).
+- PH6-004 (theming): added semantic tokens (success/warning/danger/info +
+  bg/border variants, accent-2, focus-ring) to both themes in styles.css, all
+  AA-contrast. Audited Phases 1-5 views — replaced ~93 hard-coded hex with
+  var(--token); only GraphView's intentional categorical lane palette remains
+  (commit-dot ring now reads resolved --bg). Added an optional teal accent
+  (data-accent) + accent toggle in ThemeToggle to prove the token system.
+  docs/THEMING.md documents the token set + audit + extra theme.
+- PH6-003 (a11y): global :focus-visible ring + .sr-only helper +
+  prefers-reduced-motion block in styles.css. App.tsx: role=tablist/tab +
+  aria-selected (tabProps helper), role=main, live regions (role=alert/status)
+  for errors/notices/conflicts. AiView: sr-only "AI generating" status +
+  aria-live on output. CommandPalette: role=dialog/combobox/listbox/option +
+  aria-activedescendant (already keyboard-driven). ThemeToggle: aria-labels.
+  docs/ACCESSIBILITY.md documents the AA contrast table + manual VoiceOver/NVDA
+  pass. npm build green; Rust untouched (UI-only). KEYBOARD.md ref lands in
+  PH6-009.

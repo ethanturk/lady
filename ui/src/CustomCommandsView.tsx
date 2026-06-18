@@ -192,7 +192,7 @@ const CustomCommandsView: Component<{
 
           <Show when={output()}>
             <div style={{ "margin-top": "0.5rem" }}>
-              <div style={{ "font-size": "0.78rem", color: output()!.exit_code === 0 ? "#1a7f37" : "#cf222e" }}>
+              <div style={{ "font-size": "0.78rem", color: output()!.exit_code === 0 ? "var(--success)" : "var(--danger)" }}>
                 exit code: {output()!.exit_code}
               </div>
               <Show when={output()!.stdout}>
@@ -201,7 +201,7 @@ const CustomCommandsView: Component<{
                 </pre>
               </Show>
               <Show when={output()!.stderr}>
-                <pre style={{ background: "#fff5f5", color: "#86181d", padding: "0.5rem", "font-size": "0.76rem", "max-height": "10rem", overflow: "auto", "white-space": "pre-wrap" }}>
+                <pre style={{ background: "var(--danger-bg)", color: "var(--danger-strong)", padding: "0.5rem", "font-size": "0.76rem", "max-height": "10rem", overflow: "auto", "white-space": "pre-wrap" }}>
                   {output()!.stderr}
                 </pre>
               </Show>
