@@ -366,6 +366,65 @@ fn recent_messages(
         .map_err(|e| e.to_string())
 }
 
+/// Create branch `name` at `start_point` (or HEAD when omitted).
+#[tauri::command]
+fn create_branch(
+    repo: RepoId,
+    name: String,
+    start_point: Option<String>,
+    engine: State<GixEngine>,
+) -> Result<(), String> {
+    engine
+        .create_branch(&repo, &name, start_point.as_deref())
+        .map_err(|e| e.to_string())
+}
+
+/// Delete branch `name`; `force` deletes an unmerged branch.
+#[tauri::command]
+fn delete_branch(
+    repo: RepoId,
+    name: String,
+    force: bool,
+    engine: State<GixEngine>,
+) -> Result<(), String> {
+    engine
+        .delete_branch(&repo, &name, force)
+        .map_err(|e| e.to_string())
+}
+
+/// Check out `target` (branch or revision); `force` overwrites local changes.
+#[tauri::command]
+fn checkout(
+    repo: RepoId,
+    target: String,
+    force: bool,
+    engine: State<GixEngine>,
+) -> Result<(), String> {
+    engine
+        .checkout(&repo, &target, force)
+        .map_err(|e| e.to_string())
+}
+
+/// Create tag `name` at `target` (or HEAD); annotated when `message` is set.
+#[tauri::command]
+fn create_tag(
+    repo: RepoId,
+    name: String,
+    target: Option<String>,
+    message: Option<String>,
+    engine: State<GixEngine>,
+) -> Result<(), String> {
+    engine
+        .create_tag(&repo, &name, target.as_deref(), message.as_deref())
+        .map_err(|e| e.to_string())
+}
+
+/// Delete tag `name`.
+#[tauri::command]
+fn delete_tag(repo: RepoId, name: String, engine: State<GixEngine>) -> Result<(), String> {
+    engine.delete_tag(&repo, &name).map_err(|e| e.to_string())
+}
+
 /// Clone `url` into `dest` via system git (ADR-0003 shell-out tier), streaming
 /// git's progress lines to the frontend as `clone-progress` events, and open
 /// the result.
@@ -472,6 +531,11 @@ pub fn run() {
             discard_untracked,
             commit,
             recent_messages,
+            create_branch,
+            delete_branch,
+            checkout,
+            create_tag,
+            delete_tag,
             clone_repo,
             load_settings,
             save_settings

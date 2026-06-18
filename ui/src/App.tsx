@@ -1,40 +1,16 @@
-import { createEffect, createSignal, For, onMount, Show } from "solid-js";
+import { createEffect, createSignal, onMount, Show } from "solid-js";
 import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
-import type { AppInfo, OpenRepo, RefInfo, RefKind } from "./commands";
+import type { AppInfo, OpenRepo, RefInfo } from "./commands";
 import GraphView from "./GraphView";
 import DiffView from "./DiffView";
 import BlameView from "./BlameView";
 import FileHistory from "./FileHistory";
 import ChangesView from "./ChangesView";
+import RefsView from "./RefsView";
 import RepoBar from "./RepoBar";
 import CommandPalette from "./CommandPalette";
 import type { PaletteEntry } from "./CommandPalette";
-
-interface RefGroupProps {
-  title: string;
-  refs: RefInfo[];
-}
-
-const RefGroup: Component<RefGroupProps> = (props) => (
-  <Show when={props.refs.length > 0}>
-    <section>
-      <h3 style={{ margin: "0.5rem 0 0.25rem" }}>{props.title}</h3>
-      <ul style={{ margin: 0, "padding-left": "1.2rem" }}>
-        <For each={props.refs}>
-          {(ref) => (
-            <li style={{ "font-family": "monospace", "font-size": "0.85rem" }}>
-              {ref.name}
-              <span style={{ color: "#888", "margin-left": "0.5rem" }}>
-                {ref.target.slice(0, 8)}
-              </span>
-            </li>
-          )}
-        </For>
-      </ul>
-    </section>
-  </Show>
-);
 
 type Tab = "changes" | "commits" | "refs" | "blame" | "history";
 
@@ -103,8 +79,6 @@ const App: Component = () => {
     }));
     return [...actions, ...branches, ...fileEntries];
   };
-
-  const byKind = (kind: RefKind) => refs().filter((r) => r.kind === kind);
 
   const tabStyle = (t: Tab) => ({
     padding: "0.3rem 0.9rem",
@@ -196,12 +170,7 @@ const App: Component = () => {
             </div>
           </Show>
           <Show when={tab() === "refs"}>
-            <div style={{ padding: "0.5rem 1rem", "overflow-y": "auto", height: "100%" }}>
-              <RefGroup title="HEAD" refs={byKind("Head")} />
-              <RefGroup title="Branches" refs={byKind("Branch")} />
-              <RefGroup title="Tags" refs={byKind("Tag")} />
-              <RefGroup title="Remotes" refs={byKind("Remote")} />
-            </div>
+            <RefsView repoId={repoId()!} refs={refs()} onChanged={refresh} />
           </Show>
           <Show when={tab() === "blame"}>
             <BlameView repoId={repoId()!} initialPath={navFile()} />

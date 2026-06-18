@@ -146,6 +146,32 @@ pub trait GitEngine: Send + Sync {
     /// The most recent commit subjects (first lines), newest first, capped at
     /// `limit`. Empty on an unborn branch. Powers message reuse/prefill.
     fn recent_messages(&self, repo: &RepoId, limit: usize) -> Result<Vec<String>>;
+
+    /// Create branch `name` at `start_point` (a branch/revision), or at the
+    /// current HEAD when `None`. Fails if the branch already exists.
+    fn create_branch(&self, repo: &RepoId, name: &str, start_point: Option<&str>) -> Result<()>;
+
+    /// Delete branch `name`. `force` allows deleting an unmerged branch
+    /// (`git branch -D` vs `-d`).
+    fn delete_branch(&self, repo: &RepoId, name: &str, force: bool) -> Result<()>;
+
+    /// Check out `target` (a branch name or revision). On a plain revision this
+    /// produces a detached HEAD. Refuses (surfacing git's message) when the
+    /// switch would overwrite local changes, unless `force` is set.
+    fn checkout(&self, repo: &RepoId, target: &str, force: bool) -> Result<()>;
+
+    /// Create tag `name` at `target` (or HEAD when `None`). With a `message` an
+    /// annotated tag is created; otherwise a lightweight tag. Fails if it exists.
+    fn create_tag(
+        &self,
+        repo: &RepoId,
+        name: &str,
+        target: Option<&str>,
+        message: Option<&str>,
+    ) -> Result<()>;
+
+    /// Delete tag `name`.
+    fn delete_tag(&self, repo: &RepoId, name: &str) -> Result<()>;
 }
 
 /// A [`GitEngine`] backed by [`gix`] for read-only access (ADR-0003).
@@ -672,6 +698,61 @@ impl GitEngine for GixEngine {
             .lines()
             .map(str::to_string)
             .collect())
+    }
+
+    fn create_branch(&self, repo: &RepoId, name: &str, start_point: Option<&str>) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        let mut args: Vec<&str> = vec!["branch", "--", name];
+        if let Some(sp) = start_point {
+            // `--` was for the branch name; re-form with the start point.
+            args = vec!["branch", name, sp];
+        }
+        run_git(&wd, &args).map(|_| ())
+    }
+
+    fn delete_branch(&self, repo: &RepoId, name: &str, force: bool) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        let flag = if force { "-D" } else { "-d" };
+        run_git(&wd, &["branch", flag, "--", name]).map(|_| ())
+    }
+
+    fn checkout(&self, repo: &RepoId, target: &str, force: bool) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        // Without `--force`, git refuses to overwrite local changes and prints a
+        // clear message — surfaced verbatim by run_git's Error::Git.
+        let mut args: Vec<&str> = vec!["checkout"];
+        if force {
+            args.push("--force");
+        }
+        args.push(target);
+        run_git(&wd, &args).map(|_| ())
+    }
+
+    fn create_tag(
+        &self,
+        repo: &RepoId,
+        name: &str,
+        target: Option<&str>,
+        message: Option<&str>,
+    ) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        let mut args: Vec<&str> = vec!["tag"];
+        // Annotated when a message is given (`-m`), else lightweight.
+        if let Some(m) = message {
+            args.push("-a");
+            args.push("-m");
+            args.push(m);
+        }
+        args.push(name);
+        if let Some(t) = target {
+            args.push(t);
+        }
+        run_git(&wd, &args).map(|_| ())
+    }
+
+    fn delete_tag(&self, repo: &RepoId, name: &str) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        run_git(&wd, &["tag", "-d", name]).map(|_| ())
     }
 }
 
@@ -1713,6 +1794,90 @@ mod tests {
             msgs.first().map(String::as_str),
             Some("add new.txt (amended)"),
             "amend replaced the tip message"
+        );
+    }
+
+    fn current_branch(p: &Path) -> String {
+        let out = std::process::Command::new("git")
+            .current_dir(p)
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .output()
+            .expect("rev-parse");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    #[test]
+    fn create_checkout_and_delete_branch() {
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open");
+        let start = current_branch(p);
+
+        engine.create_branch(&id, "feature", None).expect("create");
+        engine.checkout(&id, "feature", false).expect("checkout");
+        assert_eq!(current_branch(p), "feature", "HEAD moved to new branch");
+
+        // Can't delete the branch we're on; switch back first, then delete.
+        engine.checkout(&id, &start, false).expect("checkout back");
+        engine.delete_branch(&id, "feature", false).expect("delete");
+        let refs = engine.list_refs(&id).expect("refs");
+        assert!(
+            !refs.iter().any(|r| r.name == "feature"),
+            "branch ref removed"
+        );
+    }
+
+    #[test]
+    fn create_then_delete_tag() {
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open");
+
+        engine
+            .create_tag(&id, "v1.0", None, Some("release one"))
+            .expect("create tag");
+        let refs = engine.list_refs(&id).expect("refs");
+        assert!(
+            refs.iter().any(|r| r.name == "v1.0"),
+            "annotated tag ref present"
+        );
+
+        engine.delete_tag(&id, "v1.0").expect("delete tag");
+        let refs = engine.list_refs(&id).expect("refs");
+        assert!(!refs.iter().any(|r| r.name == "v1.0"), "tag ref removed");
+    }
+
+    #[test]
+    fn checkout_refuses_to_clobber_local_changes() {
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open");
+
+        // On `other`, change file1.txt so the two branches diverge there.
+        engine.create_branch(&id, "other", None).expect("create");
+        engine
+            .checkout(&id, "other", false)
+            .expect("checkout other");
+        std::fs::write(p.join("file1.txt"), "branch side\n").expect("write");
+        engine
+            .stage_paths(&id, &["file1.txt".to_string()])
+            .expect("stage");
+        engine
+            .commit(&id, "diverge on other", &CommitOpts::default())
+            .expect("commit");
+
+        // Back on `main`, make an uncommitted edit to that same file.
+        engine.checkout(&id, "main", false).expect("checkout main");
+        std::fs::write(p.join("file1.txt"), "uncommitted local edit\n").expect("write");
+
+        // Switching to `other` would overwrite the local edit → git refuses.
+        let res = engine.checkout(&id, "other", false);
+        assert!(
+            res.is_err(),
+            "checkout that clobbers local changes is refused"
         );
     }
 }

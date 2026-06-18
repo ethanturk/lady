@@ -100,7 +100,7 @@
         "Unit tests: create+checkout a branch moves HEAD; delete removes the ref; create+delete a tag; cargo fmt/clippy -D warnings/test green; cargo deny passes; npm run build green; manual window note in progress.txt"
       ],
       "priority": 7,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §1 create/delete branches & tags, checkout. Drag-&-drop is PH2-012. Keep destructive flags (force delete, force checkout) explicit."
     },
     {
