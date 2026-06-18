@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 
-use lady_proto::{CommitMeta, Oid, RefInfo, RepoId};
+use lady_proto::{CommitMeta, Oid, RefInfo, RefKind, RepoId};
 
 /// Errors surfaced by a [`GitEngine`].
 #[derive(Debug, thiserror::Error)]
@@ -70,12 +70,33 @@ pub struct GixEngine {
     repos: Mutex<HashMap<RepoId, gix::ThreadSafeRepository>>,
 }
 
+/// Wrap any backend error as [`Error::Backend`].
+fn backend<E: std::error::Error + Send + Sync + 'static>(e: E) -> Error {
+    Error::Backend(Box::new(e))
+}
+
 impl GixEngine {
     /// Create an engine with an empty repository registry.
     pub fn new() -> Self {
         GixEngine {
             repos: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Resolve a [`RepoId`] handle to a thread-local [`gix::Repository`].
+    ///
+    /// Errors with [`Error::UnknownRepo`] if the handle was never `open`ed by
+    /// this engine. The stored [`gix::ThreadSafeRepository`] is cloned into a
+    /// per-call thread-local repo (cheap; shares the underlying object store).
+    fn repo(&self, id: &RepoId) -> Result<gix::Repository> {
+        let guard = self
+            .repos
+            .lock()
+            .expect("GixEngine repo registry mutex poisoned");
+        let shared = guard
+            .get(id)
+            .ok_or_else(|| Error::UnknownRepo(id.clone()))?;
+        Ok(shared.to_thread_local())
     }
 }
 
@@ -101,8 +122,49 @@ impl GitEngine for GixEngine {
         Ok(id)
     }
 
-    fn list_refs(&self, _repo: &RepoId) -> Result<Vec<RefInfo>> {
-        todo!("list_refs lands in US-007")
+    fn list_refs(&self, repo: &RepoId) -> Result<Vec<RefInfo>> {
+        let repo = self.repo(repo)?;
+        let platform = repo.references().map_err(backend)?;
+
+        let mut out = Vec::new();
+
+        // Local branches, tags, and remote-tracking refs. Each ref is fully
+        // peeled to its target object (annotated tags peel through to the
+        // commit they point at).
+        let groups = [
+            (RefKind::Branch, platform.local_branches().map_err(backend)?),
+            (RefKind::Tag, platform.tags().map_err(backend)?),
+            (
+                RefKind::Remote,
+                platform.remote_branches().map_err(backend)?,
+            ),
+        ];
+        for (kind, iter) in groups {
+            for reference in iter {
+                // The iterator already yields a boxed `dyn Error`, matching the
+                // `Error::Backend` payload exactly — wrap it directly.
+                let mut reference = reference.map_err(Error::Backend)?;
+                let name = reference.name().shorten().to_string();
+                let target = reference.peel_to_id().map_err(backend)?;
+                out.push(RefInfo {
+                    name,
+                    kind,
+                    target: Oid::from(target.detach().to_string()),
+                });
+            }
+        }
+
+        // HEAD (detached-aware): include it when it resolves to a commit. An
+        // unborn HEAD (fresh repo, no commits) is simply omitted.
+        if let Ok(head) = repo.head_id() {
+            out.push(RefInfo {
+                name: "HEAD".to_string(),
+                kind: RefKind::Head,
+                target: Oid::from(head.detach().to_string()),
+            });
+        }
+
+        Ok(out)
     }
 
     fn walk_log(&self, _repo: &RepoId, _query: GraphQuery) -> Result<Vec<CommitMeta>> {
@@ -145,6 +207,9 @@ mod tests {
             git(p, &["add", "."]);
             git(p, &["commit", "-q", "-m", &format!("commit {i}")]);
         }
+        // A lightweight tag on the tip, so `list_refs` (US-007) exercises the
+        // tag path and `walk_log` (US-008) has a non-branch start point.
+        git(p, &["tag", "v1"]);
         dir
     }
 
@@ -154,6 +219,53 @@ mod tests {
         let engine = GixEngine::new();
         let id = engine.open(dir.path()).expect("open the fixture repo");
         assert!(!id.as_str().is_empty(), "RepoId handle should be non-empty");
+    }
+
+    #[test]
+    fn list_refs_covers_branch_tag_and_head() {
+        let dir = fixture_repo();
+        let engine = GixEngine::new();
+        let id = engine.open(dir.path()).expect("open the fixture repo");
+        let refs = engine.list_refs(&id).expect("list_refs on the fixture");
+
+        let named = |kind: RefKind, name: &str| {
+            refs.iter()
+                .find(|r| r.kind == kind && r.name == name)
+                .unwrap_or_else(|| panic!("expected {kind:?} {name:?} in {refs:?}"))
+        };
+
+        let branch = named(RefKind::Branch, "main");
+        let tag = named(RefKind::Tag, "v1");
+        let head = named(RefKind::Head, "HEAD");
+
+        // HEAD resolves to the same commit as `main` (and `v1`, the tip tag).
+        assert_eq!(head.target, branch.target, "HEAD should resolve to main");
+        assert_eq!(tag.target, branch.target, "v1 tags the tip of main");
+        assert!(!head.target.as_str().is_empty(), "HEAD must resolve");
+
+        // Exactly one local branch and no remote-tracking refs in the fixture.
+        assert_eq!(
+            refs.iter().filter(|r| r.kind == RefKind::Branch).count(),
+            1,
+            "fixture has only `main`"
+        );
+        assert_eq!(
+            refs.iter().filter(|r| r.kind == RefKind::Remote).count(),
+            0,
+            "fixture has no remotes"
+        );
+    }
+
+    #[test]
+    fn list_refs_errors_on_unknown_repo() {
+        let engine = GixEngine::new();
+        let err = engine
+            .list_refs(&RepoId::from("never-opened".to_string()))
+            .expect_err("list_refs on an unopened handle must fail");
+        assert!(
+            matches!(err, Error::UnknownRepo(_)),
+            "expected Error::UnknownRepo, got {err:?}"
+        );
     }
 
     #[test]
