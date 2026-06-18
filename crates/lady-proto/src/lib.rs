@@ -98,6 +98,62 @@ pub struct CommitMeta {
     pub time: i64,
 }
 
+// ── Diff types ────────────────────────────────────────────────────────────────
+
+/// Whether a diff line was added, deleted, or unchanged (context).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LineKind {
+    Added,
+    Deleted,
+    Context,
+}
+
+/// A single line in a diff hunk.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiffLine {
+    pub kind: LineKind,
+    /// Raw line content (without the leading +/- prefix).
+    pub content: String,
+}
+
+/// A contiguous block of changed lines with surrounding context.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiffHunk {
+    /// Start line (1-indexed) in the old file.
+    pub old_start: u32,
+    /// Number of old-file lines this hunk spans.
+    pub old_lines: u32,
+    /// Start line (1-indexed) in the new file.
+    pub new_start: u32,
+    /// Number of new-file lines this hunk spans.
+    pub new_lines: u32,
+    pub lines: Vec<DiffLine>,
+}
+
+/// High-level change category for a file entry in a diff.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FileDiffKind {
+    Added,
+    Deleted,
+    Modified,
+    /// File content is binary — no text hunks available.
+    Binary,
+    /// File is an image — frontend should display both versions visually.
+    Image,
+}
+
+/// Diff for a single file between two commits (or working tree vs HEAD).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileDiff {
+    /// Relative file path (forward slashes).
+    pub path: String,
+    /// Old path if the file was renamed; `None` otherwise.
+    pub old_path: Option<String>,
+    pub kind: FileDiffKind,
+    /// Text hunks; empty for binary and image diffs.
+    pub hunks: Vec<DiffHunk>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

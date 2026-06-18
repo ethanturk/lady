@@ -1,6 +1,13 @@
 [workspace]
 resolver = "2"
-members = ["crates/lady-proto", "crates/lady-git", "crates/lady-cli", "crates/lady-graph", "src-tauri"]
+members = [
+    "crates/lady-proto",
+    "crates/lady-git",
+    "crates/lady-cli",
+    "crates/lady-graph",
+    "crates/lady-diff",
+    "src-tauri",
+]
 
 [workspace.package]
 edition = "2021"
@@ -20,3 +27,4 @@ tempfile = "3"
 lady-proto = { path = "crates/lady-proto" }
 lady-git = { path = "crates/lady-git" }
 lady-graph = { path = "crates/lady-graph" }
+lady-diff = { path = "crates/lady-diff" }

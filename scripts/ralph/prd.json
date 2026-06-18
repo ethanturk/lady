@@ -100,7 +100,7 @@
         "Unit tests on the hunk model; cargo test/clippy/fmt green; cargo deny passes (imara-diff is Apache-2.0)"
       ],
       "priority": 7,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §4 lady-diff. Partial-staging patch builder is NOT in scope here (Phase 2)."
     },
     {

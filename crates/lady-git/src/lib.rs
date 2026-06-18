@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 
-use lady_proto::{CommitMeta, Oid, RefInfo, RefKind, RepoId, Signature};
+use lady_proto::{CommitMeta, FileDiff, FileDiffKind, Oid, RefInfo, RefKind, RepoId, Signature};
 
 /// Errors surfaced by a [`GitEngine`].
 #[derive(Debug, thiserror::Error)]
@@ -58,6 +58,10 @@ pub trait GitEngine: Send + Sync {
 
     /// Walk history to a flat, ordered list of commits per `query`.
     fn walk_log(&self, repo: &RepoId, query: GraphQuery) -> Result<Vec<CommitMeta>>;
+
+    /// Diff a commit against its first parent (or the empty tree for root commits).
+    /// Returns one `FileDiff` per changed file.
+    fn diff_commit(&self, repo: &RepoId, commit: &Oid) -> Result<Vec<FileDiff>>;
 }
 
 /// A [`GitEngine`] backed by [`gix`] for read-only access (ADR-0003).
@@ -196,6 +200,169 @@ impl GitEngine for GixEngine {
         }
         Ok(out)
     }
+
+    fn diff_commit(&self, repo: &RepoId, commit_oid: &Oid) -> Result<Vec<FileDiff>> {
+        use std::collections::HashMap;
+        let repo = self.repo(repo)?;
+
+        let commit = repo
+            .find_commit(gix::ObjectId::from_hex(commit_oid.as_str().as_bytes()).map_err(backend)?)
+            .map_err(backend)?;
+
+        let new_tree_id = commit.tree().map_err(backend)?.id;
+
+        // Parent tree (empty tree ObjectId for root commits).
+        let old_tree_id: Option<gix::ObjectId> = commit
+            .parent_ids()
+            .next()
+            .map(|pid| {
+                repo.find_commit(pid.detach())
+                    .map_err(backend)
+                    .and_then(|p| Ok(p.tree().map_err(backend)?.id))
+            })
+            .transpose()?;
+
+        // Collect (path → blob_id) for both trees.
+        let mut old_blobs: HashMap<String, gix::ObjectId> = HashMap::new();
+        let mut new_blobs: HashMap<String, gix::ObjectId> = HashMap::new();
+
+        if let Some(old_id) = old_tree_id {
+            collect_tree_blobs(&repo, old_id, String::new(), &mut old_blobs)?;
+        }
+        collect_tree_blobs(&repo, new_tree_id, String::new(), &mut new_blobs)?;
+
+        // Diff the two sets.
+        let mut diffs: Vec<FileDiff> = Vec::new();
+
+        // Added files (in new but not old).
+        for (path, new_id) in &new_blobs {
+            if !old_blobs.contains_key(path) {
+                let (kind, hunks) = blob_diff(&repo, None, Some(*new_id), path)?;
+                diffs.push(FileDiff {
+                    path: path.clone(),
+                    old_path: None,
+                    kind,
+                    hunks,
+                });
+            }
+        }
+
+        // Deleted files (in old but not new).
+        for (path, old_id) in &old_blobs {
+            if !new_blobs.contains_key(path) {
+                let (kind, hunks) = blob_diff(&repo, Some(*old_id), None, path)?;
+                diffs.push(FileDiff {
+                    path: path.clone(),
+                    old_path: None,
+                    kind,
+                    hunks,
+                });
+            }
+        }
+
+        // Modified files (in both, different OID).
+        for (path, new_id) in &new_blobs {
+            if let Some(old_id) = old_blobs.get(path) {
+                if old_id != new_id {
+                    let (kind, hunks) = blob_diff(&repo, Some(*old_id), Some(*new_id), path)?;
+                    diffs.push(FileDiff {
+                        path: path.clone(),
+                        old_path: None,
+                        kind,
+                        hunks,
+                    });
+                }
+            }
+        }
+
+        diffs.sort_by(|a, b| a.path.cmp(&b.path));
+        Ok(diffs)
+    }
+}
+
+// ── Tree helpers ──────────────────────────────────────────────────────────────
+
+/// Recursively collect all blob OIDs in a tree into `out`, keyed by path.
+fn collect_tree_blobs(
+    repo: &gix::Repository,
+    tree_id: gix::ObjectId,
+    prefix: String,
+    out: &mut std::collections::HashMap<String, gix::ObjectId>,
+) -> Result<()> {
+    let tree = repo.find_tree(tree_id).map_err(backend)?;
+    for entry_result in tree.iter() {
+        let entry = entry_result.map_err(backend)?;
+        let name = entry.inner.filename.to_string();
+        let full_path = if prefix.is_empty() {
+            name
+        } else {
+            format!("{}/{}", prefix, name)
+        };
+        let mode = entry.inner.mode;
+        let oid = entry.inner.oid.to_owned();
+        if mode.is_tree() {
+            collect_tree_blobs(repo, oid, full_path, out)?;
+        } else if mode.is_blob() || mode.is_blob_or_symlink() {
+            out.insert(full_path, oid);
+        }
+    }
+    Ok(())
+}
+
+/// Determine `FileDiffKind` and compute text hunks (if applicable) for a
+/// pair of optional blob OIDs.  Either can be `None` (add or delete).
+fn blob_diff(
+    repo: &gix::Repository,
+    old_id: Option<gix::ObjectId>,
+    new_id: Option<gix::ObjectId>,
+    path: &str,
+) -> Result<(FileDiffKind, Vec<lady_proto::DiffHunk>)> {
+    use lady_diff::text_diff;
+
+    // Detect image by extension.
+    let ext = path.rsplit('.').next().unwrap_or("").to_lowercase();
+    if matches!(
+        ext.as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "ico" | "tiff" | "webp" | "svg"
+    ) {
+        let kind = match (old_id, new_id) {
+            (None, _) => FileDiffKind::Added,
+            (_, None) => FileDiffKind::Deleted,
+            _ => FileDiffKind::Image,
+        };
+        return Ok((kind, Vec::new()));
+    }
+
+    let old_bytes: Vec<u8> = match old_id {
+        Some(id) => repo.find_object(id).map_err(backend)?.data.to_vec(),
+        None => Vec::new(),
+    };
+    let new_bytes: Vec<u8> = match new_id {
+        Some(id) => repo.find_object(id).map_err(backend)?.data.to_vec(),
+        None => Vec::new(),
+    };
+
+    // Binary detection: look for null bytes.
+    let is_binary = old_bytes.contains(&0) || new_bytes.contains(&0);
+    if is_binary {
+        let kind = match (old_id, new_id) {
+            (None, _) => FileDiffKind::Added,
+            (_, None) => FileDiffKind::Deleted,
+            _ => FileDiffKind::Binary,
+        };
+        return Ok((kind, Vec::new()));
+    }
+
+    let old_text = String::from_utf8_lossy(&old_bytes);
+    let new_text = String::from_utf8_lossy(&new_bytes);
+
+    let kind = match (old_id, new_id) {
+        (None, _) => FileDiffKind::Added,
+        (_, None) => FileDiffKind::Deleted,
+        _ => FileDiffKind::Modified,
+    };
+    let hunks = text_diff(&old_text, &new_text);
+    Ok((kind, hunks))
 }
 
 /// Convert a [`gix::Commit`] into the GUI-agnostic [`CommitMeta`] contract.
