@@ -21,3 +21,10 @@ src-tauri/target/
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# --- Project skills: track ONLY .claude/skills/ ---
+# (the user's global ~/.gitignore excludes all of .claude/; re-include skills)
+!.claude/
+.claude/*
+!.claude/skills/
+!.claude/skills/**

@@ -1,0 +1,127 @@
+{
+  "project": "Lady",
+  "branchName": "ralph/phase-0-foundations",
+  "description": "Phase 0 — Foundations (per PLAN.md §9). Cargo workspace + CI with cargo-deny license gate (ADR-0004), shared proto types, GitEngine trait, and a gix-backed read engine that can open a repo, list refs, and walk the log to a flat list. EXIT: a small bin prints a repo's refs + first N commits end-to-end, all quality gates green on macOS/Windows/Linux CI. No UI, no mutations, no AI in this PRD. Each story is one context-window-sized commit.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Initialize Cargo workspace skeleton",
+      "description": "As a developer, I need a buildable Rust workspace so all later crates have a home.",
+      "acceptanceCriteria": [
+        "Root Cargo.toml defines a [workspace] with resolver = \"2\" and members = [\"crates/lady-proto\"]",
+        "crates/lady-proto exists with Cargo.toml + src/lib.rs (compiles, may be empty)",
+        "rust-toolchain.toml pins a stable toolchain with components rustfmt + clippy",
+        "cargo build succeeds",
+        "cargo fmt --all -- --check passes",
+        "cargo clippy --all-targets --all-features -- -D warnings is clean"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Greenfield repo. Keep crate names per PLAN.md §4 (lady-*). Add further workspace members in the story that first needs each crate, not all up front."
+    },
+    {
+      "id": "US-002",
+      "title": "Add CI workflow with build/fmt/clippy/test on 3 OSes",
+      "description": "As a developer, I need green CI on macOS/Windows/Linux from the start so no port debt accrues (per Locked Decisions: mac-primary, all-3 CI).",
+      "acceptanceCriteria": [
+        ".github/workflows/ci.yml runs on push + pull_request across macos-latest, windows-latest, ubuntu-latest",
+        "CI steps: cargo fmt --all -- --check, cargo clippy --all-targets -- -D warnings, cargo build, cargo test",
+        "Workflow uses a stable toolchain matching rust-toolchain.toml and caches the cargo registry + target dir",
+        "Workflow file is valid YAML (yamllint or actionlint clean if available)",
+        "Local cargo build + cargo test still pass"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "Cannot run GitHub Actions locally in the loop; validate YAML syntax and that the same commands pass locally. PLAN.md §10."
+    },
+    {
+      "id": "US-003",
+      "title": "Add cargo-deny license + advisory gate",
+      "description": "As a commercial closed-source product, I must allow only permissive-licensed deps (ADR-0004).",
+      "acceptanceCriteria": [
+        "deny.toml at repo root: licenses allow-list = MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, MPL-2.0, ISC, Unicode-3.0",
+        "deny.toml documents the libgit2/git2 GPL-2.0-with-linking-exception allowance as an explicit exception with a comment referencing ADR-0004",
+        "advisories + bans + sources sections present with sane defaults",
+        "cargo deny check passes locally (install cargo-deny if missing)",
+        "A cargo-deny step is added to .github/workflows/ci.yml on ubuntu-latest"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "ADR-0004. No GPL/AGPL crates. This gate must stay green as deps are added in later stories."
+    },
+    {
+      "id": "US-004",
+      "title": "Define shared proto types in lady-proto",
+      "description": "As a developer, I need GUI-agnostic shared types so the engine and (future) UI share one contract.",
+      "acceptanceCriteria": [
+        "lady-proto exposes: Oid (newtype over String/[u8;20]), RepoId, RefKind (Branch|Tag|Remote|Head), RefInfo, CommitMeta (oid, parents, author, committer, summary, time)",
+        "All types derive serde Serialize + Deserialize + Clone + Debug + PartialEq",
+        "serde depends only on permissive crates (cargo deny check still passes)",
+        "Unit tests cover serde round-trip for CommitMeta and RefInfo",
+        "cargo test passes; clippy -D warnings clean; fmt clean"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "PLAN.md §4.1 + §2.3. Keep zero git-library deps in lady-proto — it is the pure contract crate."
+    },
+    {
+      "id": "US-005",
+      "title": "Create lady-git crate with GitEngine trait skeleton",
+      "description": "As a developer, I need the engine abstraction so reads can later be served by gix/git2/shell behind one trait (ADR-0003).",
+      "acceptanceCriteria": [
+        "crates/lady-git added to workspace members",
+        "Defines pub trait GitEngine: Send + Sync with method signatures open(path) -> Result<RepoId>, list_refs(&RepoId) -> Result<Vec<RefInfo>>, walk_log(&RepoId, GraphQuery) -> Result<Vec<CommitMeta>>",
+        "GraphQuery struct (start: Option<Oid>, limit: usize) defined; lady-git depends on lady-proto",
+        "Library-level Error enum via thiserror; methods return Result<_, lady_git::Error>",
+        "Crate compiles with method bodies as todo!() or unimplemented!(); clippy -D warnings clean; fmt clean"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "PLAN.md §4.1. Trait only — no impl yet. gix is wired in US-006."
+    },
+    {
+      "id": "US-006",
+      "title": "Implement open() + a git-repo test fixture via gix",
+      "description": "As a developer, I need to open an existing repository so all reads have a handle.",
+      "acceptanceCriteria": [
+        "Add a GixEngine struct in lady-git implementing GitEngine, backed by the gix crate",
+        "open(path) opens an existing git repo via gix and returns a RepoId; errors cleanly on a non-repo path",
+        "A test helper creates a throwaway repo in a tempdir (tempfile crate) with 2-3 commits using the system git CLI (std::process::Command — system git is required per ADR-0003)",
+        "Unit test: open() succeeds on the fixture and returns Err on an empty tempdir",
+        "cargo deny check still passes with gix added; cargo test passes; clippy -D warnings clean; fmt clean"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": "ADR-0003: gix for reads, system git allowed for test-fixture setup. Keep the fixture helper reusable for US-007/US-008."
+    },
+    {
+      "id": "US-007",
+      "title": "Implement list_refs() via gix",
+      "description": "As a user, I need to see a repo's branches, tags, and HEAD.",
+      "acceptanceCriteria": [
+        "list_refs() returns Vec<RefInfo> covering local branches, tags, and HEAD (detached-HEAD aware) via gix",
+        "Each RefInfo carries name, RefKind, and target Oid",
+        "Unit test on the fixture asserts the expected branch/tag set and that HEAD resolves",
+        "cargo test passes; clippy -D warnings clean; fmt clean; cargo deny check passes"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": "Reuse the US-006 fixture helper. PLAN.md §4.1."
+    },
+    {
+      "id": "US-008",
+      "title": "Implement walk_log() + lady-cli end-to-end Phase 0 exit",
+      "description": "As a developer, I want to walk history to a flat list and print refs + first N commits end-to-end (Phase 0 EXIT).",
+      "acceptanceCriteria": [
+        "walk_log(repo, GraphQuery{start, limit}) returns a flat Vec<CommitMeta> from start (default HEAD), honoring limit, via gix revwalk",
+        "crates/lady-cli (a small bin) added to the workspace; it takes a repo path arg, opens it, and prints refs then the first 20 commits (oid + summary)",
+        "Integration test runs lady-cli (or its lib entrypoint) against the fixture and asserts refs + commit summaries appear",
+        "Running lady-cli on the Lady repo itself prints its refs + recent commits",
+        "cargo test passes; clippy -D warnings clean; fmt clean; cargo deny check passes"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": "Phase 0 EXIT per PLAN.md §9: open a repo, list refs, walk log to a flat list. After this PRD, start a new PRD with branchName ralph/phase-1-read-only for the graph/diff/blame UI."
+    }
+  ]
+}
