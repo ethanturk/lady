@@ -289,7 +289,7 @@ pub enum ApplyOutcome {
     Conflicts(Vec<String>),
 }
 
-/// Result of a plain rebase attempt.
+/// Result of a rebase attempt (plain or interactive).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value")]
 pub enum RebaseOutcome {
@@ -297,6 +297,52 @@ pub enum RebaseOutcome {
     Rebased,
     /// Rebase stopped with conflicts; carries the conflicted paths.
     Conflicts(Vec<String>),
+    /// Rebase stopped mid-sequence for an `edit` step (no conflict); the repo
+    /// is left mid-rebase awaiting `continue` / `abort`.
+    Stopped,
+}
+
+/// What to do with a commit in an interactive rebase (mirrors git's todo verbs).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RebaseAction {
+    /// Keep the commit as-is.
+    Pick,
+    /// Keep the commit but edit its message.
+    Reword,
+    /// Stop after applying to amend the commit.
+    Edit,
+    /// Meld into the previous commit, combining messages.
+    Squash,
+    /// Meld into the previous commit, discarding this message.
+    Fixup,
+    /// Remove the commit.
+    Drop,
+}
+
+impl RebaseAction {
+    /// The git rebase-todo keyword for this action.
+    pub fn keyword(self) -> &'static str {
+        match self {
+            RebaseAction::Pick => "pick",
+            RebaseAction::Reword => "reword",
+            RebaseAction::Edit => "edit",
+            RebaseAction::Squash => "squash",
+            RebaseAction::Fixup => "fixup",
+            RebaseAction::Drop => "drop",
+        }
+    }
+}
+
+/// One step of an interactive-rebase plan. The plan is an ordered `Vec`; the
+/// vec order encodes reordering of commits.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RebaseStep {
+    /// The commit this step acts on.
+    pub oid: Oid,
+    /// What to do with it.
+    pub action: RebaseAction,
+    /// Replacement message for `Reword` (or combined message for `Squash`).
+    pub message: Option<String>,
 }
 
 /// What mid-operation state a repository is in, used to drive conflict
@@ -471,6 +517,7 @@ mod tests {
         let cases = [
             RebaseOutcome::Rebased,
             RebaseOutcome::Conflicts(vec!["conflicted.txt".to_owned()]),
+            RebaseOutcome::Stopped,
         ];
         for outcome in cases {
             let json = serde_json::to_string(&outcome).expect("serialize RebaseOutcome");

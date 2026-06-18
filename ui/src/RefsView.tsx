@@ -152,10 +152,11 @@ const RefsView: Component<RefsViewProps> = (props) => {
       .catch((e) => setErr(String(e)));
   };
 
-  const describeRebase = (branch: string, onto: string, outcome: RebaseOutcome) =>
-    outcome.kind === "Rebased"
-      ? `Rebased ${branch} onto ${onto}.`
-      : `Rebase stopped with ${outcome.value.length} conflict${outcome.value.length === 1 ? "" : "s"}.`;
+  const describeRebase = (branch: string, onto: string, outcome: RebaseOutcome) => {
+    if (outcome.kind === "Rebased") return `Rebased ${branch} onto ${onto}.`;
+    if (outcome.kind === "Stopped") return "Rebase stopped (edit step) — continue or abort.";
+    return `Rebase stopped with ${outcome.value.length} conflict${outcome.value.length === 1 ? "" : "s"}.`;
+  };
 
   const rebaseBranch = (branch: string, onto: string) => {
     setErr(null);

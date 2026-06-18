@@ -723,6 +723,31 @@ fn conflict_abort(repo: RepoId, engine: State<GixEngine>) -> Result<(), String> 
     engine.conflict_abort(&repo).map_err(|e| e.to_string())
 }
 
+/// Run an interactive rebase onto `onto` driven by `plan` (PH3-003).
+#[tauri::command]
+fn rebase_interactive(
+    repo: RepoId,
+    onto: String,
+    plan: Vec<lady_proto::RebaseStep>,
+    engine: State<GixEngine>,
+) -> Result<RebaseOutcome, String> {
+    engine
+        .rebase_interactive(&repo, &onto, &plan)
+        .map_err(|e| e.to_string())
+}
+
+/// Continue an in-progress (interactive) rebase.
+#[tauri::command]
+fn rebase_continue(repo: RepoId, engine: State<GixEngine>) -> Result<RebaseOutcome, String> {
+    engine.rebase_continue(&repo).map_err(|e| e.to_string())
+}
+
+/// Skip the current commit of an in-progress rebase.
+#[tauri::command]
+fn rebase_skip(repo: RepoId, engine: State<GixEngine>) -> Result<RebaseOutcome, String> {
+    engine.rebase_skip(&repo).map_err(|e| e.to_string())
+}
+
 /// A repository remembered in user settings, with an optional custom group.
 #[derive(Serialize, Deserialize, Default, Clone)]
 pub struct RecentRepo {
@@ -821,6 +846,9 @@ pub fn run() {
             mark_resolved,
             conflict_state,
             conflict_abort,
+            rebase_interactive,
+            rebase_continue,
+            rebase_skip,
             clone_repo,
             load_settings,
             save_settings

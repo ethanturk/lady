@@ -12,7 +12,7 @@ use std::sync::Mutex;
 use lady_proto::{
     AheadBehind, ApplyOutcome, Blame, BlameLine, ChangeKind, CommitMeta, ConflictSides,
     ConflictState, FfMode, FileDiff, FileDiffKind, FileStatus, MergeOutcome, Oid, ParsedConflict,
-    RebaseOutcome, RefInfo, RefKind, RepoId, Signature, StashEntry, WorkingTree,
+    RebaseOutcome, RebaseStep, RefInfo, RefKind, RepoId, Signature, StashEntry, WorkingTree,
 };
 
 /// Errors surfaced by a [`GitEngine`].
@@ -304,6 +304,24 @@ pub trait GitEngine: Send + Sync {
     /// Abort whatever operation is in progress, routing to the right
     /// `--abort` per [`GitEngine::conflict_state`]. A no-op when idle.
     fn conflict_abort(&self, repo: &RepoId) -> Result<()>;
+
+    /// Run an interactive rebase onto `onto`, driving git's todo list from
+    /// `plan` (a generated todo + `GIT_SEQUENCE_EDITOR` shim, plus a
+    /// `GIT_EDITOR` shim feeding reword/squash messages). Stops on conflict or
+    /// an `edit` step, leaving the repo mid-rebase for `continue` / `abort`.
+    fn rebase_interactive(
+        &self,
+        repo: &RepoId,
+        onto: &str,
+        plan: &[RebaseStep],
+    ) -> Result<RebaseOutcome>;
+
+    /// Continue an in-progress (interactive) rebase after resolving a conflict
+    /// or finishing an `edit` amendment.
+    fn rebase_continue(&self, repo: &RepoId) -> Result<RebaseOutcome>;
+
+    /// Skip the current commit of an in-progress rebase.
+    fn rebase_skip(&self, repo: &RepoId) -> Result<RebaseOutcome>;
 }
 
 /// A [`GitEngine`] backed by [`gix`] for read-only access (ADR-0003).
@@ -353,6 +371,31 @@ impl GixEngine {
             .map(|p| p.to_path_buf())
             .ok_or_else(|| Error::Git("repository has no worktree (bare)".to_string()))
     }
+
+    /// Map a rebase process result + the post-run repo state to a
+    /// [`RebaseOutcome`]: completed, stopped on conflict, stopped for an `edit`
+    /// step, or a hard error (git's message surfaced).
+    fn interpret_rebase(&self, repo: &RepoId, out: &std::process::Output) -> Result<RebaseOutcome> {
+        // Conflicts take precedence — visible whether git exited zero or not.
+        let conflicts = conflict_paths(&self.status(repo)?);
+        if !conflicts.is_empty() {
+            return Ok(RebaseOutcome::Conflicts(conflicts));
+        }
+        // Still mid-rebase with no conflict → stopped for an `edit` step.
+        if self.conflict_state(repo)? == ConflictState::Rebase {
+            return Ok(RebaseOutcome::Stopped);
+        }
+        if out.status.success() {
+            return Ok(RebaseOutcome::Rebased);
+        }
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let msg = stderr.trim();
+        Err(Error::Git(if msg.is_empty() {
+            format!("git rebase failed ({})", out.status)
+        } else {
+            msg.to_string()
+        }))
+    }
 }
 
 /// Run system `git` in `workdir` with `args`, returning its captured output.
@@ -379,6 +422,23 @@ fn run_git_raw(workdir: &Path, args: &[&str]) -> Result<std::process::Output> {
         .current_dir(workdir)
         .args(args)
         .output()
+        .map_err(|e| Error::Git(format!("failed to run git: {e}")))
+}
+
+/// Run system `git` with extra environment variables, returning raw output
+/// (non-zero exits are not mapped). Used to drive interactive rebase with a
+/// `GIT_SEQUENCE_EDITOR` / `GIT_EDITOR` shim (ADR-0003).
+fn run_git_env_raw(
+    workdir: &Path,
+    args: &[&str],
+    envs: &[(&str, &str)],
+) -> Result<std::process::Output> {
+    let mut cmd = Command::new("git");
+    cmd.current_dir(workdir).args(args);
+    for (k, v) in envs {
+        cmd.env(k, v);
+    }
+    cmd.output()
         .map_err(|e| Error::Git(format!("failed to run git: {e}")))
 }
 
@@ -1317,6 +1377,103 @@ impl GitEngine for GixEngine {
             ConflictState::CherryPick | ConflictState::Revert => self.sequencer_abort(repo),
             ConflictState::None => Ok(()),
         }
+    }
+
+    fn rebase_interactive(
+        &self,
+        repo: &RepoId,
+        onto: &str,
+        plan: &[RebaseStep],
+    ) -> Result<RebaseOutcome> {
+        let wd = self.workdir(repo)?;
+
+        // Scratch dir holding the generated todo, the editor shim, and the
+        // ordered reword/squash message files. Kept alive across the git run.
+        let dir = tempfile::tempdir().map_err(|e| Error::Git(format!("tempdir: {e}")))?;
+
+        // 1) The rebase todo: one `<keyword> <oid>` line per step, in vec order
+        //    (order = the reordering the user chose).
+        let mut todo = String::new();
+        for step in plan {
+            todo.push_str(step.action.keyword());
+            todo.push(' ');
+            todo.push_str(step.oid.as_str());
+            todo.push('\n');
+        }
+        let todo_path = dir.path().join("todo");
+        std::fs::write(&todo_path, &todo).map_err(|e| Error::Git(format!("write todo: {e}")))?;
+
+        // 2) Message files for editor-invoking steps (reword, squash), indexed
+        //    by the order git will open the editor (todo order). A missing file
+        //    for an index means "leave git's default message".
+        let msg_dir = dir.path().join("msgs");
+        std::fs::create_dir_all(&msg_dir).map_err(|e| Error::Git(format!("msg dir: {e}")))?;
+        let mut editor_idx = 0usize;
+        for step in plan {
+            if matches!(
+                step.action,
+                lady_proto::RebaseAction::Reword | lady_proto::RebaseAction::Squash
+            ) {
+                if let Some(m) = &step.message {
+                    std::fs::write(msg_dir.join(format!("msg_{editor_idx}")), m)
+                        .map_err(|e| Error::Git(format!("write msg: {e}")))?;
+                }
+                editor_idx += 1;
+            }
+        }
+
+        // 3) The GIT_EDITOR shim: pops the next queued message (by a counter in
+        //    LADY_MSG_DIR) into the file git wants edited; leaves it untouched
+        //    when no message is queued for that invocation.
+        let shim_path = dir.path().join("editor.sh");
+        let shim = "#!/bin/sh\n\
+N=$(cat \"$LADY_MSG_DIR/counter\" 2>/dev/null || echo 0)\n\
+M=\"$LADY_MSG_DIR/msg_$N\"\n\
+[ -f \"$M\" ] && cp \"$M\" \"$1\"\n\
+echo $((N + 1)) > \"$LADY_MSG_DIR/counter\"\n\
+exit 0\n";
+        std::fs::write(&shim_path, shim).map_err(|e| Error::Git(format!("write shim: {e}")))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&shim_path)
+                .map_err(|e| Error::Git(format!("stat shim: {e}")))?
+                .permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&shim_path, perms)
+                .map_err(|e| Error::Git(format!("chmod shim: {e}")))?;
+        }
+
+        // `cp <our todo>` as the sequence editor overwrites git's todo file with
+        // ours; the shim feeds messages. Both paths are quoted for safety.
+        let seq_editor = format!("cp '{}'", todo_path.display());
+        let editor = format!("sh '{}'", shim_path.display());
+        let msg_dir_str = msg_dir.to_string_lossy().into_owned();
+        let envs = [
+            ("GIT_SEQUENCE_EDITOR", seq_editor.as_str()),
+            ("GIT_EDITOR", editor.as_str()),
+            ("LADY_MSG_DIR", msg_dir_str.as_str()),
+        ];
+
+        let out = run_git_env_raw(&wd, &["rebase", "-i", onto], &envs)?;
+        // Hold the scratch dir until git has finished reading the shim/todo.
+        drop(dir);
+        self.interpret_rebase(repo, &out)
+    }
+
+    fn rebase_continue(&self, repo: &RepoId) -> Result<RebaseOutcome> {
+        let wd = self.workdir(repo)?;
+        // Accept default messages on continue so squash/reword never blocks.
+        let envs = [("GIT_EDITOR", "true"), ("GIT_SEQUENCE_EDITOR", "true")];
+        let out = run_git_env_raw(&wd, &["rebase", "--continue"], &envs)?;
+        self.interpret_rebase(repo, &out)
+    }
+
+    fn rebase_skip(&self, repo: &RepoId) -> Result<RebaseOutcome> {
+        let wd = self.workdir(repo)?;
+        let envs = [("GIT_EDITOR", "true"), ("GIT_SEQUENCE_EDITOR", "true")];
+        let out = run_git_env_raw(&wd, &["rebase", "--skip"], &envs)?;
+        self.interpret_rebase(repo, &out)
     }
 }
 
@@ -3029,6 +3186,200 @@ mod tests {
 
         // conflict_abort routes to merge --abort cleanly even mid-merge.
         engine.conflict_abort(&id).expect("conflict abort");
+        assert_eq!(
+            engine.conflict_state(&id).expect("state after abort"),
+            ConflictState::None
+        );
+    }
+
+    // ── Interactive rebase (PH3-003) ──────────────────────────────────────────
+
+    /// Capture stdout of a git command in `dir` (test helper).
+    fn git_out(dir: &Path, args: &[&str]) -> String {
+        let out = Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .expect("run git");
+        assert!(out.status.success(), "git {args:?} failed");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// Add a commit writing `name` with `content`; return its Oid.
+    fn add_commit(engine: &GixEngine, id: &RepoId, p: &Path, name: &str, content: &str) -> Oid {
+        std::fs::write(p.join(name), content).expect("write file");
+        engine
+            .stage_paths(id, &[name.to_string()])
+            .expect("stage file");
+        engine
+            .commit(id, &format!("add {name}"), &CommitOpts::default())
+            .expect("commit file")
+    }
+
+    #[test]
+    fn interactive_rebase_squashes_two_commits() {
+        use lady_proto::RebaseAction;
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open");
+
+        let base = head_oid(p).expect("base");
+        let a = add_commit(&engine, &id, p, "a.txt", "A\n");
+        let b = add_commit(&engine, &id, p, "b.txt", "B\n");
+
+        let plan = vec![
+            RebaseStep {
+                oid: a,
+                action: RebaseAction::Pick,
+                message: None,
+            },
+            RebaseStep {
+                oid: b,
+                action: RebaseAction::Squash,
+                message: None,
+            },
+        ];
+        let outcome = engine
+            .rebase_interactive(&id, base.as_str(), &plan)
+            .expect("interactive squash");
+        assert_eq!(outcome, RebaseOutcome::Rebased);
+
+        // One commit since base, holding both files.
+        let count = git_out(
+            p,
+            &["rev-list", "--count", &format!("{}..HEAD", base.as_str())],
+        );
+        assert_eq!(count, "1", "two commits squashed into one");
+        assert!(p.join("a.txt").exists() && p.join("b.txt").exists());
+        assert_eq!(
+            engine.conflict_state(&id).expect("state"),
+            ConflictState::None
+        );
+    }
+
+    #[test]
+    fn interactive_rebase_drops_a_commit() {
+        use lady_proto::RebaseAction;
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open");
+
+        let base = head_oid(p).expect("base");
+        let a = add_commit(&engine, &id, p, "a.txt", "A\n");
+        let b = add_commit(&engine, &id, p, "b.txt", "B\n");
+
+        let plan = vec![
+            RebaseStep {
+                oid: a,
+                action: RebaseAction::Pick,
+                message: None,
+            },
+            RebaseStep {
+                oid: b,
+                action: RebaseAction::Drop,
+                message: None,
+            },
+        ];
+        let outcome = engine
+            .rebase_interactive(&id, base.as_str(), &plan)
+            .expect("interactive drop");
+        assert_eq!(outcome, RebaseOutcome::Rebased);
+
+        let count = git_out(
+            p,
+            &["rev-list", "--count", &format!("{}..HEAD", base.as_str())],
+        );
+        assert_eq!(count, "1", "dropped commit removed");
+        assert!(p.join("a.txt").exists(), "kept commit's file present");
+        assert!(!p.join("b.txt").exists(), "dropped commit's file gone");
+    }
+
+    #[test]
+    fn interactive_rebase_reorders_two_commits() {
+        use lady_proto::RebaseAction;
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open");
+
+        let base = head_oid(p).expect("base");
+        let a = add_commit(&engine, &id, p, "a.txt", "A\n");
+        let b = add_commit(&engine, &id, p, "b.txt", "B\n");
+
+        // Original tip is "add b.txt"; reorder so "add a.txt" ends up on top.
+        let before_tip = git_out(p, &["log", "-1", "--format=%s"]);
+        assert_eq!(before_tip, "add b.txt");
+
+        let plan = vec![
+            RebaseStep {
+                oid: b,
+                action: RebaseAction::Pick,
+                message: None,
+            },
+            RebaseStep {
+                oid: a,
+                action: RebaseAction::Pick,
+                message: None,
+            },
+        ];
+        let outcome = engine
+            .rebase_interactive(&id, base.as_str(), &plan)
+            .expect("interactive reorder");
+        assert_eq!(outcome, RebaseOutcome::Rebased);
+
+        let after_tip = git_out(p, &["log", "-1", "--format=%s"]);
+        assert_eq!(after_tip, "add a.txt", "reorder put a.txt on top");
+        assert!(p.join("a.txt").exists() && p.join("b.txt").exists());
+    }
+
+    #[test]
+    fn conflicting_interactive_reorder_stops_then_aborts_cleanly() {
+        use lady_proto::RebaseAction;
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open");
+
+        let base = head_oid(p).expect("base");
+        // Both commits edit the SAME file in sequence; reordering them makes the
+        // second patch fail to apply → conflict.
+        let a = add_commit(&engine, &id, p, "file1.txt", "A\n");
+        let b = add_commit(&engine, &id, p, "file1.txt", "B\n");
+        let before = head_oid(p).expect("tip before rebase");
+
+        let plan = vec![
+            RebaseStep {
+                oid: b,
+                action: RebaseAction::Pick,
+                message: None,
+            },
+            RebaseStep {
+                oid: a,
+                action: RebaseAction::Pick,
+                message: None,
+            },
+        ];
+        let outcome = engine
+            .rebase_interactive(&id, base.as_str(), &plan)
+            .expect("interactive conflicting reorder");
+        assert!(
+            matches!(outcome, RebaseOutcome::Conflicts(_)),
+            "expected conflicts, got {outcome:?}"
+        );
+        assert_eq!(
+            engine.conflict_state(&id).expect("state mid-rebase"),
+            ConflictState::Rebase
+        );
+
+        engine.rebase_abort(&id).expect("abort");
+        assert_eq!(head_oid(p).expect("head after abort"), before);
+        let wt = engine.status(&id).expect("status after abort");
+        assert!(
+            wt.staged.is_empty() && wt.unstaged.is_empty() && wt.untracked.is_empty(),
+            "abort restores a clean tree: {wt:?}"
+        );
         assert_eq!(
             engine.conflict_state(&id).expect("state after abort"),
             ConflictState::None

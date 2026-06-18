@@ -12,6 +12,4 @@ lady-diff = { workspace = true }
 base64 = { workspace = true }
 thiserror = { workspace = true }
 gix = { workspace = true }
-
-[dev-dependencies]
 tempfile = { workspace = true }

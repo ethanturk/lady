@@ -174,7 +174,18 @@ export type ApplyOutcome =
 /** Mirrors lady_proto::RebaseOutcome. */
 export type RebaseOutcome =
   | { kind: "Rebased" }
-  | { kind: "Conflicts"; value: string[] };
+  | { kind: "Conflicts"; value: string[] }
+  | { kind: "Stopped" };
+
+/** Mirrors lady_proto::RebaseAction. */
+export type RebaseAction = "Pick" | "Reword" | "Edit" | "Squash" | "Fixup" | "Drop";
+
+/** Mirrors lady_proto::RebaseStep. */
+export interface RebaseStep {
+  oid: string;
+  action: RebaseAction;
+  message: string | null;
+}
 
 /** Mirrors lady_proto::ConflictState. */
 export type ConflictState = "None" | "Merge" | "Rebase" | "CherryPick" | "Revert";
