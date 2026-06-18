@@ -16,7 +16,7 @@ UI stories also note a manual window check here.
 - [x] PH4-007 Git LFS support
 - [x] PH4-008 git-flow support
 - [x] PH4-009 Submodule management
-- [ ] PH4-010 Phase 4 Fast-follow exit gate
+- [x] PH4-010 Phase 4 Fast-follow exit gate
 
 ## Manual window checks (noted as stories land)
 (none yet)
@@ -39,3 +39,7 @@ UI stories also note a manual window check here.
 - PH4-009: Submodules — SubmodulesView panel (status ● up-to-date / ◑ dirty / ○
   uninit, add/init/update/sync/remove, Open as repo tab). Tested: add + status +
   update in a tempdir superproject. Manual window check for the panel.
+- PH4-010: Fast-follow exit gate — RELEASE-CHECKLIST.md updated with the Phase 4
+  Fast-follow table (PH4-001..009). Version bumped to 1.1.0 across all crates +
+  tauri.conf.json + ui/package.json. Whole workspace green (fmt/clippy/test/deny/
+  npm). Fast-follow complete. Next major phase: Phase 5 (AI), then Phase 6 polish.

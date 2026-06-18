@@ -1,11 +1,11 @@
-# Lady v1.0 — Core Parity Release Checklist
+# Lady — Core Parity + Fast-follow Release Checklist
 
-This is the **feature-completeness gate** for the v1.0 release line (Phase 3 EXIT,
-PLAN.md §0/§9). It maps every item of the Core Parity surface (CONTEXT.md) to the
-story that implements it across Phases 1–3. It is **not** the ship itself —
+This maps every item of the Core Parity surface (CONTEXT.md) to its implementing
+story across Phases 1–3 (the v1.0 line, Phase 3 EXIT, PLAN.md §0/§9), plus the
+Fast-follow set shipped in Phase 4 (v1.1.0). It is **not** the ship itself —
 packaging / notarization / auto-update are Phase 6.
 
-Version at this gate: **1.0.0-rc**.
+Versions: Core Parity gate **1.0.0-rc**; Fast-follow gate **1.1.0** (current).
 
 ## Core Parity surface → implementing story
 
@@ -46,20 +46,26 @@ Version at this gate: **1.0.0-rc**.
 | Create GitHub pull request from a branch | ✅ | PH3-012 |
 | Licensing gate — 30-day trial + offline signed-key verify (ADR-0007) | ✅ | PH3-013 |
 
-## Fast-follow — deliberately excluded from v1.0 (CONTEXT.md)
+## Fast-follow — shipped in Phase 4 (v1.1.0)
 
-These are committed post-v1.0 patches, **not** in the Core Parity bar:
+Committed post-v1.0 patches (CONTEXT.md), now implemented and green:
 
-- **Git LFS**
-- **git-flow**
-- **Submodule edge cases**
-- **PR creation for non-GitHub forges** (GitLab / Bitbucket / Azure DevOps) — only
-  GitHub ships at v1 (PH3-011/012).
+| Fast-follow item | Status | Implementing story |
+| --- | --- | --- |
+| Forge-agnostic hosting (HostingProvider trait) | ✅ | PH4-001 |
+| GitLab auth + create merge request | ✅ | PH4-002 |
+| Bitbucket auth + create pull request | ✅ | PH4-003 |
+| Azure DevOps auth + create pull request | ✅ | PH4-004 |
+| Create remote repository (all four forges) | ✅ | PH4-005 |
+| GitHub notifications inbox | ✅ | PH4-006 |
+| Git LFS support | ✅ | PH4-007 |
+| git-flow support | ✅ | PH4-008 |
+| Submodule management (incl. nested) | ✅ | PH4-009 |
 
-## Not in Phase 3 (later phases)
+## Not yet (later phases)
 
 - **AI features** — Phase 5 (PLAN.md; ADR-0008/0009/0011).
-- **Packaging / notarization / auto-update** — Phase 6. This gate is
+- **Packaging / notarization / auto-update** — Phase 6. These gates are
   feature-completeness, not the actual ship.
 
 ## Green-build gate (run before tagging)
