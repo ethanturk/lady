@@ -29,7 +29,7 @@
         "App launches and shows app_info; cargo + npm run build green; clippy -D warnings clean"
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Proves the command/event bridge before wiring real data."
     },
     {
