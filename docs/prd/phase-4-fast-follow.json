@@ -14,7 +14,7 @@
         "Unit tests: URL->provider resolution for all four forges + a self-hosted base; existing GitHub PR test still green; cargo fmt/clippy -D warnings/test green; cargo deny passes"
       ],
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §7. Refactor-first so PH4-002..004 are thin additions. Keep GitHub green throughout."
     },
     {
@@ -27,7 +27,7 @@
         "Errors for no-auth / no-GitLab-remote / API failure; unit test create_merge_request against mocked GitLab API (wiremock); cargo fmt/clippy/test green; cargo deny passes; npm run build green"
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §7. Reuses PH4-001 trait + the Phase 3 PR UI."
     },
     {
@@ -40,7 +40,7 @@
         "Errors handled; unit test against mocked Bitbucket API (wiremock); cargo fmt/clippy/test green; cargo deny passes; npm run build green"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §7."
     },
     {
@@ -53,7 +53,7 @@
         "Errors handled; unit test against mocked Azure DevOps API (wiremock); cargo fmt/clippy/test green; cargo deny passes; npm run build green"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §7. Azure DevOps URL/identity shape differs (org/project) — cover in resolution + tests."
     },
     {
@@ -66,7 +66,7 @@
         "Errors handled per forge; unit tests against mocked APIs (wiremock) for each; cargo fmt/clippy/test green; cargo deny passes; npm run build green"
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §1 'Create remote repos', §7."
     },
     {
@@ -79,7 +79,7 @@
         "Unit test list/mark against mocked GitHub API (wiremock); cargo fmt/clippy/test green; cargo deny passes; npm run build green; manual window note in progress notes"
       ],
       "priority": 6,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §1 GitHub notifications (Fork parity). GitHub only; other forges out of scope."
     },
     {
@@ -92,7 +92,7 @@
         "Unit/integration test: in a tempdir repo with git-lfs, an LFS-tracked file round-trips (pointer in index, real bytes in working tree); skipped with a clear note if git-lfs is unavailable; cargo fmt/clippy/test green; cargo deny passes; npm run build green"
       ],
       "priority": 7,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §1 Git LFS (Fast-follow). Lean on the system git + git-lfs install (ADR-0003); do not reimplement the LFS protocol."
     },
     {
@@ -105,7 +105,7 @@
         "Unit test: init then start+finish a feature branch in a tempdir repo merges into develop; cargo fmt/clippy/test green; cargo deny passes; npm run build green"
       ],
       "priority": 8,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §1 git-flow (Fast-follow). Implement the flow semantics directly via git so a git-flow binary is not required."
     },
     {
@@ -118,7 +118,7 @@
         "Unit test: add + update a submodule in a tempdir superproject and assert status; cargo fmt/clippy/test green; cargo deny passes; npm run build green"
       ],
       "priority": 9,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §1 submodules + Fast-follow 'submodule edge cases'."
     },
     {
@@ -131,7 +131,7 @@
         "Version bumped (e.g. 1.1.0); notes confirm Fast-follow complete"
       ],
       "priority": 10,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §9 Phase 4. After this, Phase 5 (AI) is the remaining major phase before Phase 6 polish."
     }
   ]
