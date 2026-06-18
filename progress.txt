@@ -7,7 +7,7 @@ cargo test, cargo deny check, npm run build. UI stories also note a manual windo
 
 ## Status
 - [x] PH3-001 Conflict model + resolve engine (lady-diff::merge)
-- [ ] PH3-002 3-pane merge conflict resolver UI
+- [x] PH3-002 3-pane merge conflict resolver UI
 - [ ] PH3-003 Interactive rebase plan model + executor (engine)
 - [ ] PH3-004 Interactive rebase UI
 - [ ] PH3-005 Commit signing (GPG + SSH)
@@ -22,4 +22,8 @@ cargo test, cargo deny check, npm run build. UI stories also note a manual windo
 - [ ] PH3-014 Core Parity release-readiness gate (Phase 3 EXIT)
 
 ## Manual window checks (noted as stories land)
-(none yet)
+- PH3-002: ConflictResolver renders base|ours|theirs panes + editable per-region
+  result + minimap. Auto-surfaces a "Conflicts ⚠" tab when conflict_state != None.
+  Needs a manual `npm run tauri dev` window check: trigger a merge conflict, confirm
+  panes populate, choose sides, Save & next clears the file, finishing returns to
+  Changes. (Not runnable headless in this loop; build + typecheck green.)

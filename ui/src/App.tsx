@@ -1,7 +1,7 @@
 import { createEffect, createSignal, onMount, Show } from "solid-js";
 import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
-import type { AppInfo, ApplyOutcome, OpenRepo, RefInfo } from "./commands";
+import type { AppInfo, ApplyOutcome, ConflictState, OpenRepo, RefInfo } from "./commands";
 import GraphView from "./GraphView";
 import DiffView from "./DiffView";
 import BlameView from "./BlameView";
@@ -10,10 +10,11 @@ import ChangesView from "./ChangesView";
 import RefsView from "./RefsView";
 import SyncBar from "./SyncBar";
 import RepoBar from "./RepoBar";
+import ConflictResolver from "./ConflictResolver";
 import CommandPalette from "./CommandPalette";
 import type { PaletteEntry } from "./CommandPalette";
 
-type Tab = "changes" | "commits" | "refs" | "blame" | "history";
+type Tab = "changes" | "commits" | "refs" | "blame" | "history" | "conflicts";
 
 const App: Component = () => {
   const [info, setInfo] = createSignal<AppInfo | null>(null);
@@ -27,8 +28,28 @@ const App: Component = () => {
   const [err, setErr] = createSignal<string | null>(null);
   const [opNotice, setOpNotice] = createSignal<string | null>(null);
   const [opConflicts, setOpConflicts] = createSignal<string[]>([]);
+  const [conflictState, setConflictState] = createSignal<ConflictState>("None");
   // Bumped after any mutation so status/refs/graph views reload (PLAN §3.2).
   const [refreshNonce, setRefreshNonce] = createSignal(0);
+  // Poll the mid-operation state; auto-surface the resolver when conflicts
+  // appear (PH3-002: merge / cherry-pick / revert / rebase report conflicts).
+  const updateConflictState = (repo: OpenRepo) => {
+    invoke<ConflictState>("conflict_state", { repo: repo.id })
+      .then((s) => {
+        const wasIdle = conflictState() === "None";
+        setConflictState(s);
+        if (s !== "None") {
+          invoke<string[]>("list_conflicts", { repo: repo.id })
+            .then((c) => {
+              if (c.length > 0 && wasIdle) setTab("conflicts");
+            })
+            .catch(() => {});
+        } else if (tab() === "conflicts") {
+          setTab("changes");
+        }
+      })
+      .catch(() => {});
+  };
   const refresh = () => {
     setRefreshNonce((n) => n + 1);
     const repo = active();
@@ -36,6 +57,7 @@ const App: Component = () => {
     invoke<RefInfo[]>("list_refs", { repo: repo.id })
       .then(setRefs)
       .catch((e) => setErr(String(e)));
+    updateConflictState(repo);
   };
 
   const describeApply = (action: string, outcome: ApplyOutcome) => {
@@ -93,6 +115,8 @@ const App: Component = () => {
     invoke<string[]>("list_files", { repo: repo.id })
       .then(setFiles)
       .catch(() => setFiles([]));
+    setConflictState("None");
+    updateConflictState(repo);
   });
 
   // Palette entries: tab actions + branches (→ Refs) + files (→ Blame).
@@ -159,6 +183,9 @@ const App: Component = () => {
         <div style={{ margin: "0.25rem 1rem", padding: "0.35rem", border: "1px solid #f0c36d", background: "#fff8e5", "font-size": "0.8rem" }}>
           <span style={{ "font-weight": 700 }}>Conflicts: </span>
           <span>{opConflicts().join(", ")}</span>
+          <button style={{ margin: "0 0 0 0.5rem" }} onClick={() => setTab("conflicts")}>
+            Resolve
+          </button>
           <button style={{ margin: "0 0 0 0.5rem" }} onClick={abortSequencer}>
             Abort
           </button>
@@ -183,6 +210,14 @@ const App: Component = () => {
           <button style={tabStyle("history")} onClick={() => setTab("history")}>
             History
           </button>
+          <Show when={conflictState() !== "None"}>
+            <button
+              style={{ ...tabStyle("conflicts"), background: tab() === "conflicts" ? "#d1242f" : "#ffe0e0", color: tab() === "conflicts" ? "#fff" : "#d1242f" }}
+              onClick={() => setTab("conflicts")}
+            >
+              Conflicts ⚠
+            </button>
+          </Show>
         </div>
       </Show>
 
@@ -244,6 +279,18 @@ const App: Component = () => {
           </Show>
           <Show when={tab() === "history"}>
             <FileHistory repoId={repoId()!} />
+          </Show>
+          <Show when={tab() === "conflicts"}>
+            <ConflictResolver
+              repoId={repoId()!}
+              refreshNonce={refreshNonce()}
+              onChanged={refresh}
+              onDone={() => {
+                setOpConflicts([]);
+                setOpNotice("All conflicts resolved. Commit to finish the operation.");
+                refresh();
+              }}
+            />
           </Show>
         </div>
       </Show>
