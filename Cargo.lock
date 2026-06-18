@@ -2422,6 +2422,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "lady-graph"
+version = "0.1.0"
+dependencies = [
+ "lady-proto",
+]
+
+[[package]]
 name = "lady-proto"
 version = "0.0.0"
 dependencies = [

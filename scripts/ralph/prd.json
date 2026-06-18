@@ -71,7 +71,7 @@
         "Unit tests (insta snapshots or explicit asserts) cover each case; cargo test/clippy -D warnings/fmt green; cargo deny passes"
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §6 hard part — pure logic, no UI. Build incrementally; keep it streamable."
     },
     {
