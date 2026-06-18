@@ -1,7 +1,7 @@
 {
   "project": "Lady",
   "branchName": "ralph/phase-1-read-only",
-  "description": "Phase 1 — Read-only foundation (PLAN.md §9; ADR-0001 Tauri, ADR-0005 canvas graph, ADR-0010 SolidJS). Adds the Tauri v2 desktop shell + SolidJS/TS/Vite frontend and the read-only views: open repo, refs, virtualized commit list, commit-graph canvas, diff viewer, blame, file history, repository manager, command palette. EXIT: browse any repo's read views in a real window as well as Fork's. No mutations, no AI. Branches from main (which has Phase 0). Each story = one context-window commit. UI stories rely on build + typecheck + unit tests for loop verification; a manual window check is noted in progress.txt since Tauri windows cannot be verified headless in the loop.",
+  "description": "Phase 1 \u2014 Read-only foundation (PLAN.md \u00a79; ADR-0001 Tauri, ADR-0005 canvas graph, ADR-0010 SolidJS). Adds the Tauri v2 desktop shell + SolidJS/TS/Vite frontend and the read-only views: open repo, refs, virtualized commit list, commit-graph canvas, diff viewer, blame, file history, repository manager, command palette. EXIT: browse any repo's read views in a real window as well as Fork's. No mutations, no AI. Branches from main (which has Phase 0). Each story = one context-window commit. UI stories rely on build + typecheck + unit tests for loop verification; a manual window check is noted in progress.txt since Tauri windows cannot be verified headless in the loop.",
   "userStories": [
     {
       "id": "PH1-001",
@@ -58,7 +58,7 @@
       ],
       "priority": 4,
       "passes": true,
-      "notes": "Virtualization per PLAN.md §6 — never materialize whole history."
+      "notes": "Virtualization per PLAN.md \u00a76 \u2014 never materialize whole history."
     },
     {
       "id": "PH1-005",
@@ -72,7 +72,7 @@
       ],
       "priority": 5,
       "passes": true,
-      "notes": "PLAN.md §6 hard part — pure logic, no UI. Build incrementally; keep it streamable."
+      "notes": "PLAN.md \u00a76 hard part \u2014 pure logic, no UI. Build incrementally; keep it streamable."
     },
     {
       "id": "PH1-006",
@@ -87,7 +87,7 @@
       ],
       "priority": 6,
       "passes": true,
-      "notes": "ADR-0005 — signature view; render-target kept swappable behind the row-data interface."
+      "notes": "ADR-0005 \u2014 signature view; render-target kept swappable behind the row-data interface."
     },
     {
       "id": "PH1-007",
@@ -101,7 +101,7 @@
       ],
       "priority": 7,
       "passes": true,
-      "notes": "PLAN.md §4 lady-diff. Partial-staging patch builder is NOT in scope here (Phase 2)."
+      "notes": "PLAN.md \u00a74 lady-diff. Partial-staging patch builder is NOT in scope here (Phase 2)."
     },
     {
       "id": "PH1-008",
@@ -114,8 +114,8 @@
         "npm run build + cargo build green; manual window verification noted in progress.txt"
       ],
       "priority": 8,
-      "passes": false,
-      "notes": "PLAN.md §1 diff viewer (side-by-side, syntax, image diff)."
+      "passes": true,
+      "notes": "PLAN.md \u00a71 diff viewer (side-by-side, syntax, image diff)."
     },
     {
       "id": "PH1-009",
@@ -128,7 +128,7 @@
       ],
       "priority": 9,
       "passes": false,
-      "notes": "PLAN.md §1 blame."
+      "notes": "PLAN.md \u00a71 blame."
     },
     {
       "id": "PH1-010",
@@ -141,7 +141,7 @@
       ],
       "priority": 10,
       "passes": false,
-      "notes": "PLAN.md §1 file history."
+      "notes": "PLAN.md \u00a71 file history."
     },
     {
       "id": "PH1-011",
@@ -155,7 +155,7 @@
       ],
       "priority": 11,
       "passes": false,
-      "notes": "PLAN.md §1 repository manager. Clone uses shell-out git (ADR-0003)."
+      "notes": "PLAN.md \u00a71 repository manager. Clone uses shell-out git (ADR-0003)."
     },
     {
       "id": "PH1-012",
@@ -165,11 +165,11 @@
         "ui command palette opens on Cmd/Ctrl+P with fuzzy search (nucleo in Rust via a command, or a TS fuzzy lib) over actions, branches, and files",
         "Selecting an entry runs the action or navigates to the branch/file; fully keyboard-driven",
         "cargo + npm run build green",
-        "PHASE 1 EXIT: the window browses a repo's graph, diffs, blame, history, and repos as well as Fork's read views — note this in progress.txt"
+        "PHASE 1 EXIT: the window browses a repo's graph, diffs, blame, history, and repos as well as Fork's read views \u2014 note this in progress.txt"
       ],
       "priority": 12,
       "passes": false,
-      "notes": "PLAN.md §1 Quick Launch / command palette. After this PRD, the next is a Phase 2 write-ops PRD (new branchName ralph/phase-2-write-ops)."
+      "notes": "PLAN.md \u00a71 Quick Launch / command palette. After this PRD, the next is a Phase 2 write-ops PRD (new branchName ralph/phase-2-write-ops)."
     }
   ]
 }

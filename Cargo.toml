@@ -28,3 +28,4 @@ lady-proto = { path = "crates/lady-proto" }
 lady-git = { path = "crates/lady-git" }
 lady-graph = { path = "crates/lady-graph" }
 lady-diff = { path = "crates/lady-diff" }
+base64 = "0.22"

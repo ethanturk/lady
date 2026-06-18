@@ -152,6 +152,10 @@ pub struct FileDiff {
     pub kind: FileDiffKind,
     /// Text hunks; empty for binary and image diffs.
     pub hunks: Vec<DiffHunk>,
+    /// Base64-encoded old-version image bytes (image diffs only).
+    pub old_image_b64: Option<String>,
+    /// Base64-encoded new-version image bytes (image diffs only).
+    pub new_image_b64: Option<String>,
 }
 
 #[cfg(test)]

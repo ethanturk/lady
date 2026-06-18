@@ -237,12 +237,14 @@ impl GitEngine for GixEngine {
         // Added files (in new but not old).
         for (path, new_id) in &new_blobs {
             if !old_blobs.contains_key(path) {
-                let (kind, hunks) = blob_diff(&repo, None, Some(*new_id), path)?;
+                let bd = blob_diff(&repo, None, Some(*new_id), path)?;
                 diffs.push(FileDiff {
                     path: path.clone(),
                     old_path: None,
-                    kind,
-                    hunks,
+                    kind: bd.kind,
+                    hunks: bd.hunks,
+                    old_image_b64: bd.old_image_b64,
+                    new_image_b64: bd.new_image_b64,
                 });
             }
         }
@@ -250,12 +252,14 @@ impl GitEngine for GixEngine {
         // Deleted files (in old but not new).
         for (path, old_id) in &old_blobs {
             if !new_blobs.contains_key(path) {
-                let (kind, hunks) = blob_diff(&repo, Some(*old_id), None, path)?;
+                let bd = blob_diff(&repo, Some(*old_id), None, path)?;
                 diffs.push(FileDiff {
                     path: path.clone(),
                     old_path: None,
-                    kind,
-                    hunks,
+                    kind: bd.kind,
+                    hunks: bd.hunks,
+                    old_image_b64: bd.old_image_b64,
+                    new_image_b64: bd.new_image_b64,
                 });
             }
         }
@@ -264,12 +268,14 @@ impl GitEngine for GixEngine {
         for (path, new_id) in &new_blobs {
             if let Some(old_id) = old_blobs.get(path) {
                 if old_id != new_id {
-                    let (kind, hunks) = blob_diff(&repo, Some(*old_id), Some(*new_id), path)?;
+                    let bd = blob_diff(&repo, Some(*old_id), Some(*new_id), path)?;
                     diffs.push(FileDiff {
                         path: path.clone(),
                         old_path: None,
-                        kind,
-                        hunks,
+                        kind: bd.kind,
+                        hunks: bd.hunks,
+                        old_image_b64: bd.old_image_b64,
+                        new_image_b64: bd.new_image_b64,
                     });
                 }
             }
@@ -309,14 +315,24 @@ fn collect_tree_blobs(
     Ok(())
 }
 
-/// Determine `FileDiffKind` and compute text hunks (if applicable) for a
-/// pair of optional blob OIDs.  Either can be `None` (add or delete).
+/// Outcome of diffing one pair of blob OIDs: the change kind, text hunks
+/// (empty for binary/image), and base64 image bytes (image diffs only).
+struct BlobDiff {
+    kind: FileDiffKind,
+    hunks: Vec<lady_proto::DiffHunk>,
+    old_image_b64: Option<String>,
+    new_image_b64: Option<String>,
+}
+
+/// Determine `FileDiffKind` and compute text hunks (or image b64) for a
+/// pair of optional blob OIDs.
 fn blob_diff(
     repo: &gix::Repository,
     old_id: Option<gix::ObjectId>,
     new_id: Option<gix::ObjectId>,
     path: &str,
-) -> Result<(FileDiffKind, Vec<lady_proto::DiffHunk>)> {
+) -> Result<BlobDiff> {
+    use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
     use lady_diff::text_diff;
 
     // Detect image by extension.
@@ -330,7 +346,26 @@ fn blob_diff(
             (_, None) => FileDiffKind::Deleted,
             _ => FileDiffKind::Image,
         };
-        return Ok((kind, Vec::new()));
+        let old_b64 = old_id
+            .map(|id| {
+                repo.find_object(id)
+                    .map_err(backend)
+                    .map(|o| B64.encode(&o.data))
+            })
+            .transpose()?;
+        let new_b64 = new_id
+            .map(|id| {
+                repo.find_object(id)
+                    .map_err(backend)
+                    .map(|o| B64.encode(&o.data))
+            })
+            .transpose()?;
+        return Ok(BlobDiff {
+            kind,
+            hunks: Vec::new(),
+            old_image_b64: old_b64,
+            new_image_b64: new_b64,
+        });
     }
 
     let old_bytes: Vec<u8> = match old_id {
@@ -350,7 +385,12 @@ fn blob_diff(
             (_, None) => FileDiffKind::Deleted,
             _ => FileDiffKind::Binary,
         };
-        return Ok((kind, Vec::new()));
+        return Ok(BlobDiff {
+            kind,
+            hunks: Vec::new(),
+            old_image_b64: None,
+            new_image_b64: None,
+        });
     }
 
     let old_text = String::from_utf8_lossy(&old_bytes);
@@ -362,7 +402,12 @@ fn blob_diff(
         _ => FileDiffKind::Modified,
     };
     let hunks = text_diff(&old_text, &new_text);
-    Ok((kind, hunks))
+    Ok(BlobDiff {
+        kind,
+        hunks,
+        old_image_b64: None,
+        new_image_b64: None,
+    })
 }
 
 /// Convert a [`gix::Commit`] into the GUI-agnostic [`CommitMeta`] contract.

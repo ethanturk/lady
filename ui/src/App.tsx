@@ -3,6 +3,7 @@ import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import type { AppInfo, RefInfo, RefKind, RepoId } from "./commands";
 import GraphView from "./GraphView";
+import DiffView from "./DiffView";
 
 interface RefGroupProps {
   title: string;
@@ -37,6 +38,7 @@ const App: Component = () => {
   const [repoId, setRepoId] = createSignal<RepoId | null>(null);
   const [refs, setRefs] = createSignal<RefInfo[]>([]);
   const [tab, setTab] = createSignal<Tab>("commits");
+  const [selectedCommit, setSelectedCommit] = createSignal<string | null>(null);
   const [err, setErr] = createSignal<string | null>(null);
 
   onMount(async () => {
@@ -49,6 +51,7 @@ const App: Component = () => {
       setErr(null);
       setRepoId(null);
       setRefs([]);
+      setSelectedCommit(null);
       const id = await invoke<RepoId>("open_repo", { path: path() });
       const refList = await invoke<RefInfo[]>("list_refs", { repo: id });
       setRefs(refList);
@@ -132,7 +135,27 @@ const App: Component = () => {
       <Show when={repoId()}>
         <div style={{ flex: "1", overflow: "hidden" }}>
           <Show when={tab() === "commits"}>
-            <GraphView repoId={repoId()!} />
+            <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
+              <div style={{ flex: "1", "min-width": "0", overflow: "hidden" }}>
+                <GraphView
+                  repoId={repoId()!}
+                  selected={selectedCommit() ?? undefined}
+                  onSelectCommit={setSelectedCommit}
+                />
+              </div>
+              <Show when={selectedCommit()}>
+                <div
+                  style={{
+                    flex: "1",
+                    "min-width": "0",
+                    "border-left": "1px solid #ddd",
+                    overflow: "hidden",
+                  }}
+                >
+                  <DiffView repoId={repoId()!} commit={selectedCommit()!} />
+                </div>
+              </Show>
+            </div>
           </Show>
           <Show when={tab() === "refs"}>
             <div style={{ padding: "0.5rem 1rem", "overflow-y": "auto", height: "100%" }}>

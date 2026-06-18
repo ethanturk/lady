@@ -9,6 +9,7 @@ description = "Git engine abstraction (GitEngine trait) over read backends (gix/
 [dependencies]
 lady-proto = { workspace = true }
 lady-diff = { workspace = true }
+base64 = { workspace = true }
 thiserror = { workspace = true }
 gix = { workspace = true }
 

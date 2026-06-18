@@ -2449,6 +2449,7 @@ dependencies = [
 name = "lady-git"
 version = "0.0.0"
 dependencies = [
+ "base64 0.22.1",
  "gix",
  "lady-diff",
  "lady-proto",

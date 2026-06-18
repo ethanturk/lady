@@ -88,7 +88,11 @@ function drawGraph(
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-const GraphView: Component<{ repoId: RepoId }> = (props) => {
+const GraphView: Component<{
+  repoId: RepoId;
+  selected?: string;
+  onSelectCommit?: (oid: string) => void;
+}> = (props) => {
   const [rows, setRows] = createSignal<CommitGraphRow[]>([]);
   const [scrollTop, setScrollTop] = createSignal(0);
   const [viewportH, setViewportH] = createSignal(400);
@@ -200,6 +204,7 @@ const GraphView: Component<{ repoId: RepoId }> = (props) => {
             <For each={visibleSlice()}>
               {(row) => (
                 <div
+                  onClick={() => props.onSelectCommit?.(row.oid)}
                   style={{
                     height: `${ROW_H}px`,
                     display: "flex",
@@ -209,6 +214,8 @@ const GraphView: Component<{ repoId: RepoId }> = (props) => {
                     "border-bottom": "1px solid #eee",
                     "box-sizing": "border-box",
                     "font-size": "0.875rem",
+                    cursor: "pointer",
+                    background: props.selected === row.oid ? "#e6f0ff" : "transparent",
                   }}
                 >
                   <span

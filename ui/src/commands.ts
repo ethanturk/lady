@@ -65,3 +65,31 @@ export interface WalkLogGraphResult {
   /** Opaque lane state; pass as layout_state on the next page request. */
   layout_state: (string | null)[];
 }
+
+// ── Diff types ────────────────────────────────────────────────────────────────
+
+export type LineKind = "Added" | "Deleted" | "Context";
+
+export interface DiffLine {
+  kind: LineKind;
+  content: string;
+}
+
+export interface DiffHunk {
+  old_start: number;
+  old_lines: number;
+  new_start: number;
+  new_lines: number;
+  lines: DiffLine[];
+}
+
+export type FileDiffKind = "Added" | "Deleted" | "Modified" | "Binary" | "Image";
+
+export interface FileDiff {
+  path: string;
+  old_path: string | null;
+  kind: FileDiffKind;
+  hunks: DiffHunk[];
+  old_image_b64: string | null;
+  new_image_b64: string | null;
+}
