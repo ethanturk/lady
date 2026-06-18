@@ -182,6 +182,20 @@ fn status(repo: RepoId, engine: State<GixEngine>) -> Result<WorkingTree, String>
     engine.status(&repo).map_err(|e| e.to_string())
 }
 
+/// Stage whole files into the index.
+#[tauri::command]
+fn stage_paths(repo: RepoId, paths: Vec<String>, engine: State<GixEngine>) -> Result<(), String> {
+    engine.stage_paths(&repo, &paths).map_err(|e| e.to_string())
+}
+
+/// Unstage whole files from the index.
+#[tauri::command]
+fn unstage_paths(repo: RepoId, paths: Vec<String>, engine: State<GixEngine>) -> Result<(), String> {
+    engine
+        .unstage_paths(&repo, &paths)
+        .map_err(|e| e.to_string())
+}
+
 /// Clone `url` into `dest` via system git (ADR-0003 shell-out tier), streaming
 /// git's progress lines to the frontend as `clone-progress` events, and open
 /// the result.
@@ -277,6 +291,8 @@ pub fn run() {
             repo_dirty,
             list_files,
             status,
+            stage_paths,
+            unstage_paths,
             clone_repo,
             load_settings,
             save_settings

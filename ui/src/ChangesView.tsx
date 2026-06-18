@@ -33,8 +33,21 @@ const Badge: Component<{ kind: ChangeKind }> = (props) => {
   );
 };
 
-/** One row in a changes bucket: badge + path (rename shows old → new). */
-const Row: Component<{ file: FileStatus }> = (props) => (
+const smallBtn = {
+  border: "1px solid #ccc",
+  background: "#fff",
+  "border-radius": "3px",
+  "font-size": "0.7rem",
+  padding: "0 0.4rem",
+  cursor: "pointer",
+};
+
+/** One row in a changes bucket: badge + path (rename shows old → new) + action. */
+const Row: Component<{
+  file: FileStatus;
+  actionLabel: string;
+  onAction: () => void;
+}> = (props) => (
   <li
     style={{
       display: "flex",
@@ -46,12 +59,22 @@ const Row: Component<{ file: FileStatus }> = (props) => (
     }}
   >
     <Badge kind={props.file.kind} />
-    <span style={{ overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>
+    <span
+      style={{
+        flex: "1",
+        overflow: "hidden",
+        "text-overflow": "ellipsis",
+        "white-space": "nowrap",
+      }}
+    >
       <Show when={props.file.old_path}>
         <span style={{ color: "#888" }}>{props.file.old_path} → </span>
       </Show>
       {props.file.path}
     </span>
+    <button style={smallBtn} onClick={props.onAction}>
+      {props.actionLabel}
+    </button>
   </li>
 );
 
@@ -65,8 +88,8 @@ interface ChangesViewProps {
 
 /**
  * The Changes view: the working-tree surface for staging and committing.
- * PH2-001 renders staged / unstaged / untracked buckets; later stories add
- * stage/unstage, diffs, and commit on top.
+ * Renders staged / unstaged / untracked buckets with per-file and bulk
+ * stage/unstage actions; later stories add diffs and commit on top.
  */
 const ChangesView: Component<ChangesViewProps> = (props) => {
   const [wt, setWt] = createSignal<WorkingTree | null>(null);
@@ -86,14 +109,53 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
     reload();
   });
 
+  // After a mutation: reload local status and notify siblings (refs/graph).
+  const afterMutation = () => {
+    reload();
+    props.onChanged?.();
+  };
+
+  const stage = (paths: string[]) => {
+    if (paths.length === 0) return;
+    invoke("stage_paths", { repo: props.repoId, paths })
+      .then(afterMutation)
+      .catch((e) => setErr(String(e)));
+  };
+  const unstage = (paths: string[]) => {
+    if (paths.length === 0) return;
+    invoke("unstage_paths", { repo: props.repoId, paths })
+      .then(afterMutation)
+      .catch((e) => setErr(String(e)));
+  };
+
   const untrackedAsFiles = (): FileStatus[] =>
     (wt()?.untracked ?? []).map((path) => ({ path, old_path: null, kind: "Untracked" as const }));
+
+  // All paths in the unstaged + untracked sets (everything stageable).
+  const allUnstagedPaths = (): string[] => [
+    ...(wt()?.unstaged ?? []).map((f) => f.path),
+    ...(wt()?.untracked ?? []),
+  ];
+  const allStagedPaths = (): string[] => (wt()?.staged ?? []).map((f) => f.path);
 
   const isClean = () =>
     wt() !== null &&
     wt()!.staged.length === 0 &&
     wt()!.unstaged.length === 0 &&
     wt()!.untracked.length === 0;
+
+  const header = (title: string, count: number, action?: { label: string; run: () => void }) => (
+    <div style={{ display: "flex", "align-items": "center", gap: "0.5rem", margin: "0.5rem 0 0.25rem" }}>
+      <h3 style={{ margin: 0, "font-size": "0.85rem" }}>
+        {title} ({count})
+      </h3>
+      <Show when={action}>
+        <button style={smallBtn} onClick={action!.run}>
+          {action!.label}
+        </button>
+      </Show>
+    </div>
+  );
 
   return (
     <div style={{ height: "100%", "overflow-y": "auto", padding: "0.5rem 1rem" }}>
@@ -105,29 +167,35 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
       </Show>
 
       <Show when={(wt()?.staged.length ?? 0) > 0}>
-        <h3 style={{ margin: "0.5rem 0 0.25rem", "font-size": "0.85rem" }}>
-          Staged ({wt()!.staged.length})
-        </h3>
+        {header("Staged", wt()!.staged.length, {
+          label: "Unstage all",
+          run: () => unstage(allStagedPaths()),
+        })}
         <ul style={{ margin: 0, padding: 0, "list-style": "none" }}>
-          <For each={wt()!.staged}>{(f) => <Row file={f} />}</For>
+          <For each={wt()!.staged}>
+            {(f) => <Row file={f} actionLabel="Unstage" onAction={() => unstage([f.path])} />}
+          </For>
         </ul>
       </Show>
 
       <Show when={(wt()?.unstaged.length ?? 0) > 0}>
-        <h3 style={{ margin: "0.5rem 0 0.25rem", "font-size": "0.85rem" }}>
-          Unstaged ({wt()!.unstaged.length})
-        </h3>
+        {header("Unstaged", wt()!.unstaged.length, {
+          label: "Stage all",
+          run: () => stage(allUnstagedPaths()),
+        })}
         <ul style={{ margin: 0, padding: 0, "list-style": "none" }}>
-          <For each={wt()!.unstaged}>{(f) => <Row file={f} />}</For>
+          <For each={wt()!.unstaged}>
+            {(f) => <Row file={f} actionLabel="Stage" onAction={() => stage([f.path])} />}
+          </For>
         </ul>
       </Show>
 
       <Show when={(wt()?.untracked.length ?? 0) > 0}>
-        <h3 style={{ margin: "0.5rem 0 0.25rem", "font-size": "0.85rem" }}>
-          Untracked ({wt()!.untracked.length})
-        </h3>
+        {header("Untracked", wt()!.untracked.length)}
         <ul style={{ margin: 0, padding: 0, "list-style": "none" }}>
-          <For each={untrackedAsFiles()}>{(f) => <Row file={f} />}</For>
+          <For each={untrackedAsFiles()}>
+            {(f) => <Row file={f} actionLabel="Stage" onAction={() => stage([f.path])} />}
+          </For>
         </ul>
       </Show>
     </div>

@@ -29,7 +29,7 @@
         "Unit test: stage then unstage a path moves it between buckets in status() output; cargo fmt/clippy -D warnings/test green; cargo deny passes; npm run build green; manual window note in progress.txt"
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Mutations via shell-out git (ADR-0003). Handle add/modify/delete and the unborn-HEAD (no commits yet) edge."
     },
     {

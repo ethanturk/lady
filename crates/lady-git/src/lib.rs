@@ -92,6 +92,15 @@ pub trait GitEngine: Send + Sync {
     /// Snapshot the working tree (staged / unstaged / untracked) via shell-out
     /// `git status --porcelain=v2 -z` for exact git semantics (ADR-0003).
     fn status(&self, repo: &RepoId) -> Result<WorkingTree>;
+
+    /// Stage `paths` (whole files) into the index via `git add` — records
+    /// adds, modifications, and deletions. A no-op when `paths` is empty.
+    fn stage_paths(&self, repo: &RepoId, paths: &[String]) -> Result<()>;
+
+    /// Unstage `paths` (whole files), restoring the index entry to its `HEAD`
+    /// state, or removing it from the index on an unborn branch (no commits
+    /// yet). A no-op when `paths` is empty.
+    fn unstage_paths(&self, repo: &RepoId, paths: &[String]) -> Result<()>;
 }
 
 /// A [`GitEngine`] backed by [`gix`] for read-only access (ADR-0003).
@@ -481,6 +490,34 @@ impl GitEngine for GixEngine {
             &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
         )?;
         Ok(parse_status_v2(&out.stdout))
+    }
+
+    fn stage_paths(&self, repo: &RepoId, paths: &[String]) -> Result<()> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let wd = self.workdir(repo)?;
+        // `git add -- <paths>` stages adds/modifications/deletions alike.
+        let mut args: Vec<&str> = vec!["add", "--"];
+        args.extend(paths.iter().map(String::as_str));
+        run_git(&wd, &args).map(|_| ())
+    }
+
+    fn unstage_paths(&self, repo: &RepoId, paths: &[String]) -> Result<()> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let wd = self.workdir(repo)?;
+        // On an unborn branch there is no HEAD to restore against; drop the
+        // entries from the index instead. Otherwise restore from HEAD.
+        let has_head = self.repo(repo)?.head_id().is_ok();
+        let mut args: Vec<&str> = if has_head {
+            vec!["restore", "--staged", "--"]
+        } else {
+            vec!["rm", "-q", "--cached", "--"]
+        };
+        args.extend(paths.iter().map(String::as_str));
+        run_git(&wd, &args).map(|_| ())
     }
 }
 
@@ -1108,5 +1145,68 @@ mod tests {
             .expect("a staged rename entry");
         assert_eq!(renamed.path, "new.txt");
         assert_eq!(renamed.old_path.as_deref(), Some("old.txt"));
+    }
+
+    #[test]
+    fn stage_then_unstage_moves_a_path_between_buckets() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let p = dir.path();
+        git(p, &["init", "-q", "-b", "main"]);
+        git(p, &["config", "user.name", "Lady Test"]);
+        git(p, &["config", "user.email", "test@example.com"]);
+        git(p, &["config", "commit.gpgsign", "false"]);
+
+        std::fs::write(p.join("a.txt"), "base\n").expect("write");
+        git(p, &["add", "."]);
+        git(p, &["commit", "-q", "-m", "base"]);
+
+        // Modify on disk — starts unstaged.
+        std::fs::write(p.join("a.txt"), "changed\n").expect("write");
+
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open");
+        let paths = vec!["a.txt".to_string()];
+
+        assert_eq!(engine.status(&id).unwrap().unstaged.len(), 1);
+
+        engine.stage_paths(&id, &paths).expect("stage");
+        let wt = engine.status(&id).unwrap();
+        assert_eq!(wt.staged.len(), 1, "now staged");
+        assert!(wt.unstaged.is_empty(), "no longer unstaged");
+
+        engine.unstage_paths(&id, &paths).expect("unstage");
+        let wt = engine.status(&id).unwrap();
+        assert!(wt.staged.is_empty(), "no longer staged");
+        assert_eq!(wt.unstaged.len(), 1, "unstaged again");
+    }
+
+    #[test]
+    fn stage_and_unstage_handle_unborn_branch() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let p = dir.path();
+        git(p, &["init", "-q", "-b", "main"]);
+        git(p, &["config", "user.name", "Lady Test"]);
+        git(p, &["config", "user.email", "test@example.com"]);
+
+        // No commits yet (unborn HEAD); a brand-new untracked file.
+        std::fs::write(p.join("first.txt"), "hi\n").expect("write");
+
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open");
+        let paths = vec!["first.txt".to_string()];
+
+        assert_eq!(engine.status(&id).unwrap().untracked, vec!["first.txt"]);
+
+        engine.stage_paths(&id, &paths).expect("stage on unborn");
+        let wt = engine.status(&id).unwrap();
+        assert_eq!(wt.staged.len(), 1, "staged Added on unborn branch");
+        assert_eq!(wt.staged[0].kind, ChangeKind::Added);
+
+        engine
+            .unstage_paths(&id, &paths)
+            .expect("unstage on unborn");
+        let wt = engine.status(&id).unwrap();
+        assert!(wt.staged.is_empty(), "unstaged back to untracked");
+        assert_eq!(wt.untracked, vec!["first.txt"]);
     }
 }
