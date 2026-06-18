@@ -46,7 +46,7 @@
         "A cargo-deny step is added to .github/workflows/ci.yml on ubuntu-latest"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "ADR-0004. No GPL/AGPL crates. This gate must stay green as deps are added in later stories."
     },
     {

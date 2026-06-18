@@ -1,0 +1,68 @@
+# cargo-deny configuration — Lady (ADR-0004: permissive-only license gate).
+#
+# Lady is a commercial, closed-source product. We allow ONLY permissive
+# licenses for our dependency tree. No GPL/AGPL/LGPL copyleft crates.
+#
+# Schema version 2 (cargo-deny >= 0.14).
+
+[graph]
+all-features = true
+
+# ---------------------------------------------------------------------------
+# Licenses — permissive allow-list per ADR-0004.
+# ---------------------------------------------------------------------------
+[licenses]
+version = 2
+# Permissive licenses only. Adding anything here is an ADR-level decision.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "MPL-2.0",
+    "ISC",
+    "Unicode-3.0",
+]
+confidence-threshold = 0.8
+
+# Skip license checks on our own workspace crates (publish = false). They are
+# LicenseRef-Proprietary and never shipped to crates.io.
+private = { ignore = true }
+
+# Explicit per-crate exceptions (ADR-0004).
+#
+# libgit2 / git2 are licensed GPL-2.0 WITH a linking exception ("GPL-2.0 WITH
+# GCC-exception-2.0"-style), which permits use in closed-source software. We
+# do NOT use git2 for reads (gix is the read engine per ADR-0003), but git2
+# may appear for narrow write paths. This exception is allowed ONLY for the
+# git2/libgit2-sys crates and nothing else. See ADR-0004.
+exceptions = [
+    { name = "git2", allow = ["GPL-2.0 WITH GCC-exception-2.0"] },
+    { name = "libgit2-sys", allow = ["GPL-2.0 WITH GCC-exception-2.0"] },
+]
+
+# ---------------------------------------------------------------------------
+# Advisories — RustSec security + maintenance gate.
+# ---------------------------------------------------------------------------
+[advisories]
+version = 2
+# Use the default RustSec advisory DB. Vulnerabilities + unmaintained crates
+# fail the build by default; add ignores here only with a tracking note.
+ignore = []
+
+# ---------------------------------------------------------------------------
+# Bans — duplicate / disallowed crate policy.
+# ---------------------------------------------------------------------------
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow = []
+deny = []
+
+# ---------------------------------------------------------------------------
+# Sources — only allow crates from crates.io (no random git sources).
+# ---------------------------------------------------------------------------
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

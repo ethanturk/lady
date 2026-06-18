@@ -39,3 +39,15 @@ jobs:
 
       - name: Test
         run: cargo test
+
+  deny:
+    name: cargo-deny (license + advisory gate)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
