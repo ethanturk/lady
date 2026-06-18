@@ -2833,7 +2833,7 @@ dependencies = [
 
 [[package]]
 name = "lady-app"
-version = "0.1.0"
+version = "1.0.0-rc"
 dependencies = [
  "directories",
  "lady-diff",
@@ -2852,7 +2852,7 @@ dependencies = [
 
 [[package]]
 name = "lady-cli"
-version = "0.0.0"
+version = "1.0.0-rc"
 dependencies = [
  "lady-git",
  "lady-proto",
@@ -2861,7 +2861,7 @@ dependencies = [
 
 [[package]]
 name = "lady-diff"
-version = "0.1.0"
+version = "1.0.0-rc"
 dependencies = [
  "imara-diff",
  "lady-proto",
@@ -2869,7 +2869,7 @@ dependencies = [
 
 [[package]]
 name = "lady-git"
-version = "0.0.0"
+version = "1.0.0-rc"
 dependencies = [
  "base64 0.22.1",
  "gix",
@@ -2881,14 +2881,14 @@ dependencies = [
 
 [[package]]
 name = "lady-graph"
-version = "0.1.0"
+version = "1.0.0-rc"
 dependencies = [
  "lady-proto",
 ]
 
 [[package]]
 name = "lady-hosting"
-version = "0.0.0"
+version = "1.0.0-rc"
 dependencies = [
  "keyring",
  "reqwest 0.12.28",
@@ -2901,7 +2901,7 @@ dependencies = [
 
 [[package]]
 name = "lady-license"
-version = "0.0.0"
+version = "1.0.0-rc"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
@@ -2913,7 +2913,7 @@ dependencies = [
 
 [[package]]
 name = "lady-proto"
-version = "0.0.0"
+version = "1.0.0-rc"
 dependencies = [
  "serde",
  "serde_json",
