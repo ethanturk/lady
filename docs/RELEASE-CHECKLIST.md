@@ -5,7 +5,8 @@ story across Phases 1–3 (the v1.0 line, Phase 3 EXIT, PLAN.md §0/§9), plus t
 Fast-follow set shipped in Phase 4 (v1.1.0). It is **not** the ship itself —
 packaging / notarization / auto-update are Phase 6.
 
-Versions: Core Parity gate **1.0.0-rc**; Fast-follow gate **1.1.0** (current).
+Versions: Core Parity gate **1.0.0-rc**; Fast-follow gate **1.1.0**; AI gate
+**1.2.0** (current).
 
 ## Core Parity surface → implementing story
 
@@ -62,11 +63,42 @@ Committed post-v1.0 patches (CONTEXT.md), now implemented and green:
 | git-flow support | ✅ | PH4-008 |
 | Submodule management (incl. nested) | ✅ | PH4-009 |
 
+## AI — GitKraken Git AI parity + superset, shipped in Phase 5 (v1.2.0)
+
+BYOK + local Ollama, no hosted backend (ADR-0008); explicit opt-in, per-repo
+toggle, best-effort redaction before any remote send (ADR-0009); thin
+`reqwest` provider trait (ADR-0011). All providers tested vs wiremock, never
+live.
+
+| AI feature | Status | Implementing story |
+| --- | --- | --- |
+| Provider abstraction + task model + registry/config | ✅ | PH5-001 |
+| BYOK key management + first-use consent + per-repo toggle | ✅ | PH5-002 |
+| Local Ollama provider (never-leaves-your-machine path) | ✅ | PH5-003 |
+| Remote providers (OpenAI, Anthropic, Gemini, Azure, Mistral) | ✅ | PH5-004 |
+| Context builder + token budgeting + secret redaction | ✅ | PH5-005 |
+| AI commit messages | ✅ | PH5-006 |
+| Commit Composer (split into logical commits) | ✅ | PH5-007 |
+| Explain (commit / branch range / stash / working changes) | ✅ | PH5-008 |
+| AI conflict resolution (review-gated, never auto-written) | ✅ | PH5-009 |
+| PR/MR title + description, changelog, stash notes | ✅ | PH5-010 |
+| MCP server (lady-mcp) exposing repo context | ✅ | PH5-011 |
+| Semantic commit search (stretch) | ⏸ deferred | PH5-012 |
+
+Privacy posture verified: AI is off per repo until enabled; remote providers
+are blocked until per-provider consent is recorded; the local Ollama path runs
+with no consent gate and no mandatory redaction; redaction (regex + entropy) is
+applied before every remote send and documented as best-effort.
+
+PH5-012 (semantic commit search) is **explicitly deferred** — it is the marked
+optional stretch and does not block the Phase 5 exit (PLAN.md §9; PRD PH5-013).
+A literal `search_commits` (message grep) ships via the MCP server and the
+engine; embedding-based semantic ranking is a Fast-follow/Phase 6 candidate.
+
 ## Not yet (later phases)
 
-- **AI features** — Phase 5 (PLAN.md; ADR-0008/0009/0011).
-- **Packaging / notarization / auto-update** — Phase 6. These gates are
-  feature-completeness, not the actual ship.
+- **Packaging / notarization / auto-update / a11y / perf** — Phase 6. These
+  gates are feature-completeness, not the actual ship.
 
 ## Green-build gate (run before tagging)
 

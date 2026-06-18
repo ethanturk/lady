@@ -19,8 +19,8 @@ UI stories also note a manual window check here.
 - [x] PH5-009 AI conflict resolution (review-gated)
 - [x] PH5-010 AI PR title/description, changelog, stash notes
 - [x] PH5-011 MCP server (lady-mcp) exposing repo context
-- [ ] PH5-012 Semantic commit search (stretch)
-- [ ] PH5-013 Phase 5 AI parity exit gate
+- [~] PH5-012 Semantic commit search (stretch) — DEFERRED (explicitly optional)
+- [x] PH5-013 Phase 5 AI parity exit gate
 
 ## Notes (as stories land)
 - PH5-001/003/004/005: lady-ai crate. AiProvider trait (async, streaming via
@@ -59,3 +59,15 @@ UI stories also note a manual window check here.
 - Generate commit message (commit box), stash note, Composer (propose/edit/apply),
   Explain + Regenerate, Changelog, Conflict ✨ Auto-resolve, PR ✨ title/description.
   All need a configured provider; remote needs consent. (Build + typecheck green.)
+- PH5-012 (semantic commit search): DEFERRED. The marked optional stretch; the
+  PRD allows slipping it without blocking the Phase 5 exit. A literal
+  `search_commits` (message grep) already ships via lady-mcp + the engine;
+  embedding-based semantic ranking (vector store + incremental index) is a
+  Fast-follow/Phase 6 candidate.
+- PH5-013 (exit gate): RELEASE-CHECKLIST.md updated with the AI feature table
+  (PH5-001..011 ticked, PH5-012 deferred) + the verified privacy posture. Version
+  bumped to 1.2.0 across all crates + tauri.conf.json + ui/package.json. Whole
+  workspace green: fmt/clippy -D warnings/test/deny + npm build. GitKraken Git AI
+  parity reached (commit messages, Composer, explain, AI conflict resolution, PR
+  title/description, changelog, stash notes, MCP server) + the local-first Ollama
+  path + explicit opt-in. Next: Phase 6 polish & ship.
