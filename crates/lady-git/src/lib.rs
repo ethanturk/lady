@@ -10,9 +10,9 @@ use std::process::Command;
 use std::sync::Mutex;
 
 use lady_proto::{
-    AheadBehind, ApplyOutcome, Blame, BlameLine, ChangeKind, CommitMeta, FfMode, FileDiff,
-    FileDiffKind, FileStatus, MergeOutcome, Oid, RebaseOutcome, RefInfo, RefKind, RepoId,
-    Signature, StashEntry, WorkingTree,
+    AheadBehind, ApplyOutcome, Blame, BlameLine, ChangeKind, CommitMeta, ConflictSides,
+    ConflictState, FfMode, FileDiff, FileDiffKind, FileStatus, MergeOutcome, Oid, ParsedConflict,
+    RebaseOutcome, RefInfo, RefKind, RepoId, Signature, StashEntry, WorkingTree,
 };
 
 /// Errors surfaced by a [`GitEngine`].
@@ -272,6 +272,38 @@ pub trait GitEngine: Send + Sync {
 
     /// Abort an in-progress rebase.
     fn rebase_abort(&self, repo: &RepoId) -> Result<()>;
+
+    /// List the currently conflicted paths from `status()` (sorted, deduped).
+    fn list_conflicts(&self, repo: &RepoId) -> Result<Vec<String>>;
+
+    /// Read the working-tree content of a conflicted file (with markers) and
+    /// parse it into context + conflict regions (PH3-001 / lady-diff::merge).
+    fn parse_conflict(&self, repo: &RepoId, path: &str) -> Result<ParsedConflict>;
+
+    /// Read the three sides of a conflicted `path` from the index stages
+    /// (`:1:` base, `:2:` ours, `:3:` theirs). Each is `None` when absent.
+    fn conflict_sides(&self, repo: &RepoId, path: &str) -> Result<ConflictSides>;
+
+    /// Resolve `path` by taking our side of every conflict region (parsed from
+    /// the working file), writing the result back. Does not stage.
+    fn take_ours(&self, repo: &RepoId, path: &str) -> Result<()>;
+
+    /// Resolve `path` by taking their side of every conflict region.
+    fn take_theirs(&self, repo: &RepoId, path: &str) -> Result<()>;
+
+    /// Write `bytes` as the resolved content of `path` (the edited result pane).
+    fn write_resolution(&self, repo: &RepoId, path: &str, bytes: &[u8]) -> Result<()>;
+
+    /// Mark `path` resolved by staging it (`git add`).
+    fn mark_resolved(&self, repo: &RepoId, path: &str) -> Result<()>;
+
+    /// What mid-operation state the repo is in (merge / rebase / cherry-pick /
+    /// revert / none), inspected from the git dir.
+    fn conflict_state(&self, repo: &RepoId) -> Result<ConflictState>;
+
+    /// Abort whatever operation is in progress, routing to the right
+    /// `--abort` per [`GitEngine::conflict_state`]. A no-op when idle.
+    fn conflict_abort(&self, repo: &RepoId) -> Result<()>;
 }
 
 /// A [`GitEngine`] backed by [`gix`] for read-only access (ADR-0003).
@@ -1210,6 +1242,81 @@ impl GitEngine for GixEngine {
     fn rebase_abort(&self, repo: &RepoId) -> Result<()> {
         let wd = self.workdir(repo)?;
         run_git(&wd, &["rebase", "--abort"]).map(|_| ())
+    }
+
+    fn list_conflicts(&self, repo: &RepoId) -> Result<Vec<String>> {
+        Ok(conflict_paths(&self.status(repo)?))
+    }
+
+    fn parse_conflict(&self, repo: &RepoId, path: &str) -> Result<ParsedConflict> {
+        let wd = self.workdir(repo)?;
+        let bytes = std::fs::read(wd.join(path))
+            .map_err(|e| Error::Git(format!("failed to read {path}: {e}")))?;
+        let text = String::from_utf8_lossy(&bytes);
+        Ok(lady_diff::merge::parse_conflicts(&text))
+    }
+
+    fn conflict_sides(&self, repo: &RepoId, path: &str) -> Result<ConflictSides> {
+        let wd = self.workdir(repo)?;
+        // Index stages: 1=base, 2=ours, 3=theirs. Absent stages → None.
+        let read_stage = |stage: u8| -> Option<String> {
+            cat_blob(&wd, &format!(":{stage}:{path}"))
+                .map(|b| String::from_utf8_lossy(&b).into_owned())
+        };
+        Ok(ConflictSides {
+            base: read_stage(1),
+            ours: read_stage(2),
+            theirs: read_stage(3),
+        })
+    }
+
+    fn take_ours(&self, repo: &RepoId, path: &str) -> Result<()> {
+        let parsed = self.parse_conflict(repo, path)?;
+        let resolved = lady_diff::merge::resolve(&parsed, true);
+        self.write_resolution(repo, path, resolved.as_bytes())
+    }
+
+    fn take_theirs(&self, repo: &RepoId, path: &str) -> Result<()> {
+        let parsed = self.parse_conflict(repo, path)?;
+        let resolved = lady_diff::merge::resolve(&parsed, false);
+        self.write_resolution(repo, path, resolved.as_bytes())
+    }
+
+    fn write_resolution(&self, repo: &RepoId, path: &str, bytes: &[u8]) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        std::fs::write(wd.join(path), bytes)
+            .map_err(|e| Error::Git(format!("failed to write {path}: {e}")))
+    }
+
+    fn mark_resolved(&self, repo: &RepoId, path: &str) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        run_git(&wd, &["add", "--", path]).map(|_| ())
+    }
+
+    fn conflict_state(&self, repo: &RepoId) -> Result<ConflictState> {
+        let git_dir = self.repo(repo)?.git_dir().to_path_buf();
+        // Rebase (interactive or apply) takes precedence — it can re-enter
+        // cherry-pick-like states internally.
+        if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
+            Ok(ConflictState::Rebase)
+        } else if git_dir.join("CHERRY_PICK_HEAD").exists() {
+            Ok(ConflictState::CherryPick)
+        } else if git_dir.join("REVERT_HEAD").exists() {
+            Ok(ConflictState::Revert)
+        } else if git_dir.join("MERGE_HEAD").exists() {
+            Ok(ConflictState::Merge)
+        } else {
+            Ok(ConflictState::None)
+        }
+    }
+
+    fn conflict_abort(&self, repo: &RepoId) -> Result<()> {
+        match self.conflict_state(repo)? {
+            ConflictState::Merge => self.merge_abort(repo),
+            ConflictState::Rebase => self.rebase_abort(repo),
+            ConflictState::CherryPick | ConflictState::Revert => self.sequencer_abort(repo),
+            ConflictState::None => Ok(()),
+        }
     }
 }
 
@@ -2816,6 +2923,115 @@ mod tests {
         assert!(
             wt.staged.is_empty() && wt.unstaged.is_empty() && wt.untracked.is_empty(),
             "abort restores a clean tree: {wt:?}"
+        );
+    }
+
+    /// Drive a real merge conflict, then resolve it with the PH3-001 engine
+    /// ops: parse regions, read the three index-stage sides, take-ours, mark
+    /// resolved, and assert the file is unconflicted, staged, and our content.
+    #[test]
+    fn conflict_resolve_take_ours_marks_file_resolved_and_staged() {
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open the fixture repo");
+
+        // side branch edits file1.txt one way ...
+        engine.create_branch(&id, "side", None).expect("branch");
+        engine.checkout(&id, "side", false).expect("checkout side");
+        std::fs::write(p.join("file1.txt"), "their side\n").expect("write side");
+        engine
+            .stage_paths(&id, &["file1.txt".to_string()])
+            .expect("stage side");
+        engine
+            .commit(&id, "side edit", &CommitOpts::default())
+            .expect("commit side");
+
+        // ... and main edits it another, producing a conflict on merge.
+        engine.checkout(&id, "main", false).expect("checkout main");
+        std::fs::write(p.join("file1.txt"), "our side\n").expect("write main");
+        engine
+            .stage_paths(&id, &["file1.txt".to_string()])
+            .expect("stage main");
+        engine
+            .commit(&id, "main edit", &CommitOpts::default())
+            .expect("commit main");
+
+        let outcome = engine
+            .merge(&id, "side", &MergeOpts::default())
+            .expect("conflicting merge");
+        assert_eq!(
+            outcome,
+            MergeOutcome::Conflicts(vec!["file1.txt".to_string()])
+        );
+
+        // conflict_state reports a merge; list_conflicts surfaces the path.
+        assert_eq!(
+            engine.conflict_state(&id).expect("state"),
+            ConflictState::Merge
+        );
+        assert_eq!(
+            engine.list_conflicts(&id).expect("list"),
+            vec!["file1.txt".to_string()]
+        );
+
+        // The working file carries markers and parses into a region.
+        let parsed = engine.parse_conflict(&id, "file1.txt").expect("parse");
+        assert!(
+            parsed
+                .segments
+                .iter()
+                .any(|s| matches!(s, lady_proto::ConflictSegment::Conflict(_))),
+            "expected a conflict region in {parsed:?}"
+        );
+
+        // Index stages give us ours/theirs (no base for a modify/modify off a
+        // shared ancestor where the ancestor content differs from both).
+        let sides = engine.conflict_sides(&id, "file1.txt").expect("sides");
+        assert_eq!(sides.ours.as_deref(), Some("our side\n"));
+        assert_eq!(sides.theirs.as_deref(), Some("their side\n"));
+
+        // Take ours, mark resolved.
+        engine.take_ours(&id, "file1.txt").expect("take ours");
+        assert_eq!(
+            std::fs::read_to_string(p.join("file1.txt")).expect("read resolved"),
+            "our side\n"
+        );
+        engine
+            .mark_resolved(&id, "file1.txt")
+            .expect("mark resolved");
+
+        // No conflicts remain; the file is staged (index stage 0, no unmerged
+        // entries). The resolved content equals HEAD here, so it shows no diff
+        // in status — the authoritative "resolved & staged" signal is that the
+        // unmerged index for the path is cleared.
+        assert!(
+            engine.list_conflicts(&id).expect("list after").is_empty(),
+            "no conflicts should remain"
+        );
+        let unmerged = Command::new("git")
+            .current_dir(p)
+            .args(["ls-files", "-u", "--", "file1.txt"])
+            .output()
+            .expect("git ls-files -u");
+        assert!(
+            unmerged.stdout.is_empty(),
+            "file should have no unmerged index entries after mark_resolved"
+        );
+        let wt = engine.status(&id).expect("status after resolve");
+        assert!(
+            !wt.unstaged
+                .iter()
+                .chain(wt.staged.iter())
+                .any(|f| f.kind == ChangeKind::Conflicted),
+            "no conflict entries should remain: {wt:?}"
+        );
+
+        // conflict_abort routes to merge --abort cleanly even mid-merge.
+        engine.conflict_abort(&id).expect("conflict abort");
+        assert_eq!(
+            engine.conflict_state(&id).expect("state after abort"),
+            ConflictState::None
         );
     }
 }

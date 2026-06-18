@@ -176,6 +176,34 @@ export type RebaseOutcome =
   | { kind: "Rebased" }
   | { kind: "Conflicts"; value: string[] };
 
+/** Mirrors lady_proto::ConflictState. */
+export type ConflictState = "None" | "Merge" | "Rebase" | "CherryPick" | "Revert";
+
+/** Mirrors lady_proto::ConflictSides (index stages 1/2/3). */
+export interface ConflictSides {
+  base: string | null;
+  ours: string | null;
+  theirs: string | null;
+}
+
+/** Mirrors lady_proto::ConflictRegion. */
+export interface ConflictRegion {
+  ours: string[];
+  base: string[];
+  theirs: string[];
+}
+
+/** Mirrors lady_proto::ConflictSegment (serde tagged). */
+export type ConflictSegment =
+  | { kind: "Context"; value: string[] }
+  | { kind: "Conflict"; value: ConflictRegion };
+
+/** Mirrors lady_proto::ParsedConflict. */
+export interface ParsedConflict {
+  segments: ConflictSegment[];
+  has_base: boolean;
+}
+
 // ── Repository-manager types ───────────────────────────────────────────────────
 
 export interface RecentRepo {

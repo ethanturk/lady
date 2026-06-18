@@ -299,6 +299,68 @@ pub enum RebaseOutcome {
     Conflicts(Vec<String>),
 }
 
+/// What mid-operation state a repository is in, used to drive conflict
+/// resolution and the correct `--abort` path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConflictState {
+    /// No operation in progress.
+    None,
+    /// Mid-merge (`MERGE_HEAD` present).
+    Merge,
+    /// Mid-rebase (`rebase-merge`/`rebase-apply` present).
+    Rebase,
+    /// Mid-cherry-pick (`CHERRY_PICK_HEAD` present).
+    CherryPick,
+    /// Mid-revert (`REVERT_HEAD` present).
+    Revert,
+}
+
+/// The three sides of a conflicted file, read from the index stages
+/// (`:1:` base, `:2:` ours, `:3:` theirs). A side is `None` when that stage is
+/// absent (e.g. an add/add conflict has no base).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConflictSides {
+    /// Common-ancestor content (stage 1), if any.
+    pub base: Option<String>,
+    /// Our side (stage 2 — current branch / rebase target).
+    pub ours: Option<String>,
+    /// Their side (stage 3 — incoming).
+    pub theirs: Option<String>,
+}
+
+/// One conflict hunk parsed from a file's conflict markers. `base` is empty
+/// unless the file was written with diff3-style markers.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConflictRegion {
+    /// Lines between `<<<<<<<` and `|||||||`/`=======` (our side).
+    pub ours: Vec<String>,
+    /// Lines between `|||||||` and `=======` (the merge base; diff3 only).
+    pub base: Vec<String>,
+    /// Lines between `=======` and `>>>>>>>` (their side).
+    pub theirs: Vec<String>,
+}
+
+/// A segment of a parsed conflicted file: either unconflicted context or a
+/// conflict region.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value")]
+pub enum ConflictSegment {
+    /// A run of unconflicted lines surrounding the conflicts.
+    Context(Vec<String>),
+    /// A conflict hunk.
+    Conflict(ConflictRegion),
+}
+
+/// A conflicted file parsed into an ordered sequence of context and conflict
+/// segments, preserving the surrounding text.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParsedConflict {
+    /// File segments in order.
+    pub segments: Vec<ConflictSegment>,
+    /// Whether any region carried a diff3 base section.
+    pub has_base: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

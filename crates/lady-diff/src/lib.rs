@@ -9,6 +9,8 @@ use std::ops::Range;
 
 use lady_proto::{DiffHunk, DiffLine, LineKind};
 
+pub mod merge;
+
 /// Number of context lines around each change block.
 const CONTEXT: u32 = 3;
 

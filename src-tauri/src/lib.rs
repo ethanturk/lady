@@ -644,6 +644,85 @@ fn rebase_abort(repo: RepoId, engine: State<GixEngine>) -> Result<(), String> {
     engine.rebase_abort(&repo).map_err(|e| e.to_string())
 }
 
+/// List the currently conflicted paths (PH3-001).
+#[tauri::command]
+fn list_conflicts(repo: RepoId, engine: State<GixEngine>) -> Result<Vec<String>, String> {
+    engine.list_conflicts(&repo).map_err(|e| e.to_string())
+}
+
+/// The three index-stage sides (base / ours / theirs) of a conflicted file,
+/// for the 3-pane resolver.
+#[tauri::command]
+fn conflict_sides(
+    repo: RepoId,
+    path: String,
+    engine: State<GixEngine>,
+) -> Result<lady_proto::ConflictSides, String> {
+    engine
+        .conflict_sides(&repo, &path)
+        .map_err(|e| e.to_string())
+}
+
+/// Parse a conflicted file's markers into context + conflict regions.
+#[tauri::command]
+fn parse_conflict(
+    repo: RepoId,
+    path: String,
+    engine: State<GixEngine>,
+) -> Result<lady_proto::ParsedConflict, String> {
+    engine
+        .parse_conflict(&repo, &path)
+        .map_err(|e| e.to_string())
+}
+
+/// Resolve a conflicted file by taking our side of every region.
+#[tauri::command]
+fn take_ours(repo: RepoId, path: String, engine: State<GixEngine>) -> Result<(), String> {
+    engine.take_ours(&repo, &path).map_err(|e| e.to_string())
+}
+
+/// Resolve a conflicted file by taking their side of every region.
+#[tauri::command]
+fn take_theirs(repo: RepoId, path: String, engine: State<GixEngine>) -> Result<(), String> {
+    engine.take_theirs(&repo, &path).map_err(|e| e.to_string())
+}
+
+/// Write the edited result-pane `content` as the resolution of `path`.
+#[tauri::command]
+fn write_resolution(
+    repo: RepoId,
+    path: String,
+    content: String,
+    engine: State<GixEngine>,
+) -> Result<(), String> {
+    engine
+        .write_resolution(&repo, &path, content.as_bytes())
+        .map_err(|e| e.to_string())
+}
+
+/// Mark `path` resolved (stage it).
+#[tauri::command]
+fn mark_resolved(repo: RepoId, path: String, engine: State<GixEngine>) -> Result<(), String> {
+    engine
+        .mark_resolved(&repo, &path)
+        .map_err(|e| e.to_string())
+}
+
+/// What mid-operation state the repo is in (merge / rebase / cherry-pick / …).
+#[tauri::command]
+fn conflict_state(
+    repo: RepoId,
+    engine: State<GixEngine>,
+) -> Result<lady_proto::ConflictState, String> {
+    engine.conflict_state(&repo).map_err(|e| e.to_string())
+}
+
+/// Abort whatever operation is in progress (routes to the right `--abort`).
+#[tauri::command]
+fn conflict_abort(repo: RepoId, engine: State<GixEngine>) -> Result<(), String> {
+    engine.conflict_abort(&repo).map_err(|e| e.to_string())
+}
+
 /// A repository remembered in user settings, with an optional custom group.
 #[derive(Serialize, Deserialize, Default, Clone)]
 pub struct RecentRepo {
@@ -733,6 +812,15 @@ pub fn run() {
             sequencer_abort,
             rebase,
             rebase_abort,
+            list_conflicts,
+            conflict_sides,
+            parse_conflict,
+            take_ours,
+            take_theirs,
+            write_resolution,
+            mark_resolved,
+            conflict_state,
+            conflict_abort,
             clone_repo,
             load_settings,
             save_settings
