@@ -1,0 +1,23 @@
+# --- Ralph autonomous loop runtime ---
+# Generated per-run by scripts/ralph/ralph.sh. prd.json is intentionally
+# tracked (it is Ralph's task list / git-history memory) — do NOT ignore it.
+scripts/ralph/progress.txt
+scripts/ralph/.last-branch
+scripts/ralph/archive/
+
+# --- Rust ---
+/target/
+**/*.rs.bk
+
+# --- Tauri / frontend (per PLAN.md) ---
+ui/node_modules/
+ui/dist/
+src-tauri/target/
+
+# --- OS / editor cruft ---
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/*
+!.vscode/extensions.json
