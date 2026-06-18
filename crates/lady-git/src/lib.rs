@@ -10,8 +10,8 @@ use std::process::Command;
 use std::sync::Mutex;
 
 use lady_proto::{
-    Blame, BlameLine, ChangeKind, CommitMeta, FileDiff, FileDiffKind, FileStatus, Oid, RefInfo,
-    RefKind, RepoId, Signature, WorkingTree,
+    AheadBehind, Blame, BlameLine, ChangeKind, CommitMeta, FileDiff, FileDiffKind, FileStatus, Oid,
+    RefInfo, RefKind, RepoId, Signature, WorkingTree,
 };
 
 /// Errors surfaced by a [`GitEngine`].
@@ -172,6 +172,46 @@ pub trait GitEngine: Send + Sync {
 
     /// Delete tag `name`.
     fn delete_tag(&self, repo: &RepoId, name: &str) -> Result<()>;
+
+    /// Fetch from `remote` (or the default remote when `None`), streaming
+    /// git's `--progress` output to `on_progress`. Credentials and transport
+    /// are entirely the system git's (ADR-0006): existing helpers / ssh-agent
+    /// are reused untouched. A failure returns git's message verbatim.
+    fn fetch(
+        &self,
+        repo: &RepoId,
+        remote: Option<&str>,
+        on_progress: &mut dyn FnMut(&str),
+    ) -> Result<()>;
+
+    /// Pull (`fetch` + integrate) from `remote`/`branch`, or the configured
+    /// upstream when either is `None`. Progress streams to `on_progress`.
+    fn pull(
+        &self,
+        repo: &RepoId,
+        remote: Option<&str>,
+        branch: Option<&str>,
+        on_progress: &mut dyn FnMut(&str),
+    ) -> Result<()>;
+
+    /// Push the current branch to `remote`/`branch` (defaults to the configured
+    /// upstream when `None`). `set_upstream` records the tracking ref (`-u`);
+    /// `force` allows a non-fast-forward update (`--force`). Progress streams to
+    /// `on_progress`; rejections surface git's message verbatim.
+    #[allow(clippy::too_many_arguments)]
+    fn push(
+        &self,
+        repo: &RepoId,
+        remote: Option<&str>,
+        branch: Option<&str>,
+        set_upstream: bool,
+        force: bool,
+        on_progress: &mut dyn FnMut(&str),
+    ) -> Result<()>;
+
+    /// How far the current branch is ahead/behind its upstream, or `None` when
+    /// there is no upstream configured (nothing to compare against).
+    fn ahead_behind(&self, repo: &RepoId) -> Result<Option<AheadBehind>>;
 }
 
 /// A [`GitEngine`] backed by [`gix`] for read-only access (ADR-0003).
@@ -273,6 +313,55 @@ pub(crate) fn run_git_stdin(workdir: &Path, args: &[&str], input: &[u8]) -> Resu
         let msg = stderr.trim();
         return Err(Error::Git(if msg.is_empty() {
             format!("git {args:?} failed ({})", out.status)
+        } else {
+            msg.to_string()
+        }));
+    }
+    Ok(())
+}
+
+/// Run system `git` in `workdir`, streaming progress to `on_line` as each
+/// stderr line arrives (git writes `--progress` output to stderr). The same
+/// lines are collected so a non-zero exit returns [`Error::Git`] carrying
+/// git's own message verbatim — auth failures, non-fast-forward rejections,
+/// etc. surface unchanged while progress still streams live (ADR-0003).
+pub(crate) fn run_git_streaming(
+    workdir: &Path,
+    args: &[&str],
+    on_line: &mut dyn FnMut(&str),
+) -> Result<()> {
+    use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
+
+    let mut child = Command::new("git")
+        .current_dir(workdir)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| Error::Git(format!("failed to run git: {e}")))?;
+
+    // Drain stderr line-by-line: feed each to the progress callback and keep a
+    // copy so any failure can be reported with git's full message.
+    let mut collected = String::new();
+    if let Some(stderr) = child.stderr.take() {
+        for line in BufReader::new(stderr)
+            .lines()
+            .map_while(std::result::Result::ok)
+        {
+            on_line(&line);
+            collected.push_str(&line);
+            collected.push('\n');
+        }
+    }
+
+    let status = child
+        .wait()
+        .map_err(|e| Error::Git(format!("failed to wait on git: {e}")))?;
+    if !status.success() {
+        let msg = collected.trim();
+        return Err(Error::Git(if msg.is_empty() {
+            format!("git {args:?} failed ({status})")
         } else {
             msg.to_string()
         }));
@@ -753,6 +842,84 @@ impl GitEngine for GixEngine {
     fn delete_tag(&self, repo: &RepoId, name: &str) -> Result<()> {
         let wd = self.workdir(repo)?;
         run_git(&wd, &["tag", "-d", name]).map(|_| ())
+    }
+
+    fn fetch(
+        &self,
+        repo: &RepoId,
+        remote: Option<&str>,
+        on_progress: &mut dyn FnMut(&str),
+    ) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        let mut args: Vec<&str> = vec!["fetch", "--progress"];
+        if let Some(r) = remote {
+            args.push(r);
+        }
+        run_git_streaming(&wd, &args, on_progress)
+    }
+
+    fn pull(
+        &self,
+        repo: &RepoId,
+        remote: Option<&str>,
+        branch: Option<&str>,
+        on_progress: &mut dyn FnMut(&str),
+    ) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        let mut args: Vec<&str> = vec!["pull", "--progress"];
+        // A branch can only be named alongside its remote.
+        if let Some(r) = remote {
+            args.push(r);
+            if let Some(b) = branch {
+                args.push(b);
+            }
+        }
+        run_git_streaming(&wd, &args, on_progress)
+    }
+
+    fn push(
+        &self,
+        repo: &RepoId,
+        remote: Option<&str>,
+        branch: Option<&str>,
+        set_upstream: bool,
+        force: bool,
+        on_progress: &mut dyn FnMut(&str),
+    ) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        let mut args: Vec<&str> = vec!["push", "--progress"];
+        if set_upstream {
+            args.push("-u");
+        }
+        if force {
+            args.push("--force");
+        }
+        if let Some(r) = remote {
+            args.push(r);
+            if let Some(b) = branch {
+                args.push(b);
+            }
+        }
+        run_git_streaming(&wd, &args, on_progress)
+    }
+
+    fn ahead_behind(&self, repo: &RepoId) -> Result<Option<AheadBehind>> {
+        let wd = self.workdir(repo)?;
+        // No upstream → nothing to compare against. `rev-parse` fails loudly,
+        // which here just means "untracked branch", so map that to `None`.
+        if run_git(&wd, &["rev-parse", "--abbrev-ref", "@{upstream}"]).is_err() {
+            return Ok(None);
+        }
+        let out = run_git(
+            &wd,
+            &["rev-list", "--left-right", "--count", "@{upstream}...HEAD"],
+        )?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        // `git rev-list --left-right --count A...B` prints "<behind>\t<ahead>".
+        let mut nums = text.split_whitespace();
+        let behind = nums.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+        let ahead = nums.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+        Ok(Some(AheadBehind { ahead, behind }))
     }
 }
 
@@ -1878,6 +2045,107 @@ mod tests {
         assert!(
             res.is_err(),
             "checkout that clobbers local changes is refused"
+        );
+    }
+
+    /// Push / fetch / ahead_behind round-trip over a local `file://`-style bare
+    /// remote — fully offline, no network or credentials involved.
+    #[test]
+    fn push_fetch_and_ahead_behind_round_trip() {
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let root = tmp.path();
+
+        // Bare "remote" that the working clones push to / fetch from.
+        let remote = root.join("remote.git");
+        git(root, &["init", "-q", "--bare", "-b", "main", "remote.git"]);
+
+        // Clone A: seed an initial commit and push it so `main` exists upstream.
+        let a = root.join("a");
+        git(
+            root,
+            &["clone", "-q", remote.to_str().unwrap(), a.to_str().unwrap()],
+        );
+        git(&a, &["config", "user.name", "Lady Test"]);
+        git(&a, &["config", "user.email", "test@example.com"]);
+        git(&a, &["config", "commit.gpgsign", "false"]);
+        std::fs::write(a.join("file.txt"), "v1\n").expect("write");
+        git(&a, &["add", "."]);
+        git(&a, &["commit", "-q", "-m", "first"]);
+
+        let engine = GixEngine::new();
+        let id_a = engine.open(&a).expect("open clone a");
+        let mut sink = |_: &str| {};
+
+        // First push sets upstream so ahead/behind has something to compare to.
+        engine
+            .push(&id_a, Some("origin"), Some("main"), true, false, &mut sink)
+            .expect("push main");
+        assert_eq!(
+            engine.ahead_behind(&id_a).expect("ahead_behind"),
+            Some(AheadBehind {
+                ahead: 0,
+                behind: 0
+            }),
+            "in sync right after pushing"
+        );
+
+        // A local commit not yet pushed → ahead by one.
+        std::fs::write(a.join("file.txt"), "v2\n").expect("write");
+        git(&a, &["add", "."]);
+        git(&a, &["commit", "-q", "-m", "second"]);
+        assert_eq!(
+            engine.ahead_behind(&id_a).expect("ahead_behind"),
+            Some(AheadBehind {
+                ahead: 1,
+                behind: 0
+            }),
+            "one unpushed local commit"
+        );
+        engine
+            .push(&id_a, None, None, false, false, &mut sink)
+            .expect("push second");
+
+        // Clone B pushes a third commit; A fetches it → A is now behind by one.
+        let b = root.join("b");
+        git(
+            root,
+            &["clone", "-q", remote.to_str().unwrap(), b.to_str().unwrap()],
+        );
+        git(&b, &["config", "user.name", "Lady Test"]);
+        git(&b, &["config", "user.email", "test@example.com"]);
+        git(&b, &["config", "commit.gpgsign", "false"]);
+        std::fs::write(b.join("file.txt"), "v3\n").expect("write");
+        git(&b, &["add", "."]);
+        git(&b, &["commit", "-q", "-m", "third"]);
+        let engine_b = GixEngine::new();
+        let id_b = engine_b.open(&b).expect("open clone b");
+        engine_b
+            .push(&id_b, None, None, false, false, &mut sink)
+            .expect("push third from b");
+
+        engine
+            .fetch(&id_a, Some("origin"), &mut sink)
+            .expect("fetch into a");
+        assert_eq!(
+            engine.ahead_behind(&id_a).expect("ahead_behind"),
+            Some(AheadBehind {
+                ahead: 0,
+                behind: 1
+            }),
+            "behind by the commit fetched from b"
+        );
+    }
+
+    /// A branch with no upstream has no ahead/behind to report.
+    #[test]
+    fn ahead_behind_is_none_without_upstream() {
+        let dir = fixture_repo();
+        let engine = GixEngine::new();
+        let id = engine.open(dir.path()).expect("open the fixture repo");
+        assert_eq!(
+            engine.ahead_behind(&id).expect("ahead_behind"),
+            None,
+            "fixture's main tracks no upstream"
         );
     }
 }

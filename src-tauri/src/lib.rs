@@ -463,6 +463,81 @@ fn clone_repo(
         .map_err(|e| e.to_string())
 }
 
+/// Fetch from `remote` (default when `None`), streaming git progress to the
+/// frontend as `fetch-progress` events. Auth is the system git's (ADR-0006).
+#[tauri::command]
+fn fetch(
+    repo: RepoId,
+    remote: Option<String>,
+    app: tauri::AppHandle,
+    engine: State<GixEngine>,
+) -> Result<(), String> {
+    use tauri::Emitter;
+    let mut emit = |line: &str| {
+        let _ = app.emit("fetch-progress", line.to_string());
+    };
+    engine
+        .fetch(&repo, remote.as_deref(), &mut emit)
+        .map_err(|e| e.to_string())
+}
+
+/// Pull (fetch + integrate) from `remote`/`branch`, or the configured upstream.
+/// Progress streams as `fetch-progress` events.
+#[tauri::command]
+fn pull(
+    repo: RepoId,
+    remote: Option<String>,
+    branch: Option<String>,
+    app: tauri::AppHandle,
+    engine: State<GixEngine>,
+) -> Result<(), String> {
+    use tauri::Emitter;
+    let mut emit = |line: &str| {
+        let _ = app.emit("fetch-progress", line.to_string());
+    };
+    engine
+        .pull(&repo, remote.as_deref(), branch.as_deref(), &mut emit)
+        .map_err(|e| e.to_string())
+}
+
+/// Push the current branch to `remote`/`branch`. `set_upstream` records the
+/// tracking ref; `force` allows a non-fast-forward update. Progress streams as
+/// `push-progress` events; rejections surface git's message verbatim.
+#[tauri::command]
+fn push(
+    repo: RepoId,
+    remote: Option<String>,
+    branch: Option<String>,
+    set_upstream: bool,
+    force: bool,
+    app: tauri::AppHandle,
+    engine: State<GixEngine>,
+) -> Result<(), String> {
+    use tauri::Emitter;
+    let mut emit = |line: &str| {
+        let _ = app.emit("push-progress", line.to_string());
+    };
+    engine
+        .push(
+            &repo,
+            remote.as_deref(),
+            branch.as_deref(),
+            set_upstream,
+            force,
+            &mut emit,
+        )
+        .map_err(|e| e.to_string())
+}
+
+/// How far the current branch is ahead/behind its upstream (`None` if untracked).
+#[tauri::command]
+fn ahead_behind(
+    repo: RepoId,
+    engine: State<GixEngine>,
+) -> Result<Option<lady_proto::AheadBehind>, String> {
+    engine.ahead_behind(&repo).map_err(|e| e.to_string())
+}
+
 /// A repository remembered in user settings, with an optional custom group.
 #[derive(Serialize, Deserialize, Default, Clone)]
 pub struct RecentRepo {
@@ -536,6 +611,10 @@ pub fn run() {
             checkout,
             create_tag,
             delete_tag,
+            fetch,
+            pull,
+            push,
+            ahead_behind,
             clone_repo,
             load_settings,
             save_settings

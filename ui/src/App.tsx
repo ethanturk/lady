@@ -8,6 +8,7 @@ import BlameView from "./BlameView";
 import FileHistory from "./FileHistory";
 import ChangesView from "./ChangesView";
 import RefsView from "./RefsView";
+import SyncBar from "./SyncBar";
 import RepoBar from "./RepoBar";
 import CommandPalette from "./CommandPalette";
 import type { PaletteEntry } from "./CommandPalette";
@@ -134,6 +135,11 @@ const App: Component = () => {
             History
           </button>
         </div>
+      </Show>
+
+      {/* Remote sync: fetch / pull / push + ahead/behind */}
+      <Show when={active()}>
+        <SyncBar repoId={repoId()!} refreshNonce={refreshNonce()} onChanged={refresh} />
       </Show>
 
       {/* Content */}

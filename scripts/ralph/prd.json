@@ -115,7 +115,7 @@
         "Test: a local 'remote' (a second tempdir / bare repo on disk, file:// or path) — push then fetch round-trips a commit; ahead/behind computed correctly; no real network in tests; cargo fmt/clippy -D warnings/test green; cargo deny passes; npm run build green; manual window note in progress.txt"
       ],
       "priority": 8,
-      "passes": false,
+      "passes": true,
       "notes": "ADR-0006 — reuse system git auth; keyring holds only hosting-API tokens (not here). Never gate network ops behind anything; surface git errors faithfully. Test with file:// or path remotes to stay offline."
     },
     {

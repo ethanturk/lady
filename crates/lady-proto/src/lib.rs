@@ -228,6 +228,14 @@ pub struct WorkingTree {
     pub untracked: Vec<String>,
 }
 
+/// How far the current branch sits from its upstream: `ahead` commits exist
+/// locally but not upstream, `behind` exist upstream but not locally.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AheadBehind {
+    pub ahead: usize,
+    pub behind: usize,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

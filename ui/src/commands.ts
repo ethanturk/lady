@@ -143,6 +143,12 @@ export interface WorkingTree {
   untracked: string[];
 }
 
+/** Mirrors lady_proto::AheadBehind. */
+export interface AheadBehind {
+  ahead: number;
+  behind: number;
+}
+
 // ── Repository-manager types ───────────────────────────────────────────────────
 
 export interface RecentRepo {
