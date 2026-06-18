@@ -1,175 +1,179 @@
 {
   "project": "Lady",
-  "branchName": "ralph/phase-1-read-only",
-  "description": "Phase 1 \u2014 Read-only foundation (PLAN.md \u00a79; ADR-0001 Tauri, ADR-0005 canvas graph, ADR-0010 SolidJS). Adds the Tauri v2 desktop shell + SolidJS/TS/Vite frontend and the read-only views: open repo, refs, virtualized commit list, commit-graph canvas, diff viewer, blame, file history, repository manager, command palette. EXIT: browse any repo's read views in a real window as well as Fork's. No mutations, no AI. Branches from main (which has Phase 0). Each story = one context-window commit. UI stories rely on build + typecheck + unit tests for loop verification; a manual window check is noted in progress.txt since Tauri windows cannot be verified headless in the loop.",
+  "branchName": "ralph/phase-2-write-ops",
+  "description": "Phase 2 — Write operations (PLAN.md §9; ADR-0003 mutations + authenticated network ops go through the shell-out git tier; ADR-0006 reuse system git credential helpers / ssh-agent). Adds the mutating daily-driver surface on top of Phase 1's read-only foundation: working-tree status, stage/unstage (whole-file then line/hunk partial), discard, commit/amend, branches/tags, checkout, fetch/pull/push with credentials, stash, merge, cherry-pick, revert, and drag-&-drop merge/rebase. EXIT: Lady is a daily-driver for common git workflows as well as Fork. Interactive rebase, the 3-pane conflict resolver, signing, worktrees, reflog, and bisect are Phase 3 (NOT here). No AI (Phase 5). Branches from ralph/phase-1-read-only (Phase 1 complete). Each story = one context-window commit. After any mutation the UI must refresh status + refs + graph so views never go stale (PLAN.md §3.2). UI stories rely on build + typecheck + unit tests for loop verification; a manual window check is noted in progress.txt since Tauri windows cannot be verified headless. Mutating engine methods MUST be unit-tested against throwaway tempdir repos (system git permitted for fixtures, ADR-0003).",
   "userStories": [
     {
-      "id": "PH1-001",
-      "title": "Add Tauri v2 shell + SolidJS/TS/Vite frontend",
-      "description": "As a user, I need a desktop window so Lady has a GUI.",
+      "id": "PH2-001",
+      "title": "Working-tree status model + Changes view",
+      "description": "As a user, I want to see what has changed in my working tree, split into staged and unstaged.",
       "acceptanceCriteria": [
-        "Add src-tauri/ (Tauri v2 app crate) + ui/ (SolidJS + TypeScript + Vite) per ADR-0001/ADR-0010; the cargo workspace still builds",
-        "tauri.conf.json: app name 'Lady', 1200x800 window, frontendDist -> ui build output, devUrl -> vite dev server",
-        "`npm install` in ui/ then `cargo tauri build` succeeds and launches a window with a placeholder view",
-        "ui/node_modules, ui/dist, src-tauri/target stay git-ignored",
-        "cargo fmt/clippy -D warnings/build clean; cargo deny check passes (Tauri deps are MIT/Apache); npm run build (tsc + vite) passes"
+        "lady-proto: WorkingTree { staged: Vec<FileStatus>, unstaged: Vec<FileStatus>, untracked: Vec<String> } and FileStatus { path, old_path: Option<String>, kind: ChangeKind } where ChangeKind = Added|Modified|Deleted|Renamed|Untracked|Conflicted; serde round-trip test",
+        "lady-git: GitEngine::status(repo) -> WorkingTree, parsing `git status --porcelain=v2 -z --untracked-files=all` via the shell-out tier (ADR-0003) for exact git semantics incl. renames and conflicts",
+        "Tauri command status(repo) -> WorkingTree; TS types mirror WorkingTree/FileStatus/ChangeKind",
+        "ui: a 'Changes' view (new tab) lists staged vs unstaged vs untracked files with a per-file change badge; empty state when the tree is clean",
+        "Unit test: tempdir repo with one staged, one unstaged-modified, and one untracked file yields the right buckets; cargo fmt/clippy -D warnings/test green; cargo deny passes; npm run build green; manual window note in progress.txt"
       ],
       "priority": 1,
-      "passes": true,
-      "notes": "Prereqs verified present: node v22, npm 10.9, cargo-tauri. ADR-0001, ADR-0010."
+      "passes": false,
+      "notes": "PLAN.md §4.1 status -> WorkingTree; §6.9 status refresh < ~100ms warm. Read via shell-out porcelain for exactness; gix status acceptable if it matches the test, but porcelain=v2 -z is the spec. Foundation for all staging stories."
     },
     {
-      "id": "PH1-002",
-      "title": "Rust<->web command bridge (app_info)",
-      "description": "As a developer, I need the invoke bridge working so the frontend can call Rust.",
+      "id": "PH2-002",
+      "title": "Stage / unstage whole files",
+      "description": "As a user, I want to stage and unstage entire files.",
       "acceptanceCriteria": [
-        "#[tauri::command] app_info() -> { name, version } registered in src-tauri",
-        "ui invokes app_info on mount via @tauri-apps/api and renders the result",
-        "A TS type mirrors the app_info payload",
-        "App launches and shows app_info; cargo + npm run build green; clippy -D warnings clean"
+        "lady-git: stage_paths(repo, paths) (shell-out `git add -- <paths>`, handling deletes) and unstage_paths(repo, paths) (`git restore --staged -- <paths>`, or `git reset -q HEAD -- <paths>` on an unborn branch)",
+        "Tauri commands stage_paths / unstage_paths; the Changes view gets stage/unstage buttons per file and stage-all / unstage-all actions",
+        "After staging/unstaging the UI re-fetches status so the buckets update immediately (PLAN.md §3.2)",
+        "Unit test: stage then unstage a path moves it between buckets in status() output; cargo fmt/clippy -D warnings/test green; cargo deny passes; npm run build green; manual window note in progress.txt"
       ],
       "priority": 2,
-      "passes": true,
-      "notes": "Proves the command/event bridge before wiring real data."
+      "passes": false,
+      "notes": "Mutations via shell-out git (ADR-0003). Handle add/modify/delete and the unborn-HEAD (no commits yet) edge."
     },
     {
-      "id": "PH1-003",
-      "title": "open_repo + list_refs commands -> refs view",
-      "description": "As a user, I want to open a repo and see its branches, tags, and HEAD.",
+      "id": "PH2-003",
+      "title": "Working & staged diffs in the diff viewer",
+      "description": "As a user, I want to see the actual line changes for a working or staged file, not just its name.",
       "acceptanceCriteria": [
-        "Tauri commands open_repo(path) -> RepoId and list_refs(repo) -> Vec<RefInfo> delegate to lady-git GixEngine",
-        "lady-proto types serialize across the bridge; TS types mirror RefInfo/RefKind",
-        "ui: a path input opens a repo and renders refs grouped (branches / tags / remotes / HEAD)",
-        "Works on the Lady repo; a unit test covers the command layer; cargo + npm run build green; cargo deny passes"
+        "lady-git: generalize diffing to a DiffSpec — Commit(oid) (existing), WorkingVsIndex(path) (unstaged), IndexVsHead(path) (staged); keep diff_commit working",
+        "Tauri command diff_spec(repo, spec) -> Vec<FileDiff>; TS DiffSpec mirror; the existing commit diff path keeps working",
+        "ui: selecting a file in the Changes view shows its diff in the Phase 1 DiffView (unstaged -> WorkingVsIndex, staged -> IndexVsHead), reusing side-by-side/unified + syntax highlight + image diff",
+        "Unit test on each DiffSpec variant against a tempdir repo; cargo fmt/clippy -D warnings/test green; cargo deny passes; npm run build green; manual window note in progress.txt"
       ],
       "priority": 3,
-      "passes": true,
-      "notes": "Reuses lady-git from Phase 0 (ADR-0003)."
+      "passes": false,
+      "notes": "PLAN.md §4.1 diff(repo, spec). Reuses Phase 1 DiffView/lady-diff. Working-vs-index = on-disk bytes vs index blob; index-vs-HEAD = index blob vs HEAD tree blob."
     },
     {
-      "id": "PH1-004",
-      "title": "walk_log command -> virtualized commit list",
-      "description": "As a user, I want a scrollable list of commits that stays fast on huge repos.",
+      "id": "PH2-004",
+      "title": "Partial staging — hunk level (patch builder)",
+      "description": "As a user, I want to stage individual hunks instead of whole files.",
       "acceptanceCriteria": [
-        "Command walk_log(repo, { start, limit }) -> Vec<CommitMeta>, paged",
-        "ui renders a virtualized/windowed commit list (short oid + summary + author + relative time); only visible rows in the DOM",
-        "Incremental load on scroll; a large repo (e.g. this one or a synthetic one) scrolls without freezing",
-        "Command logic unit-tested; cargo + npm run build green; cargo deny passes"
+        "lady-diff: a partial-stage patch builder that emits a valid unified diff for a chosen subset of hunks of one file (correct @@ headers + counts), suitable for `git apply --cached`",
+        "lady-git: apply_patch(repo, patch, reverse: bool) (shell-out `git apply --cached [--reverse] -`, patch on stdin) to stage (forward) or unstage (reverse) selected hunks",
+        "ui: per-hunk 'Stage hunk' / 'Unstage hunk' actions in the Changes/diff view that build the patch and apply it, then refresh status + diff",
+        "Unit test: build a patch for 1 of 2 hunks, apply --cached, assert only that hunk is staged (status + staged diff) and the index is not corrupted; cargo fmt/clippy -D warnings/test green; cargo deny passes; npm run build green; manual window note in progress.txt"
       ],
       "priority": 4,
-      "passes": true,
-      "notes": "Virtualization per PLAN.md \u00a76 \u2014 never materialize whole history."
+      "passes": false,
+      "notes": "PLAN.md §6.3 — the hard one; foundation for AI Commit Composer later. PH1-007 deferred the patch builder to here. Test against real `git apply` to guarantee patch validity."
     },
     {
-      "id": "PH1-005",
-      "title": "lady-graph crate: commit-graph lane layout",
-      "description": "As a developer, I need lane assignment + edge routing so the graph can be drawn.",
+      "id": "PH2-005",
+      "title": "Partial staging — line level + discard",
+      "description": "As a user, I want to stage or discard individual lines, not just hunks.",
       "acceptanceCriteria": [
-        "New crate crates/lady-graph (workspace member) depending on lady-proto",
-        "fn layout(commits: &[CommitMeta]) -> Vec<GraphRow { oid, lane, edges, refs }> assigns lanes and routes parent/child edges",
-        "Correct for linear history, branch, two-parent merge, and octopus merge; stable/deterministic given the same input",
-        "Unit tests (insta snapshots or explicit asserts) cover each case; cargo test/clippy -D warnings/fmt green; cargo deny passes"
+        "lady-diff: extend the patch builder to select arbitrary added/removed lines within a hunk (unselected changes become context), producing a valid applicable patch",
+        "lady-git: discard(repo, spec) to discard unstaged hunks/lines (reverse patch to the working tree via `git apply --reverse`, no --cached) and discard whole untracked files",
+        "ui: line-level selection in DiffView with 'Stage lines' / 'Discard lines' (and 'Discard hunk'); a confirm step before discard (destructive)",
+        "Unit test: stage a single added line out of several; discard a single line restores it; cargo fmt/clippy -D warnings/test green; cargo deny passes; npm run build green; manual window note in progress.txt"
       ],
       "priority": 5,
-      "passes": true,
-      "notes": "PLAN.md \u00a76 hard part \u2014 pure logic, no UI. Build incrementally; keep it streamable."
+      "passes": false,
+      "notes": "PLAN.md §1 discard hunks/lines + §6.3. Discard is destructive — gate behind explicit confirm; never silently lose work."
     },
     {
-      "id": "PH1-006",
-      "title": "Commit-graph canvas render (hybrid)",
-      "description": "As a user, I want to see the commit DAG drawn next to the commit list.",
+      "id": "PH2-006",
+      "title": "Commit + amend",
+      "description": "As a user, I want to commit the staged changes and amend the last commit.",
       "acceptanceCriteria": [
-        "A data path feeds GraphRow to the frontend (command or extension of walk_log)",
-        "Canvas 2D draws lanes + edges; commit row text/refs render as aligned virtualized DOM (hybrid per ADR-0005)",
-        "devicePixelRatio handled (sharp on retina); theme color tokens passed into draw calls; canvas + DOM rows scroll in sync",
-        "Renders the Lady repo's graph in the window; npm run build + cargo build green; cargo deny passes",
-        "Manual window verification noted in progress.txt (cannot verify headless)"
+        "lady-git: commit(repo, message, CommitOpts { amend: bool }) via shell-out git (`git commit -m` / `git commit --amend -m`); returns the new commit Oid",
+        "Recent commit-message access: recent_messages(repo, limit) -> Vec<String> from the log",
+        "ui: a commit box on the Changes view with a message field, Commit button (disabled when nothing staged), an Amend toggle that prefills the last message, and a recent-messages affordance; after commit the message clears and status + refs + graph refresh",
+        "Unit test: stage + commit creates a commit whose diff matches; amend rewrites the tip without adding a commit; cargo fmt/clippy -D warnings/test green; cargo deny passes; npm run build green; manual window note in progress.txt"
       ],
       "priority": 6,
-      "passes": true,
-      "notes": "ADR-0005 \u2014 signature view; render-target kept swappable behind the row-data interface."
+      "passes": false,
+      "notes": "PLAN.md §1 commit/amend with recent-message access. Signing is NOT here (Phase 3) — leave the user's commit.gpgsign config untouched; do not force-disable it."
     },
     {
-      "id": "PH1-007",
-      "title": "lady-diff crate + diff command",
-      "description": "As a developer, I need a diff engine so the UI can show changes.",
+      "id": "PH2-007",
+      "title": "Branches + tags (create / delete / checkout)",
+      "description": "As a user, I want to create, delete, and switch branches, and create/delete tags.",
       "acceptanceCriteria": [
-        "New crate crates/lady-diff using imara-diff; produces FileDiff (hunks, lines, change kind) for a commit (or working file) vs its parent",
-        "Handles add / delete / modify / binary; image files flagged as image (no text diff)",
-        "Tauri command diff(repo, spec) -> FileDiff",
-        "Unit tests on the hunk model; cargo test/clippy/fmt green; cargo deny passes (imara-diff is Apache-2.0)"
+        "lady-git: create_branch(repo, name, start_point?), delete_branch(repo, name, force), checkout(repo, target) (branch or revision; detached-HEAD aware), create_tag(repo, name, target?, message?), delete_tag(repo, name) — all shell-out git",
+        "Tauri commands for each; the Refs view gets create/delete/checkout actions and a new-branch / new-tag affordance",
+        "checkout refuses with a clear error when the working tree would be overwritten (surface git's message; do not force unless the user opts in)",
+        "After any of these the UI refreshes refs + status + graph; current branch/HEAD is visibly indicated",
+        "Unit tests: create+checkout a branch moves HEAD; delete removes the ref; create+delete a tag; cargo fmt/clippy -D warnings/test green; cargo deny passes; npm run build green; manual window note in progress.txt"
       ],
       "priority": 7,
-      "passes": true,
-      "notes": "PLAN.md \u00a74 lady-diff. Partial-staging patch builder is NOT in scope here (Phase 2)."
+      "passes": false,
+      "notes": "PLAN.md §1 create/delete branches & tags, checkout. Drag-&-drop is PH2-012. Keep destructive flags (force delete, force checkout) explicit."
     },
     {
-      "id": "PH1-008",
-      "title": "Diff viewer UI + syntax highlighting",
-      "description": "As a user, I want to read diffs clearly with highlighting.",
+      "id": "PH2-008",
+      "title": "Fetch / pull / push with credentials + progress",
+      "description": "As a user, I want to sync with my remote over the network using my existing git credentials.",
       "acceptanceCriteria": [
-        "ui renders FileDiff with side-by-side AND unified modes (toggle)",
-        "Syntax highlighting for common languages (tree-sitter wasm or a JS highlighter); image diffs show both images",
-        "Added/removed/context lines styled; large diffs virtualized",
-        "npm run build + cargo build green; manual window verification noted in progress.txt"
+        "lady-git: fetch(repo, remote?), pull(repo, remote?, branch?), push(repo, remote?, branch?, set_upstream: bool, force: bool) via shell-out git so the user's credential helpers + ssh-agent are reused untouched (ADR-0003, ADR-0006)",
+        "Progress: stream git's stderr progress lines to the frontend as events (reuse the clone-progress pattern from PH1-011), e.g. fetch-progress / push-progress",
+        "ui: Fetch / Pull / Push controls; an ahead/behind indicator for the current branch vs its upstream; push offers set-upstream when none exists; errors (auth failure, non-fast-forward) surface git's message verbatim",
+        "After a successful op the UI refreshes refs + graph + status",
+        "Test: a local 'remote' (a second tempdir / bare repo on disk, file:// or path) — push then fetch round-trips a commit; ahead/behind computed correctly; no real network in tests; cargo fmt/clippy -D warnings/test green; cargo deny passes; npm run build green; manual window note in progress.txt"
       ],
       "priority": 8,
-      "passes": true,
-      "notes": "PLAN.md \u00a71 diff viewer (side-by-side, syntax, image diff)."
+      "passes": false,
+      "notes": "ADR-0006 — reuse system git auth; keyring holds only hosting-API tokens (not here). Never gate network ops behind anything; surface git errors faithfully. Test with file:// or path remotes to stay offline."
     },
     {
-      "id": "PH1-009",
-      "title": "Blame command + blame view",
-      "description": "As a user, I want to see who last changed each line.",
+      "id": "PH2-009",
+      "title": "Stash (save / pop / apply / drop) + inline display",
+      "description": "As a user, I want to stash changes and manage my stash list.",
       "acceptanceCriteria": [
-        "Command blame(repo, path, at) -> Blame (per-line last commit) via lady-git/gix",
-        "ui blame view: each line shows a gutter with short oid + author + date",
-        "Unit test on the blame mapping; cargo + npm run build green; cargo deny passes"
+        "lady-git: stash_save(repo, message?, include_untracked: bool), stash_list(repo) -> Vec<StashEntry { index, message, oid }>, stash_apply(repo, index), stash_pop(repo, index), stash_drop(repo, index) — shell-out git; lady-proto StashEntry + serde test",
+        "Tauri commands for each; ui: a stash list with apply/pop/drop, and a Stash button on the Changes view (with an include-untracked option)",
+        "Stashes shown inline in the commit list (Fork parity) — render stash entries as distinct rows/markers alongside commits",
+        "After any stash op the UI refreshes status + the stash list + graph",
+        "Unit tests: save then list shows the entry; pop re-applies and removes it; drop removes without applying; cargo fmt/clippy -D warnings/test green; cargo deny passes; npm run build green; manual window note in progress.txt"
       ],
       "priority": 9,
-      "passes": true,
-      "notes": "PLAN.md \u00a71 blame."
+      "passes": false,
+      "notes": "PLAN.md §1 stash + 'stashes shown inline in the commit list'. Inline graph marker may be a thin follow-up if heavy, but the list + ops are required."
     },
     {
-      "id": "PH1-010",
-      "title": "File history command + view",
-      "description": "As a user, I want to see the commits that touched a file.",
+      "id": "PH2-010",
+      "title": "Merge (fast-forward / no-ff) + abort",
+      "description": "As a user, I want to merge a branch into my current branch.",
       "acceptanceCriteria": [
-        "Command file_history(repo, path) -> Vec<CommitMeta> (commits affecting the path)",
-        "ui: pick a file -> list its history; click a commit -> show that commit's diff for the file (reuses the diff viewer)",
-        "Command logic unit-tested; cargo + npm run build green"
+        "lady-git: merge(repo, source, MergeOpts { fast_forward: FfMode (Auto|Only|Never), commit_message? }) and merge_abort(repo) via shell-out git",
+        "merge reports its result: AlreadyUpToDate | FastForwarded | Merged(oid) | Conflicts(Vec<path>); conflicts surfaced (full 3-pane resolver is Phase 3 — here just list conflicted files + offer abort)",
+        "ui: a Merge action (from a branch in the Refs view) with ff-mode choice; on conflict show conflicted files + an Abort button; on success refresh graph + refs + status",
+        "Unit tests: ff merge fast-forwards; divergent no-conflict merge creates a merge commit; conflicting merge reports Conflicts and merge_abort restores pre-merge state; cargo fmt/clippy -D warnings/test green; cargo deny passes; npm run build green; manual window note in progress.txt"
       ],
       "priority": 10,
-      "passes": true,
-      "notes": "PLAN.md \u00a71 file history."
+      "passes": false,
+      "notes": "PLAN.md §1 merge (ff / no-ff). Conflict RESOLUTION (3-pane) is Phase 3; this story only detects + lists + aborts."
     },
     {
-      "id": "PH1-011",
-      "title": "Repository manager (open/clone/add, recent, tabs)",
-      "description": "As a user, I want to manage and switch between repositories.",
+      "id": "PH2-011",
+      "title": "Cherry-pick + revert",
+      "description": "As a user, I want to cherry-pick a commit onto my branch and revert a commit.",
       "acceptanceCriteria": [
-        "ui repository manager: open existing, clone (shell-out `git clone` with progress per ADR-0003), add, and a recent-repos list",
-        "Multiple repos in tabs with custom groups; a star indicator on a tab when its repo has uncommitted changes (status check)",
-        "Recent repos + groups persisted to settings (TOML in the platform config dir via the directories crate)",
-        "cargo + npm run build green; cargo deny passes"
+        "lady-git: cherry_pick(repo, oid) and revert(repo, oid) via shell-out git; both report Applied(oid) | Conflicts(Vec<path>); plus a shared sequencer-abort (cherry-pick/revert --abort)",
+        "ui: Cherry-pick and Revert actions from a commit's context in the graph/commit list; on conflict show conflicted files + Abort; on success refresh graph + status",
+        "Unit tests: cherry-pick a commit from another branch applies its change; revert a commit undoes its change; a conflicting cherry-pick reports Conflicts and abort restores state; cargo fmt/clippy -D warnings/test green; cargo deny passes; npm run build green; manual window note in progress.txt"
       ],
       "priority": 11,
-      "passes": true,
-      "notes": "PLAN.md \u00a71 repository manager. Clone uses shell-out git (ADR-0003)."
+      "passes": false,
+      "notes": "PLAN.md §1 cherry-pick, revert. Same conflict policy as merge: detect + list + abort; resolver is Phase 3."
     },
     {
-      "id": "PH1-012",
-      "title": "Command palette (fuzzy quick launch)",
-      "description": "As a user, I want a keyboard palette to jump to actions, branches, and files.",
+      "id": "PH2-012",
+      "title": "Drag-&-drop merge / rebase (drag branch onto branch)",
+      "description": "As a user, I want to drag one branch onto another to merge or rebase.",
       "acceptanceCriteria": [
-        "ui command palette opens on Cmd/Ctrl+P with fuzzy search (nucleo in Rust via a command, or a TS fuzzy lib) over actions, branches, and files",
-        "Selecting an entry runs the action or navigates to the branch/file; fully keyboard-driven",
-        "cargo + npm run build green",
-        "PHASE 1 EXIT: the window browses a repo's graph, diffs, blame, history, and repos as well as Fork's read views \u2014 note this in progress.txt"
+        "lady-git: rebase(repo, branch, onto) (plain, non-interactive) via shell-out git, reporting Rebased | Conflicts(Vec<path>) with rebase_abort; interactive rebase stays Phase 3",
+        "ui: drag a branch ref onto another branch ref (Refs/graph) opens a small choice — Merge or Rebase — then runs the chosen op via the existing merge/rebase commands",
+        "Conflicts surface conflicted files + Abort (resolver is Phase 3); on success refresh graph + refs + status",
+        "cargo fmt/clippy -D warnings/test green (unit-test plain rebase: linear rebase replays commits; conflicting rebase reports Conflicts + abort restores); cargo deny passes; npm run build green; manual window note in progress.txt",
+        "PHASE 2 EXIT: change, partial-stage, commit/amend, branch/tag, checkout, fetch/pull/push, stash, merge, cherry-pick, revert, and drag-&-drop merge/rebase all work in the window as well as Fork's daily-use surface. Note this in progress.txt. Next is a Phase 3 PRD (new branchName ralph/phase-3-advanced-ship)."
       ],
       "priority": 12,
-      "passes": true,
-      "notes": "PLAN.md \u00a71 Quick Launch / command palette. After this PRD, the next is a Phase 2 write-ops PRD (new branchName ralph/phase-2-write-ops)."
+      "passes": false,
+      "notes": "PLAN.md §1 drag-&-drop merge/rebase. Reuses PH2-010 merge + this story's plain rebase. Interactive rebase + 3-pane resolver + signing + worktrees/reflog/bisect are all Phase 3."
     }
   ]
 }
