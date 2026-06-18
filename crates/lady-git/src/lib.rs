@@ -5,11 +5,13 @@
 //! gix-backed implementation arrives in US-006.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Mutex;
 
 use lady_proto::{
-    Blame, BlameLine, CommitMeta, FileDiff, FileDiffKind, Oid, RefInfo, RefKind, RepoId, Signature,
+    Blame, BlameLine, ChangeKind, CommitMeta, FileDiff, FileDiffKind, FileStatus, Oid, RefInfo,
+    RefKind, RepoId, Signature, WorkingTree,
 };
 
 /// Errors surfaced by a [`GitEngine`].
@@ -32,6 +34,11 @@ pub enum Error {
     /// A backend operation failed while reading refs or history.
     #[error("git backend error: {0}")]
     Backend(Box<dyn std::error::Error + Send + Sync>),
+
+    /// A shell-out git operation failed (non-zero exit, or no worktree). The
+    /// payload is git's stderr verbatim where available (ADR-0003 mutation tier).
+    #[error("{0}")]
+    Git(String),
 }
 
 /// Result alias for engine operations.
@@ -81,6 +88,10 @@ pub trait GitEngine: Send + Sync {
     /// List every tracked file path at `HEAD` (sorted). Powers the command
     /// palette's file search.
     fn list_files(&self, repo: &RepoId) -> Result<Vec<String>>;
+
+    /// Snapshot the working tree (staged / unstaged / untracked) via shell-out
+    /// `git status --porcelain=v2 -z` for exact git semantics (ADR-0003).
+    fn status(&self, repo: &RepoId) -> Result<WorkingTree>;
 }
 
 /// A [`GitEngine`] backed by [`gix`] for read-only access (ADR-0003).
@@ -121,6 +132,37 @@ impl GixEngine {
             .ok_or_else(|| Error::UnknownRepo(id.clone()))?;
         Ok(shared.to_thread_local())
     }
+
+    /// The worktree directory for `id`, needed by every shell-out git mutation.
+    /// Errors for a bare repository (no worktree).
+    pub(crate) fn workdir(&self, id: &RepoId) -> Result<PathBuf> {
+        let repo = self.repo(id)?;
+        repo.workdir()
+            .map(|p| p.to_path_buf())
+            .ok_or_else(|| Error::Git("repository has no worktree (bare)".to_string()))
+    }
+}
+
+/// Run system `git` in `workdir` with `args`, returning its captured output.
+///
+/// On a non-zero exit, returns [`Error::Git`] carrying git's stderr verbatim
+/// (ADR-0003 shell-out mutation tier; surface git's own messages faithfully).
+pub(crate) fn run_git(workdir: &Path, args: &[&str]) -> Result<std::process::Output> {
+    let out = Command::new("git")
+        .current_dir(workdir)
+        .args(args)
+        .output()
+        .map_err(|e| Error::Git(format!("failed to run git: {e}")))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let msg = stderr.trim();
+        return Err(Error::Git(if msg.is_empty() {
+            format!("git {args:?} failed ({})", out.status)
+        } else {
+            msg.to_string()
+        }));
+    }
+    Ok(out)
 }
 
 impl Default for GixEngine {
@@ -430,6 +472,118 @@ impl GitEngine for GixEngine {
         let mut paths: Vec<String> = blobs.into_keys().collect();
         paths.sort();
         Ok(paths)
+    }
+
+    fn status(&self, repo: &RepoId) -> Result<WorkingTree> {
+        let wd = self.workdir(repo)?;
+        let out = run_git(
+            &wd,
+            &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        )?;
+        Ok(parse_status_v2(&out.stdout))
+    }
+}
+
+// ── Status parsing ────────────────────────────────────────────────────────────
+
+/// Map a porcelain-v2 status code char to a [`ChangeKind`]. `.` (unmodified)
+/// returns `None`.
+fn change_kind(code: char) -> Option<ChangeKind> {
+    match code {
+        'M' | 'T' => Some(ChangeKind::Modified),
+        'A' => Some(ChangeKind::Added),
+        'D' => Some(ChangeKind::Deleted),
+        'R' | 'C' => Some(ChangeKind::Renamed),
+        'U' => Some(ChangeKind::Conflicted),
+        _ => None,
+    }
+}
+
+/// Parse `git status --porcelain=v2 -z` output into a [`WorkingTree`].
+///
+/// Records are NUL-separated. A rename entry (`2 …`) is followed by a second
+/// NUL-delimited token holding the original path, so it consumes two tokens.
+fn parse_status_v2(bytes: &[u8]) -> WorkingTree {
+    let mut staged: Vec<FileStatus> = Vec::new();
+    let mut unstaged: Vec<FileStatus> = Vec::new();
+    let mut untracked: Vec<String> = Vec::new();
+
+    let tokens: Vec<&[u8]> = bytes.split(|b| *b == 0).collect();
+    let mut i = 0;
+    while i < tokens.len() {
+        let tok = tokens[i];
+        if tok.is_empty() {
+            i += 1;
+            continue;
+        }
+        let line = String::from_utf8_lossy(tok).into_owned();
+        let bytes0 = line.as_bytes();
+        match bytes0[0] {
+            // Header line (`# branch.oid …`): ignored.
+            b'#' => {}
+            // Ordinary or rename/copy changed entry. Format:
+            //   1 <XY> … <path>           |   2 <XY> … <Xscore> <path>\0<origPath>
+            b'1' | b'2' => {
+                let x = bytes0[2] as char;
+                let y = bytes0[3] as char;
+                let is_rename = bytes0[0] == b'2';
+                // Path is the final space-delimited field (no quoting under -z).
+                let nfields = if is_rename { 10 } else { 9 };
+                let path = line.splitn(nfields, ' ').last().unwrap_or("").to_string();
+                // For a rename, the original path is the next NUL-delimited token.
+                let orig = if is_rename {
+                    i += 1;
+                    tokens
+                        .get(i)
+                        .map(|t| String::from_utf8_lossy(t).into_owned())
+                } else {
+                    None
+                };
+                if let Some(kind) = change_kind(x) {
+                    staged.push(FileStatus {
+                        path: path.clone(),
+                        old_path: if x == 'R' || x == 'C' {
+                            orig.clone()
+                        } else {
+                            None
+                        },
+                        kind,
+                    });
+                }
+                if let Some(kind) = change_kind(y) {
+                    unstaged.push(FileStatus {
+                        path,
+                        old_path: if y == 'R' || y == 'C' { orig } else { None },
+                        kind,
+                    });
+                }
+            }
+            // Unmerged (conflict) entry: `u <xy> … <path>`.
+            b'u' => {
+                let path = line.splitn(11, ' ').last().unwrap_or("").to_string();
+                unstaged.push(FileStatus {
+                    path,
+                    old_path: None,
+                    kind: ChangeKind::Conflicted,
+                });
+            }
+            // Untracked: `? <path>`.
+            b'?' if line.len() > 2 => {
+                untracked.push(line[2..].to_string());
+            }
+            // Ignored (`! …`) or anything unexpected: skip.
+            _ => {}
+        }
+        i += 1;
+    }
+
+    staged.sort_by(|a, b| a.path.cmp(&b.path));
+    unstaged.sort_by(|a, b| a.path.cmp(&b.path));
+    untracked.sort();
+    WorkingTree {
+        staged,
+        unstaged,
+        untracked,
     }
 }
 
@@ -874,5 +1028,85 @@ mod tests {
         let files = engine.list_files(&id).expect("list_files");
 
         assert_eq!(files, vec!["src/main.rs".to_owned(), "z.txt".to_owned()]);
+    }
+
+    #[test]
+    fn status_buckets_staged_unstaged_and_untracked() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let p = dir.path();
+        git(p, &["init", "-q", "-b", "main"]);
+        git(p, &["config", "user.name", "Lady Test"]);
+        git(p, &["config", "user.email", "test@example.com"]);
+        git(p, &["config", "commit.gpgsign", "false"]);
+
+        // Baseline commit with one tracked file.
+        std::fs::write(p.join("tracked.txt"), "base\n").expect("write");
+        git(p, &["add", "."]);
+        git(p, &["commit", "-q", "-m", "base"]);
+
+        // Staged: a brand-new file, added to the index.
+        std::fs::write(p.join("staged.txt"), "new\n").expect("write");
+        git(p, &["add", "staged.txt"]);
+        // Unstaged: modify the tracked file on disk without staging it.
+        std::fs::write(p.join("tracked.txt"), "modified\n").expect("write");
+        // Untracked: a file git has never seen.
+        std::fs::write(p.join("untracked.txt"), "scratch\n").expect("write");
+
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open the fixture repo");
+        let wt = engine.status(&id).expect("status on a dirty tree");
+
+        assert_eq!(wt.staged.len(), 1, "one staged change: {:?}", wt.staged);
+        assert_eq!(wt.staged[0].path, "staged.txt");
+        assert_eq!(wt.staged[0].kind, ChangeKind::Added);
+
+        assert_eq!(
+            wt.unstaged.len(),
+            1,
+            "one unstaged change: {:?}",
+            wt.unstaged
+        );
+        assert_eq!(wt.unstaged[0].path, "tracked.txt");
+        assert_eq!(wt.unstaged[0].kind, ChangeKind::Modified);
+
+        assert_eq!(wt.untracked, vec!["untracked.txt".to_owned()]);
+    }
+
+    #[test]
+    fn status_clean_tree_is_empty() {
+        let dir = fixture_repo();
+        let engine = GixEngine::new();
+        let id = engine.open(dir.path()).expect("open the fixture repo");
+        let wt = engine.status(&id).expect("status on a clean tree");
+        assert!(wt.staged.is_empty() && wt.unstaged.is_empty() && wt.untracked.is_empty());
+    }
+
+    #[test]
+    fn status_detects_a_staged_rename() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let p = dir.path();
+        git(p, &["init", "-q", "-b", "main"]);
+        git(p, &["config", "user.name", "Lady Test"]);
+        git(p, &["config", "user.email", "test@example.com"]);
+        git(p, &["config", "commit.gpgsign", "false"]);
+
+        std::fs::write(p.join("old.txt"), "some content here\n").expect("write");
+        git(p, &["add", "."]);
+        git(p, &["commit", "-q", "-m", "base"]);
+
+        // Rename via git so the move is staged as a rename.
+        git(p, &["mv", "old.txt", "new.txt"]);
+
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open the fixture repo");
+        let wt = engine.status(&id).expect("status after rename");
+
+        let renamed = wt
+            .staged
+            .iter()
+            .find(|f| f.kind == ChangeKind::Renamed)
+            .expect("a staged rename entry");
+        assert_eq!(renamed.path, "new.txt");
+        assert_eq!(renamed.old_path.as_deref(), Some("old.txt"));
     }
 }

@@ -6,6 +6,7 @@ import GraphView from "./GraphView";
 import DiffView from "./DiffView";
 import BlameView from "./BlameView";
 import FileHistory from "./FileHistory";
+import ChangesView from "./ChangesView";
 import RepoBar from "./RepoBar";
 import CommandPalette from "./CommandPalette";
 import type { PaletteEntry } from "./CommandPalette";
@@ -35,18 +36,28 @@ const RefGroup: Component<RefGroupProps> = (props) => (
   </Show>
 );
 
-type Tab = "commits" | "refs" | "blame" | "history";
+type Tab = "changes" | "commits" | "refs" | "blame" | "history";
 
 const App: Component = () => {
   const [info, setInfo] = createSignal<AppInfo | null>(null);
   const [active, setActive] = createSignal<OpenRepo | null>(null);
   const [refs, setRefs] = createSignal<RefInfo[]>([]);
-  const [tab, setTab] = createSignal<Tab>("commits");
+  const [tab, setTab] = createSignal<Tab>("changes");
   const [selectedCommit, setSelectedCommit] = createSignal<string | null>(null);
   const [files, setFiles] = createSignal<string[]>([]);
   const [navFile, setNavFile] = createSignal<string | undefined>(undefined);
   const [paletteOpen, setPaletteOpen] = createSignal(false);
   const [err, setErr] = createSignal<string | null>(null);
+  // Bumped after any mutation so status/refs/graph views reload (PLAN §3.2).
+  const [refreshNonce, setRefreshNonce] = createSignal(0);
+  const refresh = () => {
+    setRefreshNonce((n) => n + 1);
+    const repo = active();
+    if (!repo) return;
+    invoke<RefInfo[]>("list_refs", { repo: repo.id })
+      .then(setRefs)
+      .catch((e) => setErr(String(e)));
+  };
 
   onMount(async () => {
     const data = await invoke<AppInfo>("app_info");
@@ -73,6 +84,7 @@ const App: Component = () => {
   // Palette entries: tab actions + branches (→ Refs) + files (→ Blame).
   const paletteEntries = (): PaletteEntry[] => {
     const actions: PaletteEntry[] = [
+      { kind: "action", label: "Go to Changes", run: () => setTab("changes") },
       { kind: "action", label: "Go to Commits", run: () => setTab("commits") },
       { kind: "action", label: "Go to Refs", run: () => setTab("refs") },
       { kind: "action", label: "Go to Blame", run: () => setTab("blame") },
@@ -132,6 +144,9 @@ const App: Component = () => {
       {/* View tabs for the active repo */}
       <Show when={active()}>
         <div style={{ display: "flex", gap: "0.25rem", padding: "0.5rem 1rem 0", "flex-shrink": 0 }}>
+          <button style={tabStyle("changes")} onClick={() => setTab("changes")}>
+            Changes
+          </button>
           <button style={tabStyle("commits")} onClick={() => setTab("commits")}>
             Commits
           </button>
@@ -150,6 +165,13 @@ const App: Component = () => {
       {/* Content */}
       <Show when={active()}>
         <div style={{ flex: "1", overflow: "hidden" }}>
+          <Show when={tab() === "changes"}>
+            <ChangesView
+              repoId={repoId()!}
+              refreshNonce={refreshNonce()}
+              onChanged={refresh}
+            />
+          </Show>
           <Show when={tab() === "commits"}>
             <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
               <div style={{ flex: "1", "min-width": "0", overflow: "hidden" }}>

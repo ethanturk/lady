@@ -15,7 +15,7 @@
         "Unit test: tempdir repo with one staged, one unstaged-modified, and one untracked file yields the right buckets; cargo fmt/clippy -D warnings/test green; cargo deny passes; npm run build green; manual window note in progress.txt"
       ],
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §4.1 status -> WorkingTree; §6.9 status refresh < ~100ms warm. Read via shell-out porcelain for exactness; gix status acceptable if it matches the test, but porcelain=v2 -z is the spec. Foundation for all staging stories."
     },
     {

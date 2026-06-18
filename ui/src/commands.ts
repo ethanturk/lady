@@ -109,6 +109,31 @@ export interface Blame {
   lines: BlameLine[];
 }
 
+// ── Working-tree status types ───────────────────────────────────────────────────
+
+/** Mirrors lady_proto::ChangeKind. */
+export type ChangeKind =
+  | "Added"
+  | "Modified"
+  | "Deleted"
+  | "Renamed"
+  | "Untracked"
+  | "Conflicted";
+
+/** Mirrors lady_proto::FileStatus. */
+export interface FileStatus {
+  path: string;
+  old_path: string | null;
+  kind: ChangeKind;
+}
+
+/** Mirrors lady_proto::WorkingTree. */
+export interface WorkingTree {
+  staged: FileStatus[];
+  unstaged: FileStatus[];
+  untracked: string[];
+}
+
 // ── Repository-manager types ───────────────────────────────────────────────────
 
 export interface RecentRepo {

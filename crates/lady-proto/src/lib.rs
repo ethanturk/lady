@@ -184,6 +184,50 @@ pub struct Blame {
     pub lines: Vec<BlameLine>,
 }
 
+// ── Working-tree status types ───────────────────────────────────────────────────
+
+/// How a path changed relative to its baseline (index or HEAD).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ChangeKind {
+    /// A new file.
+    Added,
+    /// Content changed.
+    Modified,
+    /// The file was removed.
+    Deleted,
+    /// The file was renamed (see [`FileStatus::old_path`]).
+    Renamed,
+    /// An untracked file (present on disk, unknown to git).
+    Untracked,
+    /// The file is in a merge conflict.
+    Conflicted,
+}
+
+/// One changed path in the working tree, in either the staged or unstaged set.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileStatus {
+    /// Relative path (forward slashes).
+    pub path: String,
+    /// Previous path for a rename (`None` otherwise).
+    pub old_path: Option<String>,
+    /// What kind of change this is.
+    pub kind: ChangeKind,
+}
+
+/// A snapshot of the working tree split into staged, unstaged, and untracked.
+///
+/// Mirrors `git status --porcelain=v2`: a single path can appear in both
+/// `staged` and `unstaged` (e.g. a staged change with further on-disk edits).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkingTree {
+    /// Changes staged in the index (X column of the status code).
+    pub staged: Vec<FileStatus>,
+    /// Tracked changes not yet staged (Y column of the status code).
+    pub unstaged: Vec<FileStatus>,
+    /// Untracked paths (forward slashes).
+    pub untracked: Vec<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -247,5 +291,32 @@ mod tests {
         let json = serde_json::to_string(&blame).expect("serialize Blame");
         let back: Blame = serde_json::from_str(&json).expect("deserialize Blame");
         assert_eq!(blame, back);
+    }
+
+    #[test]
+    fn working_tree_serde_round_trip() {
+        let wt = WorkingTree {
+            staged: vec![FileStatus {
+                path: "added.rs".to_owned(),
+                old_path: None,
+                kind: ChangeKind::Added,
+            }],
+            unstaged: vec![
+                FileStatus {
+                    path: "edited.rs".to_owned(),
+                    old_path: None,
+                    kind: ChangeKind::Modified,
+                },
+                FileStatus {
+                    path: "now.rs".to_owned(),
+                    old_path: Some("was.rs".to_owned()),
+                    kind: ChangeKind::Renamed,
+                },
+            ],
+            untracked: vec!["scratch.tmp".to_owned()],
+        };
+        let json = serde_json::to_string(&wt).expect("serialize WorkingTree");
+        let back: WorkingTree = serde_json::from_str(&json).expect("deserialize WorkingTree");
+        assert_eq!(wt, back);
     }
 }

@@ -1,6 +1,6 @@
 use lady_git::{GitEngine, GixEngine, GraphQuery};
 use lady_graph::layout_continuation;
-use lady_proto::{Blame, CommitMeta, FileDiff, Oid, RefInfo, RepoId};
+use lady_proto::{Blame, CommitMeta, FileDiff, Oid, RefInfo, RepoId, WorkingTree};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -176,6 +176,12 @@ fn list_files(repo: RepoId, engine: State<GixEngine>) -> Result<Vec<String>, Str
     engine.list_files(&repo).map_err(|e| e.to_string())
 }
 
+/// Working-tree status (staged / unstaged / untracked) for the Changes view.
+#[tauri::command]
+fn status(repo: RepoId, engine: State<GixEngine>) -> Result<WorkingTree, String> {
+    engine.status(&repo).map_err(|e| e.to_string())
+}
+
 /// Clone `url` into `dest` via system git (ADR-0003 shell-out tier), streaming
 /// git's progress lines to the frontend as `clone-progress` events, and open
 /// the result.
@@ -270,6 +276,7 @@ pub fn run() {
             file_history,
             repo_dirty,
             list_files,
+            status,
             clone_repo,
             load_settings,
             save_settings
