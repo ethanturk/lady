@@ -454,6 +454,25 @@ fn bisect_state(repo: RepoId, engine: State<GixEngine>) -> Result<lady_proto::Bi
     engine.bisect_state(&repo).map_err(|e| e.to_string())
 }
 
+/// Parse the typed placeholders out of a custom-command template (PH3-009).
+#[tauri::command]
+fn parse_placeholders(template: String) -> Vec<lady_proto::Placeholder> {
+    lady_git::custom::parse_placeholders(&template)
+}
+
+/// Run a custom command: substitute `values` into `template` to build a safe
+/// argv, then execute it against the repo. Returns stdout/stderr/exit code.
+#[tauri::command]
+fn run_custom_command(
+    repo: RepoId,
+    template: String,
+    values: std::collections::HashMap<String, String>,
+    engine: State<GixEngine>,
+) -> Result<lady_proto::CommandOutput, String> {
+    let argv = lady_git::custom::build_argv(&template, &values);
+    engine.run_custom(&repo, &argv).map_err(|e| e.to_string())
+}
+
 /// The most recent commit subjects (newest first), capped at `limit`.
 #[tauri::command]
 fn recent_messages(
@@ -876,11 +895,13 @@ pub struct RecentRepo {
     pub group: Option<String>,
 }
 
-/// Persisted user settings (recent repos + their groups).
+/// Persisted user settings (recent repos + their groups + custom commands).
 #[derive(Serialize, Deserialize, Default)]
 pub struct Settings {
     #[serde(default)]
     pub recent: Vec<RecentRepo>,
+    #[serde(default)]
+    pub custom_commands: Vec<lady_proto::CustomCommand>,
 }
 
 /// Path to `settings.toml` in the platform config dir (via `directories`).
@@ -980,6 +1001,8 @@ pub fn run() {
             bisect_mark,
             bisect_reset,
             bisect_state,
+            parse_placeholders,
+            run_custom_command,
             clone_repo,
             load_settings,
             save_settings

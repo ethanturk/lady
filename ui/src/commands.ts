@@ -249,8 +249,31 @@ export interface RecentRepo {
   group: string | null;
 }
 
+/** Mirrors lady_proto::PlaceholderKind. */
+export type PlaceholderKind = "Text" | "Branch" | "File";
+
+/** Mirrors lady_proto::Placeholder. */
+export interface Placeholder {
+  name: string;
+  kind: PlaceholderKind;
+}
+
+/** Mirrors lady_proto::CustomCommand. */
+export interface CustomCommand {
+  name: string;
+  template: string;
+}
+
+/** Mirrors lady_proto::CommandOutput. */
+export interface CommandOutput {
+  stdout: string;
+  stderr: string;
+  exit_code: number;
+}
+
 export interface Settings {
   recent: RecentRepo[];
+  custom_commands: CustomCommand[];
 }
 
 /** An opened repo backing one tab in the repository manager (UI-only). */

@@ -372,6 +372,47 @@ impl SignatureStatus {
     }
 }
 
+/// The input type of a custom-command placeholder.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PlaceholderKind {
+    /// Free-text input.
+    Text,
+    /// A branch chosen from the repo's branches.
+    Branch,
+    /// A file path chosen from the repo.
+    File,
+}
+
+/// A typed placeholder parsed from a custom-command template (`{name:kind}`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Placeholder {
+    /// The placeholder's name (the key the runner prompts for).
+    pub name: String,
+    /// What kind of input it expects.
+    pub kind: PlaceholderKind,
+}
+
+/// A user-defined custom command (PH3-009), persisted in settings. The template
+/// is an argv-style command with `{name:kind}` placeholders.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CustomCommand {
+    /// Display name.
+    pub name: String,
+    /// Command template with typed placeholders.
+    pub template: String,
+}
+
+/// Captured result of running a custom command.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandOutput {
+    /// Standard output.
+    pub stdout: String,
+    /// Standard error.
+    pub stderr: String,
+    /// Process exit code (`-1` when terminated by a signal).
+    pub exit_code: i32,
+}
+
 /// Snapshot of an in-progress `git bisect`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BisectState {

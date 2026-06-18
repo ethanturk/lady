@@ -15,6 +15,7 @@ import InteractiveRebase from "./InteractiveRebase";
 import WorktreesView from "./WorktreesView";
 import ReflogView from "./ReflogView";
 import BisectView from "./BisectView";
+import CustomCommandsView from "./CustomCommandsView";
 import SignatureBadge from "./SignatureBadge";
 import type { SignatureStatus } from "./commands";
 import CommandPalette from "./CommandPalette";
@@ -29,7 +30,8 @@ type Tab =
   | "conflicts"
   | "worktrees"
   | "reflog"
-  | "bisect";
+  | "bisect"
+  | "commands";
 
 const App: Component = () => {
   const [info, setInfo] = createSignal<AppInfo | null>(null);
@@ -268,6 +270,9 @@ const App: Component = () => {
           <button style={tabStyle("bisect")} onClick={() => setTab("bisect")}>
             Bisect
           </button>
+          <button style={tabStyle("commands")} onClick={() => setTab("commands")}>
+            Commands
+          </button>
           <Show when={conflictState() !== "None"}>
             <button
               style={{ ...tabStyle("conflicts"), background: tab() === "conflicts" ? "#d1242f" : "#ffe0e0", color: tab() === "conflicts" ? "#fff" : "#d1242f" }}
@@ -361,6 +366,9 @@ const App: Component = () => {
           </Show>
           <Show when={tab() === "bisect"}>
             <BisectView repoId={repoId()!} refreshNonce={refreshNonce()} onChanged={refresh} />
+          </Show>
+          <Show when={tab() === "commands"}>
+            <CustomCommandsView repoId={repoId()!} refs={refs()} files={files()} />
           </Show>
           <Show when={tab() === "conflicts"}>
             <ConflictResolver

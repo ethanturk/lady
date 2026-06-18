@@ -2,7 +2,7 @@ import { createSignal, For, onMount, Show } from "solid-js";
 import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { OpenRepo, RecentRepo, RepoId, Settings } from "./commands";
+import type { CustomCommand, OpenRepo, RecentRepo, RepoId, Settings } from "./commands";
 
 /** Last path segment, for a compact tab label. */
 function baseName(path: string): string {
@@ -18,6 +18,8 @@ const RepoBar: Component<{
 }> = (props) => {
   const [opened, setOpened] = createSignal<OpenRepo[]>([]);
   const [recent, setRecent] = createSignal<RecentRepo[]>([]);
+  // Preserved verbatim so saving recents never clobbers custom commands.
+  const [customCommands, setCustomCommands] = createSignal<CustomCommand[]>([]);
   const [path, setPath] = createSignal("");
   const [group, setGroup] = createSignal("");
   const [showClone, setShowClone] = createSignal(false);
@@ -32,6 +34,7 @@ const RepoBar: Component<{
     try {
       const s = await invoke<Settings>("load_settings");
       setRecent(s.recent);
+      setCustomCommands(s.custom_commands ?? []);
     } catch (e) {
       setErr(String(e));
     }
@@ -39,7 +42,9 @@ const RepoBar: Component<{
 
   const persistRecent = (next: RecentRepo[]) => {
     setRecent(next);
-    invoke("save_settings", { settings: { recent: next } }).catch((e) => setErr(String(e)));
+    invoke("save_settings", {
+      settings: { recent: next, custom_commands: customCommands() },
+    }).catch((e) => setErr(String(e)));
   };
 
   const rememberRecent = (p: string, g: string | null) => {

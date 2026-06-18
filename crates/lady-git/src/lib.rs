@@ -9,11 +9,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
 
+pub mod custom;
+
 use lady_proto::{
-    AheadBehind, ApplyOutcome, BisectState, Blame, BlameLine, ChangeKind, CommitMeta,
-    ConflictSides, ConflictState, FfMode, FileDiff, FileDiffKind, FileStatus, MergeOutcome, Oid,
-    ParsedConflict, RebaseOutcome, RebaseStep, RefInfo, RefKind, ReflogEntry, RepoId, Signature,
-    SignatureStatus, StashEntry, WorkingTree, Worktree,
+    AheadBehind, ApplyOutcome, BisectState, Blame, BlameLine, ChangeKind, CommandOutput,
+    CommitMeta, ConflictSides, ConflictState, FfMode, FileDiff, FileDiffKind, FileStatus,
+    MergeOutcome, Oid, ParsedConflict, RebaseOutcome, RebaseStep, RefInfo, RefKind, ReflogEntry,
+    RepoId, Signature, SignatureStatus, StashEntry, WorkingTree, Worktree,
 };
 
 /// Errors surfaced by a [`GitEngine`].
@@ -375,6 +377,11 @@ pub trait GitEngine: Send + Sync {
 
     /// The current bisect state (or an empty state when not bisecting).
     fn bisect_state(&self, repo: &RepoId) -> Result<BisectState>;
+
+    /// Run a custom command `argv` against the repo worktree, capturing its
+    /// stdout/stderr/exit-code (PH3-009). `argv` is an argument vector (no
+    /// shell), built by [`custom::build_argv`] for injection safety.
+    fn run_custom(&self, repo: &RepoId, argv: &[String]) -> Result<CommandOutput>;
 }
 
 /// A [`GitEngine`] backed by [`gix`] for read-only access (ADR-0003).
@@ -1742,6 +1749,24 @@ exit 0\n";
             current_oid: Some(head_oid(&wd)?),
             remaining_steps_estimate: 0,
             suspected: None,
+        })
+    }
+
+    fn run_custom(&self, repo: &RepoId, argv: &[String]) -> Result<CommandOutput> {
+        let wd = self.workdir(repo)?;
+        let (program, args) = argv
+            .split_first()
+            .ok_or_else(|| Error::Git("empty command".to_string()))?;
+        // Argument vector — never a shell string — so user input can't inject.
+        let out = Command::new(program)
+            .args(args)
+            .current_dir(&wd)
+            .output()
+            .map_err(|e| Error::Git(format!("failed to run '{program}': {e}")))?;
+        Ok(CommandOutput {
+            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+            exit_code: out.status.code().unwrap_or(-1),
         })
     }
 }
