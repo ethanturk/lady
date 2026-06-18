@@ -170,6 +170,12 @@ fn repo_dirty(repo: RepoId, engine: State<GixEngine>) -> Result<bool, String> {
     engine.is_dirty(&repo).map_err(|e| e.to_string())
 }
 
+/// All tracked file paths at HEAD (drives the command palette's file search).
+#[tauri::command]
+fn list_files(repo: RepoId, engine: State<GixEngine>) -> Result<Vec<String>, String> {
+    engine.list_files(&repo).map_err(|e| e.to_string())
+}
+
 /// Clone `url` into `dest` via system git (ADR-0003 shell-out tier), streaming
 /// git's progress lines to the frontend as `clone-progress` events, and open
 /// the result.
@@ -263,6 +269,7 @@ pub fn run() {
             blame,
             file_history,
             repo_dirty,
+            list_files,
             clone_repo,
             load_settings,
             save_settings

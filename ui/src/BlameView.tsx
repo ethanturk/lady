@@ -1,4 +1,4 @@
-import { createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, Show } from "solid-js";
 import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import type { Blame, RepoId } from "./commands";
@@ -10,7 +10,7 @@ function commitColor(oid: string): string {
   return `hsl(${h}, 45%, 88%)`;
 }
 
-const BlameView: Component<{ repoId: RepoId }> = (props) => {
+const BlameView: Component<{ repoId: RepoId; initialPath?: string }> = (props) => {
   const [file, setFile] = createSignal("");
   const [blame, setBlame] = createSignal<Blame | null>(null);
   const [loading, setLoading] = createSignal(false);
@@ -30,6 +30,15 @@ const BlameView: Component<{ repoId: RepoId }> = (props) => {
       setLoading(false);
     }
   };
+
+  // When the palette navigates here with a path, load it automatically.
+  createEffect(() => {
+    const p = props.initialPath;
+    if (p && p !== file()) {
+      setFile(p);
+      run();
+    }
+  });
 
   return (
     <div style={{ height: "100%", display: "flex", "flex-direction": "column" }}>

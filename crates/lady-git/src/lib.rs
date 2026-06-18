@@ -77,6 +77,10 @@ pub trait GitEngine: Send + Sync {
     /// Whether the repository's worktree has uncommitted changes (tracked
     /// modifications or untracked files). Powers the dirty-tab star indicator.
     fn is_dirty(&self, repo: &RepoId) -> Result<bool>;
+
+    /// List every tracked file path at `HEAD` (sorted). Powers the command
+    /// palette's file search.
+    fn list_files(&self, repo: &RepoId) -> Result<Vec<String>>;
 }
 
 /// A [`GitEngine`] backed by [`gix`] for read-only access (ADR-0003).
@@ -405,6 +409,27 @@ impl GitEngine for GixEngine {
     fn is_dirty(&self, repo: &RepoId) -> Result<bool> {
         let repo = self.repo(repo)?;
         repo.is_dirty().map_err(backend)
+    }
+
+    fn list_files(&self, repo: &RepoId) -> Result<Vec<String>> {
+        let repo = self.repo(repo)?;
+        let tree_id = repo
+            .head_id()
+            .map_err(backend)?
+            .object()
+            .map_err(backend)?
+            .try_into_commit()
+            .map_err(backend)?
+            .tree()
+            .map_err(backend)?
+            .id;
+
+        let mut blobs: HashMap<String, gix::ObjectId> = HashMap::new();
+        collect_tree_blobs(&repo, tree_id, String::new(), &mut blobs)?;
+
+        let mut paths: Vec<String> = blobs.into_keys().collect();
+        paths.sort();
+        Ok(paths)
     }
 }
 
@@ -827,5 +852,27 @@ mod tests {
             .expect("a tracked .txt file exists");
         std::fs::write(&tracked, "mutated\n").expect("write");
         assert!(engine.is_dirty(&id).expect("status on dirty tree"));
+    }
+
+    #[test]
+    fn list_files_returns_sorted_tracked_paths() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let p = dir.path();
+        git(p, &["init", "-q", "-b", "main"]);
+        git(p, &["config", "user.name", "Lady Test"]);
+        git(p, &["config", "user.email", "test@example.com"]);
+        git(p, &["config", "commit.gpgsign", "false"]);
+
+        std::fs::write(p.join("z.txt"), "z\n").expect("write");
+        std::fs::create_dir(p.join("src")).expect("mkdir");
+        std::fs::write(p.join("src/main.rs"), "fn main() {}\n").expect("write");
+        git(p, &["add", "."]);
+        git(p, &["commit", "-q", "-m", "files"]);
+
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open the fixture repo");
+        let files = engine.list_files(&id).expect("list_files");
+
+        assert_eq!(files, vec!["src/main.rs".to_owned(), "z.txt".to_owned()]);
     }
 }

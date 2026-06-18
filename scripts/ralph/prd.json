@@ -168,7 +168,7 @@
         "PHASE 1 EXIT: the window browses a repo's graph, diffs, blame, history, and repos as well as Fork's read views \u2014 note this in progress.txt"
       ],
       "priority": 12,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md \u00a71 Quick Launch / command palette. After this PRD, the next is a Phase 2 write-ops PRD (new branchName ralph/phase-2-write-ops)."
     }
   ]
