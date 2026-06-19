@@ -1,14 +1,9 @@
-import { createSignal, For, Show } from "solid-js";
+import { createSignal, Show } from "solid-js";
 import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import type { RepoId } from "./commands";
-import {
-  type CommitPlan,
-  type PlannedCommit,
-  cancelAi,
-  isConsentError,
-  runAiStream,
-} from "./ai";
+import { type CommitPlan, cancelAi, isConsentError, runAiStream } from "./ai";
+import CommitPlanReview from "./CommitPlanReview";
 
 /**
  * The AI workspace (PH5-007/008/010): Commit Composer (split working changes
@@ -56,13 +51,6 @@ const AiView: Component<{ repoId: RepoId; onChanged?: () => void }> = (props) =>
     } finally {
       setBusy(false);
     }
-  };
-
-  const editMessage = (i: number, msg: string) => {
-    const p = plan();
-    if (!p) return;
-    const commits = p.commits.map((c, idx) => (idx === i ? { ...c, message: msg } : c));
-    setPlan({ commits });
   };
 
   const applyPlan = async () => {
@@ -218,20 +206,7 @@ const AiView: Component<{ repoId: RepoId; onChanged?: () => void }> = (props) =>
           <p style={{ color: "var(--success)", "font-size": "0.82rem" }}>{applied()}</p>
         </Show>
         <Show when={plan()}>
-          <For each={plan()!.commits}>
-            {(c: PlannedCommit, i) => (
-              <div style={{ border: "1px solid var(--border)", "border-radius": "4px", padding: "0.5rem", "margin-bottom": "0.5rem" }}>
-                <input
-                  style={{ ...field, width: "100%", "box-sizing": "border-box", "margin-bottom": "0.3rem" }}
-                  value={c.message}
-                  onInput={(e) => editMessage(i(), e.currentTarget.value)}
-                />
-                <div style={{ "font-size": "0.74rem", color: "var(--fg-muted, var(--fg-muted))" }}>
-                  {c.hunk_ids.length} hunk(s): {c.hunk_ids.join(", ")}
-                </div>
-              </div>
-            )}
-          </For>
+          <CommitPlanReview plan={plan()!} onChange={setPlan} disabled={busy()} />
           <div style={{ display: "flex", gap: "0.4rem" }}>
             <button
               style={{ ...field, cursor: "pointer", border: "1px solid var(--success)", color: "var(--success)" }}

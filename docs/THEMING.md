@@ -7,18 +7,42 @@ hard-codes a semantic color — so a theme change is a single attribute flip on
 
 ## Token set
 
-Declared per theme under `:root[data-theme="light"]` and
-`:root[data-theme="dark"]`:
+The palette follows the **Claude Design Fork-style UI** spec
+([design/README.md](../design/README.md)). Tokens are declared per theme under
+`:root[data-theme="light"]` and `:root[data-theme="dark"]`:
 
-- **Surfaces / structure:** `--bg`, `--surface`, `--surface-2`, `--border`
-- **Text:** `--fg`, `--fg-muted`, `--on-accent`, `--on-light`
-- **Accent:** `--accent`, `--accent-2`, `--selection`, `--focus-ring`
+- **Design surfaces:** `--bg` (Main), `--panel` (sidebar / detail pane /
+  composer), `--toolbar`, `--tabs`, `--tabact`, `--sub` (sub-headers / diff
+  header), `--input`, `--pill` (repo pill / menus), `--btn`, `--btnh`
+- **Design text:** `--tx` (primary), `--tx2`, `--tx3` (muted), `--tx4` (faint)
+- **Design borders / hover:** `--bd`, `--bds` (stronger), `--hov`
+- **Accent:** `--accent` (`oklch(0.65 0.15 255)`, themeable), `--accent-2`,
+  `--selection` (`color-mix(--accent 15%)`), `--focus-ring`, `--on-accent`
+  (white, on dark status fills), `--on-accent-strong` (`#0c0d10`, on accent fills)
 - **Status (AA-contrast on their surface):** `--success` / `--success-bg` /
   `--success-border`, `--warning` / `--warning-bg` / `--warning-border`,
   `--danger` / `--danger-bg` / `--danger-border` / `--danger-strong`,
   `--error`, `--info`
 - **Code / diff:** `--code-bg`, `--code-fg`, `--diff-add-bg`, `--diff-del-bg`,
-  `--diff-sel-bg`, and the `--hl-*` highlight.js token palette
+  `--diff-sel-bg`, `--difftx`, `--diffgut`, `--lineno`, `--diff-add-tx`,
+  `--diff-del-tx`, `--hunk-tx`, and the `--hl-*` highlight.js token palette
+- **Fixed (non-themed) under bare `:root`:** status badges `--badge-m/-a/-d/-r`
+  + `--on-badge`, graph `--lane-main` / `--lane-branch`, diff signs
+  `--diff-add-sign` / `--diff-del-sign`, `--hunk-bg`, and the magenta branch
+  chip `--chip-branch-tx/-bg/-bd`
+
+### Legacy aliases
+
+The pre-redesign token names are kept as **aliases onto the design palette**, so
+the older views recolor automatically without rewriting their inline styles:
+
+```css
+--surface:   var(--panel);   --surface-2: var(--sub);
+--border:    var(--bd);      --fg:        var(--tx);   --fg-muted: var(--tx3);
+```
+
+New shell/view components (`Toolbar`, `Sidebar`, `AllCommitsView`, `DiffView`,
+`ChangesView`, …) consume the design token names directly.
 
 ## System / Dark / Light
 
@@ -44,16 +68,22 @@ and persists in `localStorage`.
 
 ## Audit (PH6-004)
 
-The Phase 1–5 views were audited for hard-coded colors: all semantic colors
-(success/warning/danger/info/accent) were moved to tokens. The only remaining
-literal colors are the commit-graph **lane palette** in `GraphView.tsx` — an
-intentional categorical canvas palette of mid-tone hues that read on both light
-and dark surfaces (the commit-dot ring uses the resolved `--bg` to adapt). Run
-this to confirm no semantic literals have crept back in:
+Semantic colors (success/warning/danger/info/accent/surfaces/text) are all
+token-driven. The intentional literal colors that remain are:
+
+- the commit-graph **lane palette** (`LANE_COLORS`) and the dark node-initial
+  fill (`#0c0d10`) in `GraphView.tsx` — a categorical canvas palette drawn on
+  `<canvas>`, which can't reference CSS vars;
+- the **author avatar** colors (`avatar.ts`), computed `hsl()` from the author
+  name so the same author reads the same on both themes;
+- the **diff gutter tints** (`ADD_GUT` / `DEL_GUT`) in `DiffView.tsx`, which are
+  the design's fixed add/remove gutter rgba values.
+
+Run this to confirm no *semantic* literals have crept into the views:
 
 ```sh
 grep -rEn "#[0-9a-fA-F]{3,6}\b" ui/src/*.tsx | grep -v "var(--"
-# → only GraphView lane palette + canvas dot
+# → only the GraphView canvas palette, avatar hsl(), and DiffView gutter tints
 ```
 
 ## Reduced motion

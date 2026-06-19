@@ -262,6 +262,38 @@ pub enum FfMode {
     Never,
 }
 
+/// Settings that can be set globally and overridden per repository. Every field
+/// is optional: `None` means "inherit". The effective value of a field is
+/// `repo override ?? global default ?? built-in` (resolved server-side).
+///
+/// Git identity (`user.name` / `user.email`) is deliberately NOT here — it lives
+/// in the repo's `.git/config`, read/written via [`GitIdentity`].
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoSettings {
+    /// Sign commits (`-S`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sign: Option<bool>,
+    /// Merge fast-forward policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ff: Option<FfMode>,
+    /// Default base branch for compare / PR flows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_branch: Option<String>,
+    /// Default AI model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_model: Option<String>,
+}
+
+/// A repository's git identity (`user.name` / `user.email`), read from local
+/// (`.git/config`) — `None` when unset there.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitIdentity {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+}
+
 /// Result of a merge attempt.
 ///
 /// Conflict *resolution* (a 3-pane editor) is Phase 3; here a conflicted merge

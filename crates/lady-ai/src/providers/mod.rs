@@ -8,7 +8,6 @@ pub mod anthropic;
 pub mod azure;
 pub mod gemini;
 pub mod mistral;
-pub mod ollama;
 pub mod openai;
 
 /// A `reqwest` client with Lady's user-agent.
@@ -100,18 +99,6 @@ where
     F: FnMut(&serde_json::Value) -> Option<String> + Send,
 {
     stream_body(resp, sink, true, &mut extract).await
-}
-
-/// Stream a newline-delimited-JSON body (Ollama), extracting a delta per line.
-pub(crate) async fn stream_ndjson<F>(
-    resp: reqwest::Response,
-    sink: &mut StreamSink<'_>,
-    mut extract: F,
-) -> Result<AiResponse>
-where
-    F: FnMut(&serde_json::Value) -> Option<String> + Send,
-{
-    stream_body(resp, sink, false, &mut extract).await
 }
 
 async fn stream_body(

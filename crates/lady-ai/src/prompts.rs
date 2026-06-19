@@ -10,21 +10,27 @@ use crate::context::CommitStyle;
 pub enum ExplainTarget {
     /// A single commit.
     Commit,
+    /// A user-selected set of commits.
+    Commits,
     /// A branch / commit range.
     BranchRange,
     /// A stash entry.
     Stash,
     /// The current working changes.
     WorkingChanges,
+    /// A specific set of changes (a file's diff, or a single hunk).
+    Changes,
 }
 
 impl ExplainTarget {
     fn noun(self) -> &'static str {
         match self {
             ExplainTarget::Commit => "commit",
+            ExplainTarget::Commits => "set of commits",
             ExplainTarget::BranchRange => "range of commits",
             ExplainTarget::Stash => "stashed changes",
             ExplainTarget::WorkingChanges => "working-tree changes",
+            ExplainTarget::Changes => "code changes",
         }
     }
 }

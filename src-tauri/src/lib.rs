@@ -1,10 +1,11 @@
 use lady_git::{CommitOpts, DiffSpec, GitEngine, GixEngine, GraphQuery, MergeOpts};
 use lady_graph::layout_continuation;
 use lady_proto::{
-    ApplyOutcome, Blame, CommitMeta, FfMode, FileDiff, MergeOutcome, Oid, RebaseOutcome, RefInfo,
-    RepoId, WorkingTree,
+    ApplyOutcome, Blame, CommitMeta, FfMode, FileDiff, GitIdentity, MergeOutcome, Oid,
+    RebaseOutcome, RefInfo, RepoId, RepoSettings, WorkingTree,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use tauri::State;
 
 mod ai;
@@ -1039,6 +1040,13 @@ pub struct Settings {
     /// Absolute repo paths with AI explicitly enabled. Default off (ADR-0009).
     #[serde(default)]
     pub ai_repos: Vec<String>,
+    /// Global defaults for the overridable settings (sign / ff / base / ai model).
+    #[serde(default)]
+    pub defaults: RepoSettings,
+    /// Per-repo overrides keyed by workdir path (same key as `ai_repos`). A field
+    /// left `None` inherits from `defaults`, then the built-in fallback.
+    #[serde(default)]
+    pub repo_overrides: BTreeMap<String, RepoSettings>,
 }
 
 /// Path to `settings.toml` in the platform config dir (via `directories`).
@@ -1079,7 +1087,108 @@ fn save_settings(mut settings: Settings) -> Result<(), String> {
     settings.license = on_disk.license;
     settings.ai = on_disk.ai;
     settings.ai_repos = on_disk.ai_repos;
+    // Owned by the repo_settings / set_*_override / set_global_defaults commands.
+    settings.defaults = on_disk.defaults;
+    settings.repo_overrides = on_disk.repo_overrides;
     write_settings(&settings)
+}
+
+/// Resolve a repo's workdir path — the per-repo key used by `repo_overrides`
+/// (and `ai_repos`), so the override and the AI toggle always agree.
+fn repo_settings_key(repo: &RepoId, engine: &GixEngine) -> Result<String, String> {
+    Ok(engine
+        .workdir_path(repo)
+        .map_err(|e| e.to_string())?
+        .to_string_lossy()
+        .to_string())
+}
+
+/// One field's effective value: repo override, else global default, else `None`.
+fn pick<T: Clone>(over: &Option<T>, global: &Option<T>) -> Option<T> {
+    over.clone().or_else(|| global.clone())
+}
+
+/// `repo_settings` returns all three layers so the UI can prefill and show
+/// inherited-vs-overridden in one round-trip.
+#[derive(Serialize)]
+pub struct ResolvedRepoSettings {
+    /// Effective values (override ?? global), with built-in fallbacks left as the
+    /// field default at the call site (the UI applies sign=false / ff=Auto).
+    pub effective: RepoSettings,
+    /// This repo's raw override (fields the user set for this repo only).
+    pub r#override: RepoSettings,
+    /// The global defaults.
+    pub global: RepoSettings,
+}
+
+/// Read the effective + override + global settings for `repo`.
+#[tauri::command]
+fn repo_settings(repo: RepoId, engine: State<GixEngine>) -> Result<ResolvedRepoSettings, String> {
+    let key = repo_settings_key(&repo, &engine)?;
+    let s = load_settings_inner();
+    let over = s.repo_overrides.get(&key).cloned().unwrap_or_default();
+    let global = s.defaults.clone();
+    let effective = RepoSettings {
+        sign: pick(&over.sign, &global.sign),
+        ff: pick(&over.ff, &global.ff),
+        base_branch: pick(&over.base_branch, &global.base_branch),
+        ai_model: pick(&over.ai_model, &global.ai_model),
+    };
+    Ok(ResolvedRepoSettings {
+        effective,
+        r#override: over,
+        global,
+    })
+}
+
+/// Replace this repo's override block (a field set to `None` reverts to inherit).
+#[tauri::command]
+fn set_repo_override(
+    repo: RepoId,
+    settings: RepoSettings,
+    engine: State<GixEngine>,
+) -> Result<(), String> {
+    let key = repo_settings_key(&repo, &engine)?;
+    let mut s = load_settings_inner();
+    if settings == RepoSettings::default() {
+        s.repo_overrides.remove(&key);
+    } else {
+        s.repo_overrides.insert(key, settings);
+    }
+    write_settings(&s)
+}
+
+/// The global defaults block (no repo needed — drives Settings with no repo open).
+#[tauri::command]
+fn global_defaults() -> Result<RepoSettings, String> {
+    Ok(load_settings_inner().defaults)
+}
+
+/// Replace the global defaults block.
+#[tauri::command]
+fn set_global_defaults(settings: RepoSettings) -> Result<(), String> {
+    let mut s = load_settings_inner();
+    s.defaults = settings;
+    write_settings(&s)
+}
+
+/// Read the repo's local git identity (`.git/config`).
+#[tauri::command]
+fn repo_identity_get(repo: RepoId, engine: State<GixEngine>) -> Result<GitIdentity, String> {
+    engine.repo_identity_get(&repo).map_err(|e| e.to_string())
+}
+
+/// Write the repo's local git identity. Empty strings unset the keys.
+#[tauri::command]
+fn repo_identity_set(
+    repo: RepoId,
+    name: String,
+    email: String,
+    engine: State<GixEngine>,
+) -> Result<(), String> {
+    engine
+        .repo_identity_set(&repo, &name, &email)
+        .map_err(|e| e.to_string())
 }
 
 // ── Hosting (GitHub) — PH3-011 / PH3-012 ────────────────────────────────────────
@@ -1362,6 +1471,164 @@ fn open_url(url: String) -> Result<(), String> {
     cmd.spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
+/// Open a repo-relative `path` with the OS default application.
+#[tauri::command]
+fn open_path(repo: RepoId, path: String, engine: State<GixEngine>) -> Result<(), String> {
+    use std::process::Command;
+    let abs = engine
+        .resolve_path(&repo, &path)
+        .map_err(|e| e.to_string())?;
+    #[cfg(target_os = "macos")]
+    let mut cmd = {
+        let mut c = Command::new("open");
+        c.arg(&abs);
+        c
+    };
+    #[cfg(target_os = "windows")]
+    let mut cmd = {
+        let mut c = Command::new("cmd");
+        c.args(["/C", "start", ""]);
+        c.arg(&abs);
+        c
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut cmd = {
+        let mut c = Command::new("xdg-open");
+        c.arg(&abs);
+        c
+    };
+    cmd.spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// Reveal a repo-relative `path` in the OS file manager (selecting it).
+#[tauri::command]
+fn reveal_path(repo: RepoId, path: String, engine: State<GixEngine>) -> Result<(), String> {
+    use std::process::Command;
+    let abs = engine
+        .resolve_path(&repo, &path)
+        .map_err(|e| e.to_string())?;
+    #[cfg(target_os = "macos")]
+    let mut cmd = {
+        let mut c = Command::new("open");
+        c.arg("-R").arg(&abs);
+        c
+    };
+    #[cfg(target_os = "windows")]
+    let mut cmd = {
+        let mut c = Command::new("explorer");
+        // explorer treats a non-zero exit as success oddly; /select, highlights it.
+        c.arg(format!("/select,{}", abs.display()));
+        c
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut cmd = {
+        // No portable "select" on Linux; open the containing directory instead.
+        let dir = abs.parent().unwrap_or(&abs).to_path_buf();
+        let mut c = Command::new("xdg-open");
+        c.arg(dir);
+        c
+    };
+    cmd.spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// Rename branch `old` to `new` (`git branch -m`).
+#[tauri::command]
+fn rename_branch(
+    repo: RepoId,
+    old: String,
+    new: String,
+    engine: State<GixEngine>,
+) -> Result<(), String> {
+    engine
+        .rename_branch(&repo, &old, &new)
+        .map_err(|e| e.to_string())
+}
+
+/// The short upstream of `branch` (e.g. `origin/main`), or `None` when unset.
+#[tauri::command]
+fn branch_upstream(
+    repo: RepoId,
+    branch: String,
+    engine: State<GixEngine>,
+) -> Result<Option<String>, String> {
+    engine
+        .branch_upstream(&repo, &branch)
+        .map_err(|e| e.to_string())
+}
+
+/// Set (`Some`) or unset (`None`) the upstream tracking ref of `branch`.
+#[tauri::command]
+fn set_branch_upstream(
+    repo: RepoId,
+    branch: String,
+    upstream: Option<String>,
+    engine: State<GixEngine>,
+) -> Result<(), String> {
+    engine
+        .set_branch_upstream(&repo, &branch, upstream.as_deref())
+        .map_err(|e| e.to_string())
+}
+
+/// Fast-forward local `branch` to `upstream` without checking it out.
+#[tauri::command]
+fn fast_forward_branch(
+    repo: RepoId,
+    branch: String,
+    upstream: String,
+    engine: State<GixEngine>,
+) -> Result<(), String> {
+    engine
+        .fast_forward_branch(&repo, &branch, &upstream)
+        .map_err(|e| e.to_string())
+}
+
+/// Discard working-tree + index changes to tracked `paths` (`git checkout HEAD`).
+#[tauri::command]
+fn discard_files(repo: RepoId, paths: Vec<String>, engine: State<GixEngine>) -> Result<(), String> {
+    engine
+        .discard_files(&repo, &paths)
+        .map_err(|e| e.to_string())
+}
+
+/// Stash only `paths` (`git stash push [-u] [-m] -- …`).
+#[tauri::command]
+fn stash_paths(
+    repo: RepoId,
+    message: Option<String>,
+    include_untracked: bool,
+    paths: Vec<String>,
+    engine: State<GixEngine>,
+) -> Result<(), String> {
+    engine
+        .stash_paths(&repo, message.as_deref(), include_untracked, &paths)
+        .map_err(|e| e.to_string())
+}
+
+/// Write the uncommitted diff of `paths` to `dest` (`git diff HEAD -- …`).
+#[tauri::command]
+fn export_patch(
+    repo: RepoId,
+    paths: Vec<String>,
+    dest: String,
+    engine: State<GixEngine>,
+) -> Result<(), String> {
+    engine
+        .export_patch(&repo, &paths, &dest)
+        .map_err(|e| e.to_string())
+}
+
+/// Append `patterns` (one per line) to the repo-root `.gitignore`.
+#[tauri::command]
+fn add_to_gitignore(
+    repo: RepoId,
+    patterns: Vec<String>,
+    engine: State<GixEngine>,
+) -> Result<(), String> {
+    engine
+        .add_to_gitignore(&repo, &patterns)
+        .map_err(|e| e.to_string())
+}
+
 // ── Licensing gate — PH3-013 (ADR-0007: client-side speed bump, NOT DRM) ────────
 
 /// Current Unix time in seconds.
@@ -1425,6 +1692,7 @@ fn license_activate(key: String) -> Result<lady_license::LicenseStatus, String> 
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
         .manage(GixEngine::new())
         .manage(Hosting {
             store: Box::new(lady_hosting::KeyringStore::new("Lady-Hosting")),
@@ -1522,11 +1790,27 @@ pub fn run() {
             github_mark_read,
             github_create_pr,
             open_url,
+            open_path,
+            reveal_path,
+            rename_branch,
+            branch_upstream,
+            set_branch_upstream,
+            fast_forward_branch,
+            discard_files,
+            stash_paths,
+            export_patch,
+            add_to_gitignore,
             license_status,
             license_activate,
             clone_repo,
             load_settings,
             save_settings,
+            repo_settings,
+            set_repo_override,
+            global_defaults,
+            set_global_defaults,
+            repo_identity_get,
+            repo_identity_set,
             ai::ai_get_config,
             ai::ai_set_config,
             ai::ai_set_key,
@@ -1536,11 +1820,13 @@ pub fn run() {
             ai::ai_revoke_consent,
             ai::ai_set_repo_enabled,
             ai::ai_repo_enabled,
-            ai::ai_ollama_models,
+            ai::ai_list_models,
             ai::ai_cancel,
             ai::ai_commit_message,
             ai::ai_compose_commits,
             ai::ai_apply_commit_plan,
+            ai::ai_recompose_plan,
+            ai::ai_recompose_apply,
             ai::ai_explain,
             ai::ai_resolve_conflict,
             ai::ai_pr_title,
@@ -1583,6 +1869,149 @@ mod tests {
             git(p, &["commit", "-q", "-m", &format!("commit {i}")]);
         }
         dir
+    }
+
+    #[test]
+    fn settings_round_trip_preserves_defaults_and_overrides() {
+        let mut s = Settings::default();
+        s.defaults = RepoSettings {
+            sign: Some(true),
+            ff: Some(FfMode::Only),
+            base_branch: None,
+            ai_model: Some("claude-opus-4-8".to_string()),
+        };
+        s.repo_overrides.insert(
+            "/repo/a".to_string(),
+            RepoSettings {
+                ff: Some(FfMode::Never),
+                base_branch: Some("develop".to_string()),
+                ..Default::default()
+            },
+        );
+
+        let toml = toml::to_string_pretty(&s).expect("serialize settings");
+        let back: Settings = toml::from_str(&toml).expect("deserialize settings");
+
+        assert_eq!(back.defaults.sign, Some(true));
+        assert_eq!(back.defaults.ff, Some(FfMode::Only));
+        assert_eq!(back.defaults.ai_model.as_deref(), Some("claude-opus-4-8"));
+        let a = back
+            .repo_overrides
+            .get("/repo/a")
+            .expect("override for /repo/a");
+        assert_eq!(a.ff, Some(FfMode::Never));
+        assert_eq!(a.base_branch.as_deref(), Some("develop"));
+        assert_eq!(a.sign, None, "unset fields stay None (inherit)");
+    }
+
+    #[test]
+    fn settings_tolerates_missing_new_fields() {
+        // An old settings file with no defaults/overrides still loads.
+        let s: Settings = toml::from_str("recent = []\n").expect("deserialize legacy settings");
+        assert_eq!(s.defaults, RepoSettings::default());
+        assert!(s.repo_overrides.is_empty());
+    }
+
+    fn rev(dir: &Path, r: &str) -> String {
+        let out = std::process::Command::new("git")
+            .current_dir(dir)
+            .args(["rev-parse", r])
+            .output()
+            .expect("git rev-parse");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// Build a repo with a base commit then a messy span (one file per commit).
+    fn messy_repo() -> TempDir {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let p = dir.path();
+        git(p, &["init", "-q", "-b", "main"]);
+        git(p, &["config", "user.name", "T"]);
+        git(p, &["config", "user.email", "t@t.com"]);
+        git(p, &["config", "commit.gpgsign", "false"]);
+        std::fs::write(p.join("a.txt"), "base\n").expect("write");
+        git(p, &["add", "."]);
+        git(p, &["commit", "-q", "-m", "base"]);
+        for f in ["x", "y", "z"] {
+            std::fs::write(p.join(format!("{f}.txt")), format!("{f}\n")).expect("write");
+            git(p, &["add", "."]);
+            git(p, &["commit", "-q", "-m", &format!("wip {f}")]);
+        }
+        dir
+    }
+
+    #[test]
+    fn recompose_regroups_span_and_preserves_tree() {
+        use lady_ai::prompts::{CommitPlan, PlannedCommit};
+        let dir = messy_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open");
+
+        let base = rev(p, "HEAD~3"); // the "base" commit
+        let from = rev(p, "HEAD~2"); // first messy commit (wip x)
+
+        // Regroup x+y into one commit and z into another (3 commits → 2).
+        let plan = CommitPlan {
+            commits: vec![
+                PlannedCommit {
+                    message: "feat: x and y".to_string(),
+                    hunk_ids: vec!["x.txt:0".to_string(), "y.txt:0".to_string()],
+                },
+                PlannedCommit {
+                    message: "feat: z".to_string(),
+                    hunk_ids: vec!["z.txt:0".to_string()],
+                },
+            ],
+        };
+
+        let made = ai::recompose_apply_inner(&id, &from, &plan, &engine).expect("recompose");
+        assert_eq!(made, 2);
+
+        // The span is now 2 commits on top of base, with the same files/content.
+        let count = std::process::Command::new("git")
+            .current_dir(p)
+            .args(["rev-list", "--count", &format!("{base}..HEAD")])
+            .output()
+            .expect("rev-list");
+        assert_eq!(String::from_utf8_lossy(&count.stdout).trim(), "2");
+        for (f, c) in [
+            ("a.txt", "base\n"),
+            ("x.txt", "x\n"),
+            ("y.txt", "y\n"),
+            ("z.txt", "z\n"),
+        ] {
+            assert_eq!(std::fs::read_to_string(p.join(f)).expect("read"), c);
+        }
+        // Clean tree afterwards.
+        let wt = engine.status(&id).expect("status");
+        assert!(wt.staged.is_empty() && wt.unstaged.is_empty() && wt.untracked.is_empty());
+    }
+
+    #[test]
+    fn recompose_failure_rolls_back_to_original_head() {
+        use lady_ai::prompts::{CommitPlan, PlannedCommit};
+        let dir = messy_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open");
+        let orig = rev(p, "HEAD");
+        let from = rev(p, "HEAD~2");
+
+        // A plan referencing a non-existent path makes apply fail mid-flight.
+        let bad = CommitPlan {
+            commits: vec![PlannedCommit {
+                message: "broken".to_string(),
+                hunk_ids: vec!["nope.txt:0".to_string()],
+            }],
+        };
+        let err = ai::recompose_apply_inner(&id, &from, &bad, &engine).expect_err("should fail");
+        assert!(err.contains("rolled back"), "got: {err}");
+
+        // History is intact: HEAD back at the original tip, tree clean.
+        assert_eq!(rev(p, "HEAD"), orig);
+        let wt = engine.status(&id).expect("status");
+        assert!(wt.staged.is_empty() && wt.unstaged.is_empty() && wt.untracked.is_empty());
     }
 
     #[test]
