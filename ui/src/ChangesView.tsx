@@ -148,9 +148,21 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
     if (id) cancelAi(id).catch(() => {});
   };
 
+  const wtSignature = (wt: WorkingTree) =>
+    [...wt.staged, ...wt.unstaged, ...wt.untracked]
+      .map((f) => `${f.path}\0${f.kind}`)
+      .sort()
+      .join("\n");
+
   const reload = () => {
     setErr(null);
-    invoke<WorkingTree>("status", { repo: props.repoId }).then(setWt).catch((e) => setErr(String(e)));
+    invoke<WorkingTree>("status", { repo: props.repoId })
+      .then((newWt) => {
+        const prev = wt();
+        if (prev && wtSignature(prev) !== wtSignature(newWt)) setDiffNonce((n) => n + 1);
+        setWt(newWt);
+      })
+      .catch((e) => setErr(String(e)));
     invoke<string[]>("recent_messages", { repo: props.repoId, limit: 10 }).then(setRecent).catch(() => setRecent([]));
   };
 

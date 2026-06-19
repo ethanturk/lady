@@ -152,6 +152,25 @@ const App: Component = () => {
     updateConflictState(repo);
   };
 
+  // Poll local repo state so edits made outside Lady (editor, terminal) show up
+  // without clicking Fetch. Pauses while the window is hidden.
+  const REPO_POLL_MS = 2_000;
+  createEffect(() => {
+    if (!active()) return;
+    const tick = () => {
+      if (document.visibilityState !== "hidden") refresh();
+    };
+    const id = window.setInterval(tick, REPO_POLL_MS);
+    const onVis = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    onCleanup(() => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    });
+  });
+
   const describeApply = (action: string, outcome: ApplyOutcome) => {
     if (outcome.kind === "Applied") return `${action} applied as ${outcome.value.slice(0, 8)}.`;
     return `${action} stopped with ${outcome.value.length} conflict${outcome.value.length === 1 ? "" : "s"}.`;
