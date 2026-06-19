@@ -134,6 +134,361 @@ jobs:
             target/*/release/bundle/**
           if-no-files-found: ignore
 
+  # ── Android: signed universal APK → Firebase App Distribution ───────────────
+  # The native project is generated fresh each run (`tauri android init`) — it is
+  # not committed (src-tauri/gen is gitignored). Degrades gracefully: with no
+  # signing secrets it builds an UNSIGNED APK and skips distribution; with no
+  # Firebase secrets it builds the APK and uploads it only as a workflow
+  # artifact. Runs in parallel with the desktop legs.
+  #
+  # Required repository secrets (all four for signing; both for distribution):
+  #   ANDROID_KEYSTORE_BASE64    - base64 of the release keystore (.jks/.keystore)
+  #   ANDROID_KEYSTORE_PASSWORD  - keystore (store) password
+  #   ANDROID_KEY_ALIAS          - signing key alias
+  #   ANDROID_KEY_PASSWORD       - signing key password
+  #   FIREBASE_ANDROID_APP_ID    - Firebase Android app id (1:123:android:abcd)
+  #   FIREBASE_SERVICE_ACCOUNT   - Firebase service-account JSON (App Distribution Admin)
+  # Optional variable:
+  #   FIREBASE_TESTER_GROUPS     - comma-separated tester groups (default: testers)
+  android:
+    name: android (apk + firebase)
+    needs: gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      ANDROID_NDK_VERSION: 28.2.13676358
+    steps:
+      - uses: actions/checkout@v4
+
+      # tauri.conf.json holds the version literally; sync it to the tag so the
+      # APK's versionName/versionCode match the release (no-op on dry runs).
+      - name: Sync version from tag
+        if: github.ref_type == 'tag'
+        run: |
+          set -euo pipefail
+          V="${GITHUB_REF_NAME#v}"
+          tmp="$(mktemp)"
+          jq --arg v "$V" '.version = $v' src-tauri/tauri.conf.json > "$tmp"
+          mv "$tmp" src-tauri/tauri.conf.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages (platform, build-tools, NDK)
+        run: |
+          set -euo pipefail
+          sdkmanager "platform-tools" "platforms;android-34" \
+            "build-tools;34.0.0" "ndk;${ANDROID_NDK_VERSION}"
+          NDK_PATH="$ANDROID_HOME/ndk/${ANDROID_NDK_VERSION}"
+          echo "NDK_HOME=$NDK_PATH" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$NDK_PATH" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$NDK_PATH" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install tauri-cli + cargo-ndk
+        run: cargo install tauri-cli --version "^2" cargo-ndk --locked
+
+      - name: Install UI deps
+        run: npm ci
+        working-directory: ui
+
+      - name: Validate Android signing / distribution secrets
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          FIREBASE_ANDROID_APP_ID: ${{ secrets.FIREBASE_ANDROID_APP_ID }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          set -euo pipefail
+          count_present() {
+            present=0
+            for name in "$@"; do
+              [ -n "${!name:-}" ] && present=$((present + 1))
+            done
+            echo "$present"
+          }
+          signing="$(count_present ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD)"
+          firebase="$(count_present FIREBASE_ANDROID_APP_ID FIREBASE_SERVICE_ACCOUNT)"
+          if [ "$signing" -eq 4 ]; then
+            echo "ANDROID_SIGNING_CONFIGURED=true" >> "$GITHUB_ENV"
+          elif [ "$signing" -eq 0 ]; then
+            echo "ANDROID_SIGNING_CONFIGURED=false" >> "$GITHUB_ENV"
+            echo "::notice::Android signing secrets absent; building an unsigned APK and skipping distribution."
+          else
+            echo "::error::Android signing secrets partially set. Provide all of ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD."
+            exit 1
+          fi
+          if [ "$firebase" -eq 2 ]; then
+            echo "ANDROID_FIREBASE_CONFIGURED=true" >> "$GITHUB_ENV"
+          elif [ "$firebase" -eq 0 ]; then
+            echo "ANDROID_FIREBASE_CONFIGURED=false" >> "$GITHUB_ENV"
+            echo "::notice::Firebase secrets absent; APK uploaded only as a workflow artifact."
+          else
+            echo "::error::Firebase secrets partially set. Provide both FIREBASE_ANDROID_APP_ID and FIREBASE_SERVICE_ACCOUNT."
+            exit 1
+          fi
+
+      - name: Initialize Android project
+        run: cargo tauri android init
+
+      # Inject the release signing config into the freshly-generated Gradle
+      # project (Tauri's template ships only a debug-signed release build). This
+      # follows the official "Sign Android" guide; it errors loudly if the
+      # template shape changes so a silent unsigned release can't slip through.
+      - name: Configure release signing
+        if: env.ANDROID_SIGNING_CONFIGURED == 'true'
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          GEN="src-tauri/gen/android"
+          KEYSTORE="$GITHUB_WORKSPACE/$GEN/release.jks"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > "$KEYSTORE"
+          [ -s "$KEYSTORE" ] || { echo "::error::ANDROID_KEYSTORE_BASE64 decoded to an empty file."; exit 1; }
+          keytool -list -keystore "$KEYSTORE" -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" >/dev/null
+          # storeFile absolute so gradle's file() resolves from any module.
+          {
+            printf 'storeFile=%s\n' "$KEYSTORE"
+            printf 'storePassword=%s\n' "$ANDROID_KEYSTORE_PASSWORD"
+            printf 'keyAlias=%s\n' "$ANDROID_KEY_ALIAS"
+            printf 'keyPassword=%s\n' "$ANDROID_KEY_PASSWORD"
+          } > "$GEN/keystore.properties"
+          python3 - "$GEN/app/build.gradle.kts" <<'PY'
+          import re, sys
+          p = sys.argv[1]
+          s = open(p).read()
+          if "keystore.properties" in s:
+              sys.exit(0)  # already wired (newer template) — nothing to do
+          header = (
+              'import java.io.FileInputStream\n'
+              'import java.util.Properties\n\n'
+              'val keystorePropertiesFile = rootProject.file("keystore.properties")\n'
+              'val keystoreProperties = Properties()\n'
+              'if (keystorePropertiesFile.exists()) {\n'
+              '    keystoreProperties.load(FileInputStream(keystorePropertiesFile))\n'
+              '}\n\n'
+          )
+          s = header + s
+          signing = (
+              '    signingConfigs {\n'
+              '        create("release") {\n'
+              '            keyAlias = keystoreProperties["keyAlias"] as String\n'
+              '            keyPassword = keystoreProperties["keyPassword"] as String\n'
+              '            storeFile = file(keystoreProperties["storeFile"] as String)\n'
+              '            storePassword = keystoreProperties["storePassword"] as String\n'
+              '        }\n'
+              '    }\n'
+          )
+          m = re.search(r'\n(\s*)buildTypes\s*\{', s)
+          if not m:
+              sys.stderr.write("Gradle template changed: no buildTypes block found.\n")
+              sys.exit(1)
+          s = s[:m.start()] + '\n' + signing + s[m.start():]
+          s2 = re.sub(
+              r'(getByName\("release"\)\s*\{)',
+              r'\1\n            signingConfig = signingConfigs.getByName("release")',
+              s, count=1,
+          )
+          if s2 == s:
+              sys.stderr.write("Gradle template changed: no release buildType to attach signingConfig.\n")
+              sys.exit(1)
+          open(p, "w").write(s2)
+          PY
+
+      - name: Build APK
+        run: cargo tauri android build --apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lady-android-apk
+          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: warn
+
+      - name: Upload to Firebase App Distribution
+        if: >-
+          env.ANDROID_SIGNING_CONFIGURED == 'true'
+          && env.ANDROID_FIREBASE_CONFIGURED == 'true'
+          && (github.event_name == 'push' || github.event.inputs.dry_run == 'false')
+        uses: wzieba/Firebase-Distribution-Github-Action@v1
+        with:
+          appId: ${{ secrets.FIREBASE_ANDROID_APP_ID }}
+          serviceCredentialsFileContent: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          groups: ${{ vars.FIREBASE_TESTER_GROUPS || 'testers' }}
+          releaseNotes: "Lady ${{ github.ref_name }}"
+          file: src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
+
+  # ── iOS: signed IPA → TestFlight (App Store Connect) ────────────────────────
+  # The native project is generated fresh each run (`tauri ios init`); gen/apple
+  # is not committed. With no Apple secrets the job is a cross-compile sanity
+  # check (catches mobile breakage on every tag) and publishes nothing. With the
+  # secrets below it imports the signing cert + provisioning profile, builds a
+  # signed IPA artifact, and (on a real tag/non-dry-run) uploads it to TestFlight.
+  #
+  # Required repository secrets for a signed build + upload:
+  #   APPLE_CERTIFICATE              - base64 of the Apple Distribution .p12
+  #   APPLE_CERTIFICATE_PASSWORD     - the .p12 password
+  #   APPLE_TEAM_ID                  - 10-char Apple Developer Team ID
+  #   IOS_PROVISIONING_PROFILE_BASE64- base64 of the App Store .mobileprovision
+  #   ASC_KEY_ID / ASC_ISSUER_ID     - App Store Connect API key id + issuer
+  #   ASC_PRIVATE_KEY                - the App Store Connect API private key (.p8)
+  ios:
+    name: ios (ipa + testflight)
+    needs: gate
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync version from tag
+        if: github.ref_type == 'tag'
+        run: |
+          set -euo pipefail
+          V="${GITHUB_REF_NAME#v}"
+          tmp="$(mktemp)"
+          jq --arg v "$V" '.version = $v' src-tauri/tauri.conf.json > "$tmp"
+          mv "$tmp" src-tauri/tauri.conf.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Install UI deps
+        run: npm ci
+        working-directory: ui
+
+      - name: Validate Apple signing secrets
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          count_present() {
+            present=0
+            for name in "$@"; do
+              [ -n "${!name:-}" ] && present=$((present + 1))
+            done
+            echo "$present"
+          }
+          signing="$(count_present APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_TEAM_ID IOS_PROVISIONING_PROFILE_BASE64)"
+          if [ "$signing" -eq 4 ]; then
+            echo "IOS_SIGNING_CONFIGURED=true" >> "$GITHUB_ENV"
+          elif [ "$signing" -eq 0 ]; then
+            echo "IOS_SIGNING_CONFIGURED=false" >> "$GITHUB_ENV"
+            echo "::notice::Apple secrets absent; running an unsigned cross-compile check and publishing nothing."
+          else
+            echo "::error::Apple signing secrets partially set. Provide all of APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_TEAM_ID, IOS_PROVISIONING_PROFILE_BASE64."
+            exit 1
+          fi
+          # `secrets` can't be read in `if:`, so resolve the App Store Connect
+          # key presence to an env flag here for the TestFlight step to gate on.
+          asc="$(count_present ASC_KEY_ID ASC_ISSUER_ID ASC_PRIVATE_KEY)"
+          if [ "$asc" -eq 3 ]; then
+            echo "IOS_ASC_CONFIGURED=true" >> "$GITHUB_ENV"
+          else
+            echo "IOS_ASC_CONFIGURED=false" >> "$GITHUB_ENV"
+            [ "$asc" -eq 0 ] || echo "::warning::App Store Connect key partially set; TestFlight upload will be skipped. Provide all of ASC_KEY_ID, ASC_ISSUER_ID, ASC_PRIVATE_KEY."
+          fi
+
+      - name: Initialize iOS project
+        run: cargo tauri ios init
+
+      # No secrets → prove the iOS target still compiles (cheap regression gate).
+      - name: iOS cross-compile check (unsigned)
+        if: env.IOS_SIGNING_CONFIGURED != 'true'
+        run: cargo build --target aarch64-apple-ios -p lady-app
+
+      - name: Import signing certificate + provisioning profile
+        if: env.IOS_SIGNING_CONFIGURED == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/lady-signing.keychain-db"
+          KEYCHAIN_PW="$(openssl rand -base64 24)"
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          CERT="$RUNNER_TEMP/cert.p12"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 -d > "$CERT"
+          security import "$CERT" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PW" "$KEYCHAIN" >/dev/null
+          PROFILES="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$PROFILES"
+          printf '%s' "$IOS_PROVISIONING_PROFILE_BASE64" | base64 -d > "$PROFILES/lady.mobileprovision"
+
+      - name: Build signed IPA
+        if: env.IOS_SIGNING_CONFIGURED == 'true'
+        env:
+          TAURI_APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+        run: cargo tauri ios build --export-method app-store-connect
+
+      - name: Upload IPA artifact
+        if: env.IOS_SIGNING_CONFIGURED == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lady-ios-ipa
+          path: src-tauri/gen/apple/build/**/*.ipa
+          if-no-files-found: warn
+
+      # Upload to TestFlight on a real release. Needs an App Store Connect API
+      # key (id + issuer + .p8). Skipped on dry runs and when the key is absent.
+      - name: Upload to TestFlight
+        if: >-
+          env.IOS_SIGNING_CONFIGURED == 'true'
+          && env.IOS_ASC_CONFIGURED == 'true'
+          && (github.event_name == 'push' || github.event.inputs.dry_run == 'false')
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          KEYDIR="$HOME/.appstoreconnect/private_keys"
+          mkdir -p "$KEYDIR"
+          printf '%s' "$ASC_PRIVATE_KEY" > "$KEYDIR/AuthKey_${ASC_KEY_ID}.p8"
+          IPA="$(find src-tauri/gen/apple/build -name '*.ipa' | head -n1)"
+          [ -n "$IPA" ] || { echo "::error::No IPA produced to upload."; exit 1; }
+          xcrun altool --upload-app --type ios --file "$IPA" \
+            --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+
   # ── Linux Flatpak (best-effort, after the bundle leg) ───────────────────────
   flatpak:
     name: flatpak
