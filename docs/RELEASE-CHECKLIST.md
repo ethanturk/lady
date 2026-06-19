@@ -2,11 +2,12 @@
 
 This maps every item of the Core Parity surface (CONTEXT.md) to its implementing
 story across Phases 1–3 (the v1.0 line, Phase 3 EXIT, PLAN.md §0/§9), plus the
-Fast-follow set shipped in Phase 4 (v1.1.0). It is **not** the ship itself —
-packaging / notarization / auto-update are Phase 6.
+Fast-follow set shipped in Phase 4 (v1.1.0), the AI set (Phase 5, v1.2.0), and
+the **GA ship** (Phase 6, v1.3.0) — packaging, notarization, auto-update,
+accessibility, theming, perf, docs, and the release pipeline.
 
 Versions: Core Parity gate **1.0.0-rc**; Fast-follow gate **1.1.0**; AI gate
-**1.2.0** (current).
+**1.2.0**; **GA ship 1.3.0 (current)**.
 
 ## Core Parity surface → implementing story
 
@@ -95,10 +96,36 @@ optional stretch and does not block the Phase 5 exit (PLAN.md §9; PRD PH5-013).
 A literal `search_commits` (message grep) ships via the MCP server and the
 engine; embedding-based semantic ranking is a Fast-follow/Phase 6 candidate.
 
-## Not yet (later phases)
+## GA ship — Phase 6 (v1.3.0)
 
-- **Packaging / notarization / auto-update / a11y / perf** — Phase 6. These
-  gates are feature-completeness, not the actual ship.
+The cross-platform distribution + quality pass that turns the feature-complete
+app into a signed, auto-updating, accessible, perf-budgeted product.
+
+| GA item | Status | Implementing story | Reference |
+| --- | --- | --- | --- |
+| Performance benchmarks + budgets | ✅ | PH6-001 | [PERF.md](PERF.md) |
+| Large-repo performance passes | ✅ | PH6-002 | [PERF.md](PERF.md) |
+| Accessibility (keyboard, ARIA, AA contrast, reduced-motion) | ✅ | PH6-003 | [ACCESSIBILITY.md](ACCESSIBILITY.md), [KEYBOARD.md](KEYBOARD.md) |
+| Theming (token system, System/Dark/Light, custom accent) | ✅ | PH6-004 | [THEMING.md](THEMING.md) |
+| Packaging — macOS (.app/.dmg, notarized) | ✅ | PH6-005 | [PACKAGING.md](PACKAGING.md) |
+| Packaging — Windows (.msi/NSIS, Authenticode) | ✅ | PH6-006 | [PACKAGING.md](PACKAGING.md) |
+| Packaging — Linux (AppImage + Flatpak) | ✅ | PH6-007 | [PACKAGING.md](PACKAGING.md), [../flatpak](../flatpak) |
+| Auto-update (Tauri updater + signed manifests) | ✅ | PH6-008 | [PACKAGING.md](PACKAGING.md), `src-tauri/src/updater.rs` |
+| Documentation + release notes | ✅ | PH6-009 | [USER-GUIDE.md](USER-GUIDE.md), [AI-PRIVACY.md](AI-PRIVACY.md), [MCP.md](MCP.md), [../CHANGELOG.md](../CHANGELOG.md) |
+| Release CI pipeline | ✅ | PH6-010 | `.github/workflows/release.yml` |
+
+**GA ship line:** v1.3.0 — Core Parity + Fast-follow + AI, now signed,
+auto-updating, accessible (WCAG AA), and perf-budgeted across macOS / Windows /
+Linux. All signing/notarization/updater secrets are CI-only; only the updater
+public key is committed.
+
+### Post-GA (explicitly out of scope for the GA ship)
+
+- Semantic commit search (PH5-012, marked optional stretch).
+- Roving-tabindex arrow-key navigation within the view tablist.
+- Automated axe-core a11y sweep in CI.
+- High-fidelity production app-icon artwork (current icon is a valid placeholder).
+- Telemetry / crash reporting (opt-in, per PLAN.md §8) — not built.
 
 ## Green-build gate (run before tagging)
 
@@ -107,3 +134,5 @@ engine; embedding-based semantic ranking is a Fast-follow/Phase 6 candidate.
 - [x] `cargo test` (whole workspace)
 - [x] `cargo deny check`
 - [x] `npm run build` (UI)
+- [x] benches compile + run (`cargo bench --no-run` / `-- --quick`)
+- [x] release workflow produces signed artifacts on the matrix (PH6-010)

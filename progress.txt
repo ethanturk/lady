@@ -19,7 +19,7 @@ repo; only the updater PUBLIC key is committed.
 - [x] PH6-008 Auto-update (Tauri updater + signed manifests)
 - [x] PH6-009 Documentation + release notes
 - [x] PH6-010 Release CI pipeline
-- [ ] PH6-011 Phase 6 GA exit gate (v1.3.0 ship)
+- [x] PH6-011 Phase 6 GA exit gate (v1.3.0 ship)
 
 ## Notes (as stories land)
 - PH6-001/002: new dev-only `lady-fixtures` crate — seeded, offline synthetic
@@ -78,3 +78,13 @@ repo; only the updater PUBLIC key is committed.
   best-effort redaction/Ollama — ADR-0008/0009), MCP.md (lady-mcp 6 read-only
   tools + config), and CHANGELOG.md (v1.0→1.3.0). All intra-doc links resolve;
   no secrets in docs.
+- PH6-011 (GA exit gate): bumped version 1.2.0→1.3.0 across all 11 crate
+  Cargo.tomls + src-tauri/tauri.conf.json + ui/package.json (Cargo.lock
+  refreshed). docs/RELEASE-CHECKLIST.md gains the Phase 6 GA table (each item →
+  its story + doc), the GA ship line, the green-gate (incl. benches + release
+  workflow), and the explicit post-GA list (semantic search, roving tablist,
+  axe-core CI, production icon art, telemetry). Whole workspace green: fmt
+  --check / clippy --all-targets -D warnings / test (26 suites ok) / deny / npm
+  build. GA reached — Core Parity + Fast-follow + AI, signed, auto-updating,
+  accessible (WCAG AA), perf-budgeted, cross-platform. Phase 6 is the final
+  planned phase; remaining items are post-GA.
