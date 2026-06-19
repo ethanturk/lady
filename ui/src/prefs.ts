@@ -162,3 +162,64 @@ export function setAccent(v: Accent): void {
 
 export const THEME_LABEL: Record<ThemeMode, string> = { system: "System", dark: "Dark", light: "Light" };
 export const ACCENT_LABEL: Record<Accent, string> = { default: "Blue", teal: "Teal" };
+
+// ── Viewport tracking: adaptive layout (phone stacked ↔ tablet side-by-side) ──
+// Breakpoints: phone < 768 (narrow/stacked), tablet+ >= 768 (side-by-side),
+// "wide" >= 1100 reserved for future tuning. Structural layout switches read
+// these reactive signals; spacing/tap-target/safe-area tweaks live in styles.css
+// keyed on the data-viewport attribute and @media (pointer: coarse).
+const NARROW_MAX = 768;
+const WIDE_MIN = 1100;
+
+const [viewportWidth, setViewportWidth] = createSignal<number>(
+  typeof window !== "undefined" ? window.innerWidth : 1200,
+);
+export { viewportWidth };
+
+/** Phone profile: stacked, top-to-bottom flow. */
+export const isNarrow = () => viewportWidth() < NARROW_MAX;
+/** Extra-wide profile (reserved for future tuning). */
+export const isWide = () => viewportWidth() >= WIDE_MIN;
+
+// Coarse pointer (touch) is a fixed media query — sampled once, kept reactive in
+// case the OS reports a change (rare).
+const coarseMq =
+  typeof window !== "undefined" && window.matchMedia
+    ? window.matchMedia("(pointer: coarse)")
+    : null;
+const [coarse, setCoarse] = createSignal<boolean>(coarseMq?.matches ?? false);
+/** True on touch devices (used to drop drag handles, grow tap targets). */
+export const coarsePointer = () => coarse();
+if (coarseMq) coarseMq.addEventListener("change", (e) => setCoarse(e.matches));
+
+/** Hide pane resize handles when dragging is impractical (narrow or touch). */
+export const hideResizers = () => isNarrow() || coarsePointer();
+
+/** Reflect the viewport bucket onto <html> so styles.css can drive @media-free
+ *  attribute rules (safe-area, tap targets) consistently with the JS signals. */
+function applyViewport(w: number): void {
+  const bucket = w < NARROW_MAX ? "narrow" : w >= WIDE_MIN ? "wide" : "medium";
+  document.documentElement.setAttribute("data-viewport", bucket);
+}
+
+if (typeof window !== "undefined") {
+  applyViewport(window.innerWidth);
+  // Coalesce resize bursts into one update per animation frame.
+  let raf = 0;
+  window.addEventListener("resize", () => {
+    if (raf) return;
+    raf = requestAnimationFrame(() => {
+      raf = 0;
+      const w = window.innerWidth;
+      setViewportWidth(w);
+      applyViewport(w);
+    });
+  });
+
+  // First run with no stored padding AND a coarse pointer → default padding to
+  // "l" so the existing ps(...) density grows tap targets, reusing the
+  // user-overridable density system instead of hard CSS overrides.
+  if (localStorage.getItem(PAD_KEY) === null && (coarseMq?.matches ?? false)) {
+    setUiPadding("l");
+  }
+}

@@ -9,6 +9,9 @@ use std::collections::BTreeMap;
 use tauri::State;
 
 mod ai;
+// The updater plugin (and its commands) is desktop-only — it has no mobile
+// implementation, so the whole module is gated off on iOS/Android.
+#[cfg(desktop)]
 mod updater;
 
 #[derive(Serialize)]
@@ -782,6 +785,17 @@ fn ahead_behind(
     engine: State<GixEngine>,
 ) -> Result<Option<lady_proto::AheadBehind>, String> {
     engine.ahead_behind(&repo).map_err(|e| e.to_string())
+}
+
+/// Ahead/behind vs upstream for every local branch, keyed by branch name.
+#[tauri::command]
+fn branches_ahead_behind(
+    repo: RepoId,
+    engine: State<GixEngine>,
+) -> Result<std::collections::BTreeMap<String, lady_proto::AheadBehind>, String> {
+    engine
+        .branches_ahead_behind(&repo)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1755,9 +1769,13 @@ fn license_activate(key: String) -> Result<lady_license::LicenseStatus, String> 
     license_status()
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_updater::Builder::new().build())
+    let builder = tauri::Builder::default();
+    // The auto-updater is desktop-only; mobile builds omit it entirely.
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    builder
         .plugin(tauri_plugin_dialog::init())
         .manage(GixEngine::new())
         .manage(Hosting {
@@ -1797,6 +1815,7 @@ pub fn run() {
             pull,
             push,
             ahead_behind,
+            branches_ahead_behind,
             stash_save,
             stash_list,
             stash_apply,
@@ -1901,7 +1920,9 @@ pub fn run() {
             ai::ai_pr_description,
             ai::ai_changelog,
             ai::ai_stash_note,
+            #[cfg(desktop)]
             updater::check_for_updates,
+            #[cfg(desktop)]
             updater::install_update
         ])
         .run(tauri::generate_context!())
@@ -1941,12 +1962,14 @@ mod tests {
 
     #[test]
     fn settings_round_trip_preserves_defaults_and_overrides() {
-        let mut s = Settings::default();
-        s.defaults = RepoSettings {
-            sign: Some(true),
-            ff: Some(FfMode::Only),
-            base_branch: None,
-            ai_model: Some("claude-opus-4-8".to_string()),
+        let mut s = Settings {
+            defaults: RepoSettings {
+                sign: Some(true),
+                ff: Some(FfMode::Only),
+                base_branch: None,
+                ai_model: Some("claude-opus-4-8".to_string()),
+            },
+            ..Default::default()
         };
         s.repo_overrides.insert(
             "/repo/a".to_string(),

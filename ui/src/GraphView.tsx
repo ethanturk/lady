@@ -4,9 +4,15 @@ import { invoke } from "@tauri-apps/api/core";
 import type { CommitGraphRow, RepoId, StashEntry, WalkLogGraphResult, WalkLogQuery } from "./commands";
 import { relTime } from "./time";
 import { authorColor, initials } from "./avatar";
+import { uiPadding } from "./prefs";
+import type { SizeStep } from "./prefs";
 
 // ── Layout constants ──────────────────────────────────────────────────────────
-const ROW_H = 48;
+const BASE_ROW_H = 48;
+// Row height scales with the global padding step (mirrors --pad-scale), floored
+// so the node/avatar never collide.
+const PAD_SCALE: Record<SizeStep, number> = { s: 0.4125, m: 1, l: 1.315625, xl: 1.63125 };
+const rowHeight = () => Math.max(36, Math.round(BASE_ROW_H * PAD_SCALE[uiPadding()]));
 const LANE_W = 20; // horizontal pixels per lane column
 const COMMIT_R = 7; // commit circle radius in CSS pixels (design node)
 const BATCH = 500;
@@ -21,7 +27,7 @@ const laneColor = (lane: number) => LANE_COLORS[lane % LANE_COLORS.length];
 
 // ── Canvas draw ───────────────────────────────────────────────────────────────
 
-function drawGraph(canvas: HTMLCanvasElement, rows: CommitGraphRow[], scrollTop: number, viewportH: number) {
+function drawGraph(canvas: HTMLCanvasElement, rows: CommitGraphRow[], scrollTop: number, viewportH: number, rowH: number) {
   const dpr = window.devicePixelRatio || 1;
   const graphW = canvas.width / dpr;
   const ctx = canvas.getContext("2d");
@@ -33,25 +39,25 @@ function drawGraph(canvas: HTMLCanvasElement, rows: CommitGraphRow[], scrollTop:
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
-  const sr = Math.max(0, Math.floor(scrollTop / ROW_H) - 1);
-  const er = Math.min(rows.length - 1, Math.ceil((scrollTop + viewportH) / ROW_H) + 1);
+  const sr = Math.max(0, Math.floor(scrollTop / rowH) - 1);
+  const er = Math.min(rows.length - 1, Math.ceil((scrollTop + viewportH) / rowH) + 1);
 
   for (let i = sr; i <= er; i++) {
     const row = rows[i];
     if (!row) break;
-    const screenY = i * ROW_H - scrollTop;
-    const cy = screenY + ROW_H / 2;
+    const screenY = i * rowH - scrollTop;
+    const cy = screenY + rowH / 2;
 
     // Edges from this row to the next.
     for (const edge of row.edges) {
       const x1 = edge.from_lane * LANE_W + LANE_W / 2;
       const y1 = cy;
       const x2 = edge.to_lane * LANE_W + LANE_W / 2;
-      const y2 = screenY + ROW_H + ROW_H / 2;
+      const y2 = screenY + rowH + rowH / 2;
       ctx.beginPath();
       ctx.moveTo(x1, y1);
       if (Math.abs(x1 - x2) < 0.5) ctx.lineTo(x2, y2);
-      else ctx.bezierCurveTo(x1, y1 + ROW_H * 0.5, x2, y2 - ROW_H * 0.5, x2, y2);
+      else ctx.bezierCurveTo(x1, y1 + rowH * 0.5, x2, y2 - rowH * 0.5, x2, y2);
       ctx.strokeStyle = laneColor(edge.from_lane);
       ctx.lineWidth = 2;
       ctx.stroke();
@@ -148,12 +154,12 @@ const GraphView: Component<{
   let listContainer!: HTMLDivElement;
   let canvasEl!: HTMLCanvasElement;
 
-  const totalH = () => rows().length * ROW_H;
+  const totalH = () => rows().length * rowHeight();
   const maxLanes = createMemo(() => rows().reduce((m, r) => Math.max(m, r.num_lanes), 1));
   const graphW = () => Math.max(1, maxLanes()) * LANE_W + LANE_W;
 
-  const startRow = () => Math.max(0, Math.floor(scrollTop() / ROW_H) - BUFFER);
-  const endRow = () => Math.min(rows().length, Math.ceil((scrollTop() + viewportH()) / ROW_H) + BUFFER);
+  const startRow = () => Math.max(0, Math.floor(scrollTop() / rowHeight()) - BUFFER);
+  const endRow = () => Math.min(rows().length, Math.ceil((scrollTop() + viewportH()) / rowHeight()) + BUFFER);
   const visibleSlice = createMemo(() => rows().slice(startRow(), endRow()));
 
   const resizeCanvas = () => {
@@ -170,10 +176,11 @@ const GraphView: Component<{
     const st = scrollTop();
     const vh = viewportH();
     const allRows = rows();
+    const rh = rowHeight();
     graphW();
     if (!canvasEl) return;
     resizeCanvas();
-    drawGraph(canvasEl, allRows, st, vh);
+    drawGraph(canvasEl, allRows, st, vh, rh);
   });
 
   const loadMore = async () => {
@@ -217,10 +224,34 @@ const GraphView: Component<{
     if (st + viewportH() >= totalH() - LOAD_AHEAD_PX) loadMore();
   };
 
-  const colDesc = { flex: "1 1 0", "min-width": "210px", overflow: "hidden" } as const;
-  const colAuthor = { flex: "0 1 156px", "min-width": "90px" } as const;
-  const colCommit = { flex: "0 0 74px" } as const;
-  const colDate = { flex: "0 1 142px", "min-width": "80px", "text-align": "right" as const };
+  // Scroll the primary commit into view when it's set from outside the graph
+  // (e.g. clicking a sidebar branch). Re-runs as more history loads so a tip
+  // deep in the log is reached; never scrolls a row that's already visible, so
+  // ordinary in-graph clicks don't jump the viewport.
+  createEffect(() => {
+    const p = props.primary;
+    const all = rows();
+    if (!p || !listContainer) return;
+    const idx = all.findIndex((r) => r.oid === p);
+    if (idx === -1) {
+      // Not loaded yet — pull the next batch; this effect retries on update.
+      if (hasMore() && !loading()) void loadMore();
+      return;
+    }
+    const top = idx * rowHeight();
+    const vh = viewportH();
+    const cur = listContainer.scrollTop;
+    if (top < cur || top + rowHeight() > cur + vh) {
+      listContainer.scrollTop = Math.max(0, top - vh / 2 + rowHeight() / 2);
+    }
+  });
+
+  // Columns shrink (min-width 0) so a narrow window never clips the right side;
+  // Description keeps priority, the rest compress with ellipsis.
+  const colDesc = { flex: "1 1 0", "min-width": "90px", overflow: "hidden" } as const;
+  const colAuthor = { flex: "0 1 156px", "min-width": "0", overflow: "hidden" } as const;
+  const colCommit = { flex: "0 1 74px", "min-width": "0", overflow: "hidden" } as const;
+  const colDate = { flex: "0 1 142px", "min-width": "0", overflow: "hidden", "text-align": "right" as const };
 
   return (
     <div style={{ display: "flex", "flex-direction": "column", height: "100%", overflow: "hidden", background: "var(--bg)" }}>
@@ -268,7 +299,7 @@ const GraphView: Component<{
         {/* Commit list column: virtualized DOM rows. */}
         <div ref={listContainer} class="scroll-thin" style={{ flex: "1", "min-width": "0", "overflow-y": "auto" }} onScroll={onScroll}>
           <div style={{ height: `${totalH()}px`, position: "relative" }}>
-            <div style={{ position: "absolute", top: `${startRow() * ROW_H}px`, left: 0, right: 0 }}>
+            <div style={{ position: "absolute", top: `${startRow() * rowHeight()}px`, left: 0, right: 0 }}>
               <For each={visibleSlice()}>
                 {(row) => {
                   const isHead = () => row.refs.includes("HEAD");
@@ -285,7 +316,7 @@ const GraphView: Component<{
                       }
                       style={{
                         position: "relative",
-                        height: `${ROW_H}px`,
+                        height: `${rowHeight()}px`,
                         display: "flex",
                         "align-items": "center",
                         "padding-left": "8px",
@@ -339,7 +370,7 @@ const GraphView: Component<{
                         <span style={{ color: "var(--tx2)", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>{row.author_name}</span>
                       </span>
 
-                      <span style={{ ...colCommit, "font-family": "ui-monospace, monospace", "font-size": "12px", color: "var(--tx3)" }}>
+                      <span style={{ ...colCommit, "font-family": "ui-monospace, monospace", "font-size": "12px", color: "var(--tx3)", "text-overflow": "ellipsis", "white-space": "nowrap" }}>
                         {row.oid.slice(0, 7)}
                       </span>
                       <span style={{ ...colDate, "font-size": "12px", color: "var(--tx3)", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>

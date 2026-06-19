@@ -1,4 +1,4 @@
-import { createSignal, For, onMount, Show } from "solid-js";
+import { createEffect, createSignal, For, onMount, Show } from "solid-js";
 import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -51,6 +51,10 @@ const RepoBar: Component<{
     }
   };
 
+  // Open tabs + focused tab, persisted across restarts (localStorage).
+  const TABS_KEY = "lady-open-tabs";
+  const [restored, setRestored] = createSignal(false);
+
   onMount(async () => {
     // Expose openers: a known-path opener (worktrees) + the native picker (toolbar).
     props.apiRef?.({ open: (p: string) => openPath(p, null), pick: pickAndOpen });
@@ -62,6 +66,34 @@ const RepoBar: Component<{
     } catch (e) {
       setErr(String(e));
     }
+    // Reopen the tabs from last session and focus the previously-active one.
+    try {
+      const raw = localStorage.getItem(TABS_KEY);
+      if (raw) {
+        const data = JSON.parse(raw) as { tabs?: { path: string; group: string | null }[]; active?: string | null };
+        for (const t of data.tabs ?? []) {
+          await openPath(t.path, t.group ?? null); // skips silently if it no longer opens
+        }
+        const focus = opened().find((r) => r.path === data.active);
+        if (focus) activate(focus);
+      }
+    } catch {
+      /* corrupt entry — ignore */
+    }
+    setRestored(true);
+  });
+
+  // Persist the tab set + focus on any change (after the initial restore, so an
+  // empty list during startup never clobbers the saved tabs).
+  createEffect(() => {
+    const list = opened();
+    const activeId = props.active;
+    if (!restored()) return;
+    const data = {
+      tabs: list.map((r) => ({ path: r.path, group: r.group })),
+      active: list.find((r) => r.id === activeId)?.path ?? null,
+    };
+    localStorage.setItem(TABS_KEY, JSON.stringify(data));
   });
 
   const persistRecent = (next: RecentRepo[]) => {

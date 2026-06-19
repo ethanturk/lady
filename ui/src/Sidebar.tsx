@@ -1,7 +1,7 @@
-import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import type { Component, JSX } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
-import type { ForgeItem, RefInfo, RepoId, StashEntry } from "./commands";
+import type { AheadBehind, ForgeItem, RefInfo, RepoId, StashEntry } from "./commands";
 import { IconChanges, IconCheck, IconChevron, IconCommits, IconBranch, IconMore, IconSearch } from "./icons";
 import { sidebarWidth } from "./prefs";
 
@@ -27,10 +27,14 @@ interface SidebarProps {
   onBranchMenu: (branch: string, at: { x: number; y: number }) => void;
   /** Check out `branch` (double-click on a branch/remote row). */
   onCheckout: (branch: string) => void;
+  /** Single-click a ref row → show that branch/tag in All Commits (its tip). */
+  onSelectRef?: (ref: RefInfo) => void;
   /** A keyboard shortcut fired on a focused branch row (⇧⌘B / ⇧⌘G / ⌫). */
   onBranchKey?: (branch: string, action: "new-branch" | "new-tag" | "delete") => void;
   /** Open the full Stashes management view. */
   onOpenStashes?: () => void;
+  /** Fill the container width (used when hosted inside the mobile drawer). */
+  fullWidth?: boolean;
 }
 
 const accentFill = "color-mix(in srgb, var(--accent) 18%, transparent)";
@@ -98,9 +102,43 @@ const Sidebar: Component<SidebarProps> = (props) => {
   const remotes = createMemo(() => byKind("Remote"));
   const isCurrent = (r: RefInfo) => r.kind === "Branch" && r.name === headBranch();
 
-  // Accordion: a single open panel at a time (Local open by default).
-  const [openPanel, setOpenPanel] = createSignal<Panel | null>("local");
-  const toggle = (p: Panel) => setOpenPanel((cur) => (cur === p ? null : p));
+  // The ref row last clicked (shown in All Commits), highlighted so the user
+  // knows which branch they're viewing. Keyed `${kind}:${name}`.
+  const [selectedRef, setSelectedRef] = createSignal<string | null>(null);
+
+  // Accordion: multiple panels may be open on tall screens; short screens keep
+  // a single panel open at a time so the list never overflows awkwardly.
+  const [openPanels, setOpenPanels] = createSignal<Set<Panel>>(new Set(["local"]));
+  const [multiOpen, setMultiOpen] = createSignal(window.innerHeight >= 900);
+  const onResize = () => setMultiOpen(window.innerHeight >= 900);
+  window.addEventListener("resize", onResize);
+  onCleanup(() => window.removeEventListener("resize", onResize));
+
+  const isOpen = (p: Panel) => openPanels().has(p);
+  const toggle = (p: Panel) =>
+    setOpenPanels((cur) => {
+      const next = new Set(cur);
+      if (next.has(p)) {
+        next.delete(p);
+      } else if (multiOpen()) {
+        next.add(p);
+      } else {
+        next.clear();
+        next.add(p);
+      }
+      return next;
+    });
+
+  // Per-local-branch ahead/behind vs upstream (origin), keyed by branch name.
+  const [aheadBehind, setAheadBehind] = createSignal<Record<string, AheadBehind>>({});
+  createEffect(() => {
+    const repo = props.repoId;
+    void props.refreshNonce;
+    if (!repo) return setAheadBehind({});
+    invoke<Record<string, AheadBehind>>("branches_ahead_behind", { repo })
+      .then(setAheadBehind)
+      .catch(() => setAheadBehind({}));
+  });
 
   // Lazily-loaded panel data (fetched when a panel is open / repo changes).
   const [stashes, setStashes] = createSignal<StashEntry[]>([]);
@@ -113,19 +151,21 @@ const Sidebar: Component<SidebarProps> = (props) => {
 
   createEffect(() => {
     const repo = props.repoId;
-    const panel = openPanel();
+    const open = openPanels();
     void props.refreshNonce;
     if (!repo) return;
-    if (panel === "stashes") {
+    if (open.has("stashes")) {
       invoke<StashEntry[]>("stash_list", { repo }).then(setStashes).catch(() => setStashes([]));
-    } else if (panel === "prs") {
+    }
+    if (open.has("prs")) {
       setPrLoading(true);
       setPrErr(null);
       invoke<ForgeItem[]>("list_pull_requests", { repo })
         .then(setPrs)
         .catch((e) => { setPrs([]); setPrErr(String(e)); })
         .finally(() => setPrLoading(false));
-    } else if (panel === "issues") {
+    }
+    if (open.has("issues")) {
       setIssueLoading(true);
       setIssueErr(null);
       invoke<ForgeItem[]>("list_issues", { repo })
@@ -187,10 +227,17 @@ const Sidebar: Component<SidebarProps> = (props) => {
     );
   };
 
-  const branchRow = (r: RefInfo, kind: "Branch" | "Remote" | "Tag") => (
+  const branchRow = (r: RefInfo, kind: "Branch" | "Remote" | "Tag") => {
+    const rowKey = `${kind}:${r.name}`;
+    const isShown = () => selectedRef() === rowKey;
+    return (
     <div
       class="hov"
       tabindex={0}
+      onClick={() => {
+        setSelectedRef(rowKey);
+        props.onSelectRef?.(r);
+      }}
       onContextMenu={(e) => {
         if (kind === "Branch") {
           e.preventDefault();
@@ -227,6 +274,8 @@ const Sidebar: Component<SidebarProps> = (props) => {
         "font-size": "13px",
         color: "var(--tx2)",
         "user-select": "none",
+        background: isShown() ? accentFill : "transparent",
+        "box-shadow": isShown() ? "inset 2px 0 0 var(--accent)" : "none",
       }}
     >
       <Show
@@ -248,10 +297,29 @@ const Sidebar: Component<SidebarProps> = (props) => {
       >
         {r.name}
       </span>
+      {/* Outgoing (↑ ahead) / incoming (↓ behind) vs upstream. */}
+      <Show when={kind === "Branch" && aheadBehind()[r.name]}>
+        {(() => {
+          const ab = () => aheadBehind()[r.name];
+          return (
+            <Show when={ab().ahead > 0 || ab().behind > 0}>
+              <span style={{ display: "flex", "align-items": "center", gap: "5px", "font-size": "11px", "font-family": "ui-monospace, monospace", color: "var(--tx3)", "flex-shrink": 0 }} title={`${ab().ahead} ahead, ${ab().behind} behind ${"origin"}`}>
+                <Show when={ab().ahead > 0}>
+                  <span style={{ color: "var(--badge-a)" }}>↑{ab().ahead}</span>
+                </Show>
+                <Show when={ab().behind > 0}>
+                  <span style={{ color: "var(--badge-r)" }}>↓{ab().behind}</span>
+                </Show>
+              </span>
+            </Show>
+          );
+        })()}
+      </Show>
       <Show when={kind === "Branch"}>
         <button
           aria-label={`Actions for ${r.name}`}
           onClick={(e) => {
+            e.stopPropagation();
             const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
             props.onBranchMenu(r.name, { x: box.left, y: box.bottom });
           }}
@@ -268,13 +336,14 @@ const Sidebar: Component<SidebarProps> = (props) => {
         </button>
       </Show>
     </div>
-  );
+    );
+  };
 
   return (
     <div
       class="scroll-thin"
       style={{
-        width: `${sidebarWidth()}px`,
+        width: props.fullWidth ? "100%" : `${sidebarWidth()}px`,
         "flex-shrink": 0,
         "overflow-y": "auto",
         background: "var(--panel)",
@@ -341,15 +410,15 @@ const Sidebar: Component<SidebarProps> = (props) => {
 
       {/* Accordion panels (one open at a time) */}
       <div style={{ padding: "0 6px 16px", display: "flex", "flex-direction": "column", gap: "2px" }}>
-        <AccordionPanel title="Local" count={branches().length} open={openPanel() === "local"} onToggle={() => toggle("local")}>
+        <AccordionPanel title="Local" count={branches().length} open={isOpen("local")} onToggle={() => toggle("local")}>
           <For each={branches()} fallback={<Note>No local branches.</Note>}>{(r) => branchRow(r, "Branch")}</For>
         </AccordionPanel>
 
-        <AccordionPanel title="Remote" count={remotes().length} open={openPanel() === "remote"} onToggle={() => toggle("remote")}>
+        <AccordionPanel title="Remote" count={remotes().length} open={isOpen("remote")} onToggle={() => toggle("remote")}>
           <For each={remotes()} fallback={<Note>No remote branches.</Note>}>{(r) => branchRow(r, "Remote")}</For>
         </AccordionPanel>
 
-        <AccordionPanel title="Stashes" count={stashes().length} open={openPanel() === "stashes"} onToggle={() => toggle("stashes")}>
+        <AccordionPanel title="Stashes" count={stashes().length} open={isOpen("stashes")} onToggle={() => toggle("stashes")}>
           <For each={stashes()} fallback={<Note>No stashes.</Note>}>
             {(s) => (
               <div
@@ -370,7 +439,7 @@ const Sidebar: Component<SidebarProps> = (props) => {
           </Show>
         </AccordionPanel>
 
-        <AccordionPanel title="Pull Requests" count={prErr() ? undefined : prs().length} open={openPanel() === "prs"} onToggle={() => toggle("prs")}>
+        <AccordionPanel title="Pull Requests" count={prErr() ? undefined : prs().length} open={isOpen("prs")} onToggle={() => toggle("prs")}>
           <Show when={!prLoading()} fallback={<Note>Loading…</Note>}>
             <Show when={!prErr()} fallback={<Note>{prErr()}</Note>}>
               <For each={prs()} fallback={<Note>No open pull requests.</Note>}>{(it) => forgeRow(it)}</For>
@@ -378,7 +447,7 @@ const Sidebar: Component<SidebarProps> = (props) => {
           </Show>
         </AccordionPanel>
 
-        <AccordionPanel title="Issues" count={issueErr() ? undefined : issues().length} open={openPanel() === "issues"} onToggle={() => toggle("issues")}>
+        <AccordionPanel title="Issues" count={issueErr() ? undefined : issues().length} open={isOpen("issues")} onToggle={() => toggle("issues")}>
           <Show when={!issueLoading()} fallback={<Note>Loading…</Note>}>
             <Show when={!issueErr()} fallback={<Note>{issueErr()}</Note>}>
               <For each={issues()} fallback={<Note>No open issues.</Note>}>{(it) => forgeRow(it)}</For>

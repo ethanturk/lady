@@ -2,6 +2,7 @@ import { createEffect, createSignal, For, Show } from "solid-js";
 import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { cancelAi, isConsentError, runAiStream } from "./ai";
+import { isNarrow } from "./prefs";
 import type {
   ConflictRegion,
   ConflictSegment,
@@ -299,6 +300,7 @@ const ConflictResolver: Component<{
             padding: "0.4rem 0.6rem",
             "border-bottom": "1px solid var(--border)",
             "flex-shrink": 0,
+            "flex-wrap": isNarrow() ? "wrap" : "nowrap",
           }}
         >
           <span style={{ "font-size": "0.8rem", color: "var(--fg-muted)" }}>
@@ -378,17 +380,28 @@ const ConflictResolver: Component<{
           <p style={{ color: "var(--error)", margin: "0.25rem 0.6rem", "font-size": "0.85rem" }}>{err()}</p>
         </Show>
 
-        {/* Three read-only panes: base | ours | theirs */}
-        <div style={{ display: "flex", height: "32%", "border-bottom": "1px solid var(--border)", "flex-shrink": 0 }}>
-          <div style={{ ...pane, background: BASE_BG, "border-right": "1px solid var(--border)" }}>
+        {/* Three read-only panes: base | ours | theirs. On narrow they stack
+            vertically (bottom borders) and the strip scrolls. */}
+        <div
+          style={{
+            display: "flex",
+            "flex-direction": isNarrow() ? "column" : "row",
+            height: isNarrow() ? "auto" : "32%",
+            "max-height": isNarrow() ? "55%" : undefined,
+            overflow: isNarrow() ? "auto" : undefined,
+            "border-bottom": "1px solid var(--border)",
+            "flex-shrink": 0,
+          }}
+        >
+          <div style={{ ...pane, flex: isNarrow() ? "0 0 auto" : "1", "min-height": isNarrow() ? "5rem" : undefined, background: BASE_BG, "border-right": isNarrow() ? undefined : "1px solid var(--border)", "border-bottom": isNarrow() ? "1px solid var(--border)" : undefined }}>
             <div style={{ color: "var(--fg-muted)", "font-weight": 700, "margin-bottom": "0.25rem" }}>BASE</div>
             {sideText(sides().base)}
           </div>
-          <div style={{ ...pane, background: OURS_BG, "border-right": "1px solid var(--border)" }}>
+          <div style={{ ...pane, flex: isNarrow() ? "0 0 auto" : "1", "min-height": isNarrow() ? "5rem" : undefined, background: OURS_BG, "border-right": isNarrow() ? undefined : "1px solid var(--border)", "border-bottom": isNarrow() ? "1px solid var(--border)" : undefined }}>
             <div style={{ color: "var(--success)", "font-weight": 700, "margin-bottom": "0.25rem" }}>OURS</div>
             {sideText(sides().ours)}
           </div>
-          <div style={{ ...pane, background: THEIRS_BG }}>
+          <div style={{ ...pane, flex: isNarrow() ? "0 0 auto" : "1", "min-height": isNarrow() ? "5rem" : undefined, background: THEIRS_BG }}>
             <div style={{ color: "var(--info)", "font-weight": 700, "margin-bottom": "0.25rem" }}>THEIRS</div>
             {sideText(sides().theirs)}
           </div>
@@ -480,7 +493,8 @@ const ConflictResolver: Component<{
             </For>
           </div>
 
-          {/* Minimap markers on the scrollbar edge. */}
+          {/* Minimap markers on the scrollbar edge (hidden on narrow). */}
+          <Show when={!isNarrow()}>
           <div
             style={{
               width: "10px",
@@ -507,6 +521,7 @@ const ConflictResolver: Component<{
               )}
             </For>
           </div>
+          </Show>
         </div>
       </Show>
 

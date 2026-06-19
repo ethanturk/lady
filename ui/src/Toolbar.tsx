@@ -7,12 +7,14 @@ import {
   IconBranch,
   IconFetch,
   IconLaunch,
+  IconMenu,
   IconMore,
   IconPull,
   IconPush,
   IconSettings,
   IconStash,
 } from "./icons";
+import { isNarrow } from "./prefs";
 
 /** One entry in the toolbar's "More" overflow menu (an advanced view). */
 export interface OverflowItem {
@@ -33,6 +35,8 @@ interface ToolbarProps {
   onOverflow: (key: string) => void;
   /** Open the command palette (Quick Launch). */
   onQuickLaunch: () => void;
+  /** Toggle the off-canvas sidebar drawer (narrow layout hamburger). */
+  onToggleSidebar?: () => void;
   /** Open the native repo picker (clicking the empty pill, when no repo is open). */
   onAddRepo: () => void;
   /** Open the branch context menu anchored to the Branch button. */
@@ -131,24 +135,32 @@ const Toolbar: Component<ToolbarProps> = (props) => {
   return (
     <div
       style={{
-        height: "58px",
+        // Grow by the top safe-area inset (notch / status bar) so content sits
+        // below it on mobile; box-sizing keeps the usable bar at 58px.
+        height: "calc(58px + env(safe-area-inset-top, 0px))",
         "flex-shrink": 0,
         display: "flex",
         "align-items": "center",
         gap: "14px",
-        padding: "0 16px",
+        padding: "env(safe-area-inset-top, 0px) 16px 0",
         background: "var(--toolbar)",
         "border-bottom": "1px solid var(--bd)",
         position: "relative",
       }}
     >
-      {/* Left quick-action group */}
+      {/* Left quick-action group. On narrow the hamburger opens the sidebar
+          drawer and the sync actions collapse into the "More" menu. */}
       <div style={{ display: "flex", "align-items": "center", gap: "2px" }}>
+        <Show when={isNarrow()}>
+          <QuickAction icon={<IconMenu />} label="Menu" disabled={!props.repoId} onClick={() => props.onToggleSidebar?.()} />
+        </Show>
         <QuickAction icon={<IconLaunch />} label="Launch" onClick={() => props.onQuickLaunch()} />
-        <QuickAction icon={<IconFetch />} label="Fetch" disabled={!props.repoId || !!busy()} onClick={fetch} />
-        <QuickAction icon={<IconPull />} label="Pull" disabled={!props.repoId || !!busy()} onClick={pull} />
-        <QuickAction icon={<IconPush />} label="Push" disabled={!props.repoId || !!busy()} onClick={push} />
-        <QuickAction icon={<IconStash />} label="Stash" disabled={!props.repoId || !!busy()} onClick={stash} />
+        <Show when={!isNarrow()}>
+          <QuickAction icon={<IconFetch />} label="Fetch" disabled={!props.repoId || !!busy()} onClick={fetch} />
+          <QuickAction icon={<IconPull />} label="Pull" disabled={!props.repoId || !!busy()} onClick={pull} />
+          <QuickAction icon={<IconPush />} label="Push" disabled={!props.repoId || !!busy()} onClick={push} />
+          <QuickAction icon={<IconStash />} label="Stash" disabled={!props.repoId || !!busy()} onClick={stash} />
+        </Show>
       </div>
 
       <span style={{ flex: "1" }} />
@@ -165,7 +177,7 @@ const Toolbar: Component<ToolbarProps> = (props) => {
           display: "flex",
           "flex-direction": "column",
           "align-items": "center",
-          "min-width": "230px",
+          "min-width": isNarrow() ? "0" : "230px",
           padding: "6px 30px",
           background: "var(--pill)",
           border: "1px solid var(--bd)",
@@ -231,6 +243,45 @@ const Toolbar: Component<ToolbarProps> = (props) => {
               }}
               role="menu"
             >
+              {/* On narrow the sync actions live here (they're hidden from the
+                  toolbar's left group). */}
+              <Show when={isNarrow()}>
+                <For each={[
+                  { label: "Fetch", run: fetch },
+                  { label: "Pull", run: pull },
+                  { label: "Push", run: push },
+                  { label: "Stash", run: stash },
+                ]}>
+                  {(item) => (
+                    <button
+                      class="hov"
+                      role="menuitem"
+                      disabled={!props.repoId || !!busy()}
+                      onClick={() => {
+                        setMenuOpen(false);
+                        item.run();
+                      }}
+                      style={{
+                        display: "flex",
+                        "align-items": "center",
+                        width: "100%",
+                        gap: "9px",
+                        padding: "7px 11px",
+                        border: "none",
+                        background: "transparent",
+                        "border-radius": "6px",
+                        color: "var(--tx)",
+                        "font-size": "12.5px",
+                        cursor: "pointer",
+                        "text-align": "left",
+                      }}
+                    >
+                      <span style={{ flex: "1" }}>{item.label}</span>
+                    </button>
+                  )}
+                </For>
+                <div style={{ height: "1px", background: "var(--bd)", margin: "5px 0" }} />
+              </Show>
               <For each={props.overflowItems}>
                 {(item) => (
                   <button
