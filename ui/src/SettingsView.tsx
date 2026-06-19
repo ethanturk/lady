@@ -22,6 +22,35 @@ const SettingsView: Component<{ repoId: RepoId }> = (props) => {
   const [err, setErr] = createSignal<string | null>(null);
   const [busy, setBusy] = createSignal(false);
 
+  // Auto-update (PH6-008) — explicit user action only, never silent.
+  type UpdateInfo = { available: boolean; version: string | null; notes: string | null; current: string };
+  const [update, setUpdate] = createSignal<UpdateInfo | null>(null);
+  const [updateErr, setUpdateErr] = createSignal<string | null>(null);
+  const [updBusy, setUpdBusy] = createSignal(false);
+
+  const checkUpdates = () => {
+    setUpdBusy(true);
+    setUpdateErr(null);
+    setUpdate(null);
+    invoke<UpdateInfo>("check_for_updates")
+      .then(setUpdate)
+      .catch((e) => setUpdateErr(String(e)))
+      .finally(() => setUpdBusy(false));
+  };
+
+  const installUpdate = () => {
+    if (!confirm("Download and install the update now? Lady will restart.")) return;
+    setUpdBusy(true);
+    setUpdateErr(null);
+    // Resolves into the relaunch; on success the app restarts, so we mainly
+    // surface errors here.
+    invoke("install_update")
+      .catch((e) => {
+        setUpdateErr(String(e));
+        setUpdBusy(false);
+      });
+  };
+
   const forgeName = () => (status().kind ? FORGE_LABEL[status().kind!] : "forge");
 
   // Create remote repository (PH4-005).
@@ -120,7 +149,35 @@ const SettingsView: Component<{ repoId: RepoId }> = (props) => {
 
   return (
     <div style={{ height: "100%", "overflow-y": "auto", padding: "0.9rem 1rem", "max-width": "40rem" }}>
-      <h3 style={{ margin: "0 0 0.4rem", "font-size": "0.95rem" }}>License</h3>
+      <h3 style={{ margin: "0 0 0.4rem", "font-size": "0.95rem" }}>Updates</h3>
+      <div style={{ display: "flex", gap: "0.4rem", "align-items": "center" }}>
+        <button onClick={checkUpdates} disabled={updBusy()} style={{ padding: "0.3rem 0.9rem" }}>
+          {updBusy() ? "Working…" : "Check for updates"}
+        </button>
+        <Show when={update() && !update()!.available}>
+          <span style={{ "font-size": "0.82rem", color: "var(--fg-muted)" }}>
+            Up to date (v{update()!.current}).
+          </span>
+        </Show>
+      </div>
+      <Show when={update()?.available}>
+        <div role="status" style={{ margin: "0.5rem 0", padding: "0.5rem 0.7rem", border: "1px solid var(--border)", "border-radius": "6px", background: "var(--surface-2)" }}>
+          <p style={{ margin: "0 0 0.3rem", "font-size": "0.85rem" }}>
+            <strong>Update available:</strong> v{update()!.version} (you have v{update()!.current})
+          </p>
+          <Show when={update()!.notes}>
+            <p style={{ margin: "0 0 0.4rem", "font-size": "0.8rem", color: "var(--fg-muted)", "white-space": "pre-wrap" }}>{update()!.notes}</p>
+          </Show>
+          <button onClick={installUpdate} disabled={updBusy()} style={{ padding: "0.3rem 0.9rem" }}>
+            {updBusy() ? "Installing…" : "Download & install, then restart"}
+          </button>
+        </div>
+      </Show>
+      <Show when={updateErr()}>
+        <p role="alert" style={{ color: "var(--error)", "font-size": "0.82rem" }}>{updateErr()}</p>
+      </Show>
+
+      <h3 style={{ margin: "1.2rem 0 0.4rem", "font-size": "0.95rem" }}>License</h3>
       <p style={{ "font-size": "0.85rem", color: "var(--fg)", margin: "0 0 0.4rem" }}>{describeLicense(license())}</p>
       <div style={{ display: "flex", gap: "0.4rem", "align-items": "center" }}>
         <input

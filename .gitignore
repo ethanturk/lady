@@ -7,6 +7,12 @@ ui/node_modules/
 ui/dist/
 src-tauri/target/
 
+# --- Updater / signing secrets (NEVER commit; only the updater PUBLIC key lives
+#     in tauri.conf.json — private keys / certs are CI secrets) ---
+*.key
+*.p12
+*.pfx
+
 # --- OS / editor cruft ---
 .DS_Store
 *.swp

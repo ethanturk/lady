@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Lady
+GenericName=Git Client
+Comment=A fast, friendly cross-platform Git client
+Exec=lady %U
+Icon=dev.lady.client
+Terminal=false
+Categories=Development;RevisionControl;
+StartupWMClass=Lady

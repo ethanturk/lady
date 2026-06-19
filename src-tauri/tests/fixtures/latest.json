@@ -1,0 +1,19 @@
+{
+  "version": "1.3.0",
+  "notes": "Lady 1.3.0 — GA: Core Parity + Fast-follow + AI, signed and auto-updating.",
+  "pub_date": "2026-06-18T00:00:00Z",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "PLACEHOLDER_ARTIFACT_SIGNATURE",
+      "url": "https://github.com/ethanturk/lady/releases/download/v1.3.0/Lady_aarch64.app.tar.gz"
+    },
+    "windows-x86_64": {
+      "signature": "PLACEHOLDER_ARTIFACT_SIGNATURE",
+      "url": "https://github.com/ethanturk/lady/releases/download/v1.3.0/Lady_x64-setup.nsis.zip"
+    },
+    "linux-x86_64": {
+      "signature": "PLACEHOLDER_ARTIFACT_SIGNATURE",
+      "url": "https://github.com/ethanturk/lady/releases/download/v1.3.0/Lady_amd64.AppImage.tar.gz"
+    }
+  }
+}

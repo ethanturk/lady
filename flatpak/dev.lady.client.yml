@@ -1,0 +1,39 @@
+# Flatpak manifest for Lady (PH6-007).
+#
+# Wraps the binary that the Tauri bundler produces on Linux. The release
+# workflow stages three files next to this manifest before `flatpak-builder`:
+#   - lady                        (the built executable, from the AppImage/deb)
+#   - dev.lady.client.desktop     (committed alongside this manifest)
+#   - icon.png                    (src-tauri/icons/128x128.png, copied in)
+#
+# The org.gnome.Platform runtime provides WebKitGTK (the WebView Lady renders
+# into) and GTK, so we don't bundle them ourselves. `--talk-name=…secrets`
+# grants access to the Secret Service so OS-keychain token storage works
+# inside the sandbox (ADR-0006 / ADR-0008).
+id: dev.lady.client
+runtime: org.gnome.Platform
+runtime-version: '46'
+sdk: org.gnome.Sdk
+command: lady
+finish-args:
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --device=dri
+  - --share=network
+  - --filesystem=home
+  - --talk-name=org.freedesktop.secrets
+modules:
+  - name: lady
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 lady /app/bin/lady
+      - install -Dm644 dev.lady.client.desktop /app/share/applications/dev.lady.client.desktop
+      - install -Dm644 icon.png /app/share/icons/hicolor/128x128/apps/dev.lady.client.png
+    sources:
+      - type: file
+        path: lady
+      - type: file
+        path: dev.lady.client.desktop
+      - type: file
+        path: icon.png

@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 mod ai;
+mod updater;
 
 #[derive(Serialize)]
 pub struct AppInfo {
@@ -1423,6 +1424,7 @@ fn license_activate(key: String) -> Result<lady_license::LicenseStatus, String> 
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(GixEngine::new())
         .manage(Hosting {
             store: Box::new(lady_hosting::KeyringStore::new("Lady-Hosting")),
@@ -1544,7 +1546,9 @@ pub fn run() {
             ai::ai_pr_title,
             ai::ai_pr_description,
             ai::ai_changelog,
-            ai::ai_stash_note
+            ai::ai_stash_note,
+            updater::check_for_updates,
+            updater::install_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

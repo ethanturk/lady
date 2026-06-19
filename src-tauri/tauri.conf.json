@@ -25,6 +25,42 @@
     }
   },
   "bundle": {
-    "active": false
+    "active": true,
+    "targets": "all",
+    "category": "DeveloperTool",
+    "shortDescription": "A fast, friendly cross-platform Git client.",
+    "longDescription": "Lady is a fast, friendly cross-platform Git client (Fork-style UI + GitKraken-style AI), built in Rust.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "createUpdaterArtifacts": true,
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "perMachine"
+      }
+    },
+    "linux": {
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFEQTU2MzQzM0U2RDMzRDAKUldUUU0yMCtRMk9sSFJMM3hzVzhHbWQxcWVzZ2pKbURpdXZTOG1GVG9GYklDb0txZnROWFVWdmYK",
+      "endpoints": [
+        "https://github.com/ethanturk/lady/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }
