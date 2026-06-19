@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import type { Component, JSX } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import type { AheadBehind, ForgeItem, RefInfo, RepoId, StashEntry } from "./commands";
@@ -106,9 +106,28 @@ const Sidebar: Component<SidebarProps> = (props) => {
   // knows which branch they're viewing. Keyed `${kind}:${name}`.
   const [selectedRef, setSelectedRef] = createSignal<string | null>(null);
 
-  // Accordion: a single open panel at a time (Local open by default).
-  const [openPanel, setOpenPanel] = createSignal<Panel | null>("local");
-  const toggle = (p: Panel) => setOpenPanel((cur) => (cur === p ? null : p));
+  // Accordion: multiple panels may be open on tall screens; short screens keep
+  // a single panel open at a time so the list never overflows awkwardly.
+  const [openPanels, setOpenPanels] = createSignal<Set<Panel>>(new Set(["local"]));
+  const [multiOpen, setMultiOpen] = createSignal(window.innerHeight >= 900);
+  const onResize = () => setMultiOpen(window.innerHeight >= 900);
+  window.addEventListener("resize", onResize);
+  onCleanup(() => window.removeEventListener("resize", onResize));
+
+  const isOpen = (p: Panel) => openPanels().has(p);
+  const toggle = (p: Panel) =>
+    setOpenPanels((cur) => {
+      const next = new Set(cur);
+      if (next.has(p)) {
+        next.delete(p);
+      } else if (multiOpen()) {
+        next.add(p);
+      } else {
+        next.clear();
+        next.add(p);
+      }
+      return next;
+    });
 
   // Per-local-branch ahead/behind vs upstream (origin), keyed by branch name.
   const [aheadBehind, setAheadBehind] = createSignal<Record<string, AheadBehind>>({});
@@ -132,19 +151,21 @@ const Sidebar: Component<SidebarProps> = (props) => {
 
   createEffect(() => {
     const repo = props.repoId;
-    const panel = openPanel();
+    const open = openPanels();
     void props.refreshNonce;
     if (!repo) return;
-    if (panel === "stashes") {
+    if (open.has("stashes")) {
       invoke<StashEntry[]>("stash_list", { repo }).then(setStashes).catch(() => setStashes([]));
-    } else if (panel === "prs") {
+    }
+    if (open.has("prs")) {
       setPrLoading(true);
       setPrErr(null);
       invoke<ForgeItem[]>("list_pull_requests", { repo })
         .then(setPrs)
         .catch((e) => { setPrs([]); setPrErr(String(e)); })
         .finally(() => setPrLoading(false));
-    } else if (panel === "issues") {
+    }
+    if (open.has("issues")) {
       setIssueLoading(true);
       setIssueErr(null);
       invoke<ForgeItem[]>("list_issues", { repo })
@@ -389,15 +410,15 @@ const Sidebar: Component<SidebarProps> = (props) => {
 
       {/* Accordion panels (one open at a time) */}
       <div style={{ padding: "0 6px 16px", display: "flex", "flex-direction": "column", gap: "2px" }}>
-        <AccordionPanel title="Local" count={branches().length} open={openPanel() === "local"} onToggle={() => toggle("local")}>
+        <AccordionPanel title="Local" count={branches().length} open={isOpen("local")} onToggle={() => toggle("local")}>
           <For each={branches()} fallback={<Note>No local branches.</Note>}>{(r) => branchRow(r, "Branch")}</For>
         </AccordionPanel>
 
-        <AccordionPanel title="Remote" count={remotes().length} open={openPanel() === "remote"} onToggle={() => toggle("remote")}>
+        <AccordionPanel title="Remote" count={remotes().length} open={isOpen("remote")} onToggle={() => toggle("remote")}>
           <For each={remotes()} fallback={<Note>No remote branches.</Note>}>{(r) => branchRow(r, "Remote")}</For>
         </AccordionPanel>
 
-        <AccordionPanel title="Stashes" count={stashes().length} open={openPanel() === "stashes"} onToggle={() => toggle("stashes")}>
+        <AccordionPanel title="Stashes" count={stashes().length} open={isOpen("stashes")} onToggle={() => toggle("stashes")}>
           <For each={stashes()} fallback={<Note>No stashes.</Note>}>
             {(s) => (
               <div
@@ -418,7 +439,7 @@ const Sidebar: Component<SidebarProps> = (props) => {
           </Show>
         </AccordionPanel>
 
-        <AccordionPanel title="Pull Requests" count={prErr() ? undefined : prs().length} open={openPanel() === "prs"} onToggle={() => toggle("prs")}>
+        <AccordionPanel title="Pull Requests" count={prErr() ? undefined : prs().length} open={isOpen("prs")} onToggle={() => toggle("prs")}>
           <Show when={!prLoading()} fallback={<Note>Loading…</Note>}>
             <Show when={!prErr()} fallback={<Note>{prErr()}</Note>}>
               <For each={prs()} fallback={<Note>No open pull requests.</Note>}>{(it) => forgeRow(it)}</For>
@@ -426,7 +447,7 @@ const Sidebar: Component<SidebarProps> = (props) => {
           </Show>
         </AccordionPanel>
 
-        <AccordionPanel title="Issues" count={issueErr() ? undefined : issues().length} open={openPanel() === "issues"} onToggle={() => toggle("issues")}>
+        <AccordionPanel title="Issues" count={issueErr() ? undefined : issues().length} open={isOpen("issues")} onToggle={() => toggle("issues")}>
           <Show when={!issueLoading()} fallback={<Note>Loading…</Note>}>
             <Show when={!issueErr()} fallback={<Note>{issueErr()}</Note>}>
               <For each={issues()} fallback={<Note>No open issues.</Note>}>{(it) => forgeRow(it)}</For>

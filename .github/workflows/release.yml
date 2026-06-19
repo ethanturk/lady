@@ -186,9 +186,11 @@ jobs:
       - name: Install Android SDK packages (platform, build-tools, NDK)
         run: |
           set -euo pipefail
-          sdkmanager "platform-tools" "platforms;android-34" \
-            "build-tools;34.0.0" "ndk;${ANDROID_NDK_VERSION}"
+          sdkmanager "platform-tools" "platforms;android-34" "platforms;android-36" \
+            "build-tools;35.0.0" "ndk;${ANDROID_NDK_VERSION}"
           NDK_PATH="$ANDROID_HOME/ndk/${ANDROID_NDK_VERSION}"
+          find "$ANDROID_HOME/ndk" -mindepth 1 -maxdepth 1 -type d \
+            ! -path "$NDK_PATH" -exec rm -rf {} +
           echo "NDK_HOME=$NDK_PATH" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_HOME=$NDK_PATH" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_ROOT=$NDK_PATH" >> "$GITHUB_ENV"
@@ -198,6 +200,8 @@ jobs:
           targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
 
       - name: Install tauri-cli + cargo-ndk
         run: cargo install tauri-cli --version "^2" cargo-ndk --locked
@@ -260,11 +264,41 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          GEN="src-tauri/gen/android"
-          KEYSTORE="$GITHUB_WORKSPACE/$GEN/release.jks"
-          printf '%s' "$ANDROID_KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > "$KEYSTORE"
-          [ -s "$KEYSTORE" ] || { echo "::error::ANDROID_KEYSTORE_BASE64 decoded to an empty file."; exit 1; }
-          keytool -list -keystore "$KEYSTORE" -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" >/dev/null
+          GEN="$GITHUB_WORKSPACE/src-tauri/gen/android"
+          KEYSTORE="$GEN/release.jks"
+          KEYSTORE_ERR="$RUNNER_TEMP/android-keystore.err"
+          VALIDATION_DIR="$RUNNER_TEMP/android-signing-validation"
+          VALIDATION_JAR="$RUNNER_TEMP/android-signing-validation.jar"
+
+          if ! printf '%s' "$ANDROID_KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > "$KEYSTORE"; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 is not valid base64. Recreate it from the binary keystore file, for example: base64 -w0 release.jks"
+            exit 1
+          fi
+          if [ ! -s "$KEYSTORE" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 decoded to an empty keystore file."
+            exit 1
+          fi
+
+          # Validate the store (keytool) and the key + key password (jarsigner on
+          # a throwaway marker jar) before the build, so a bad secret fails here
+          # with a clear message instead of deep in Gradle.
+          if ! keytool -list -keystore "$KEYSTORE" -storepass "$ANDROID_KEYSTORE_PASSWORD" \
+            -alias "$ANDROID_KEY_ALIAS" > /dev/null 2> "$KEYSTORE_ERR"; then
+            echo "::error::Android release keystore validation failed. Check ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, and ANDROID_KEY_ALIAS."
+            sed 's/^/keytool: /' "$KEYSTORE_ERR" >&2
+            exit 1
+          fi
+          rm -rf "$VALIDATION_DIR" "$VALIDATION_JAR"
+          mkdir -p "$VALIDATION_DIR"
+          printf 'lady android signing validation\n' > "$VALIDATION_DIR/marker.txt"
+          jar cf "$VALIDATION_JAR" -C "$VALIDATION_DIR" marker.txt
+          if ! jarsigner -keystore "$KEYSTORE" -storepass "$ANDROID_KEYSTORE_PASSWORD" \
+            -keypass "$ANDROID_KEY_PASSWORD" "$VALIDATION_JAR" "$ANDROID_KEY_ALIAS" > /dev/null 2> "$KEYSTORE_ERR"; then
+            echo "::error::Android release key validation failed. Check ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD."
+            sed 's/^/jarsigner: /' "$KEYSTORE_ERR" >&2
+            exit 1
+          fi
+
           # storeFile absolute so gradle's file() resolves from any module.
           {
             printf 'storeFile=%s\n' "$KEYSTORE"
@@ -315,7 +349,7 @@ jobs:
           PY
 
       - name: Build APK
-        run: cargo tauri android build --apk
+        run: cargo tauri android build --apk --verbose
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
