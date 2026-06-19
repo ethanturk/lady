@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import type { Component, JSX } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import type { ChangeKind, DiffSpec, FileStatus, RepoId, WorkingTree } from "./commands";
@@ -397,16 +397,43 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
   const stagedCount = () => wt()?.staged.length ?? 0;
   const canCommit = () => subject().trim().length > 0 && (stagedCount() > 0 || amend());
 
-  const doCommit = () => {
+  // Holding Shift turns "Commit" into "Commit + Push" (commit, then push the
+  // current branch to its remote).
+  const [shiftHeld, setShiftHeld] = createSignal(false);
+  onMount(() => {
+    const down = (e: KeyboardEvent) => { if (e.key === "Shift") setShiftHeld(true); };
+    const up = (e: KeyboardEvent) => { if (e.key === "Shift") setShiftHeld(false); };
+    const blur = () => setShiftHeld(false);
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    window.addEventListener("blur", blur);
+    onCleanup(() => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+      window.removeEventListener("blur", blur);
+    });
+  });
+
+  const doCommit = async (push: boolean) => {
     if (!canCommit()) return;
-    invoke<string>("commit", { repo: props.repoId, message: message(), amend: amend(), sign: sign() })
-      .then(() => {
-        setSubject("");
-        setBody("");
-        setAmend(false);
-        afterMutation();
-      })
-      .catch((e) => setErr(String(e)));
+    try {
+      await invoke<string>("commit", { repo: props.repoId, message: message(), amend: amend(), sign: sign() });
+      setSubject("");
+      setBody("");
+      setAmend(false);
+      if (push) {
+        try {
+          await invoke("push", { repo: props.repoId, remote: null, branch: null, setUpstream: false, force: false });
+        } catch {
+          // No upstream yet → push and set it.
+          await invoke("push", { repo: props.repoId, remote: null, branch: null, setUpstream: true, force: false });
+        }
+        props.onResult?.({ ok: true, message: "Committed and pushed." });
+      }
+      afterMutation();
+    } catch (e) {
+      setErr(String(e));
+    }
   };
 
 
@@ -746,9 +773,13 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
               cursor: canCommit() ? "pointer" : "not-allowed",
             }}
             disabled={!canCommit()}
-            onClick={doCommit}
+            onClick={() => doCommit(shiftHeld())}
+            title={shiftHeld() ? "Commit and push to the remote" : "Hold Shift to commit and push"}
           >
-            {amend() ? "Amend" : stagedCount() > 0 ? `Commit (${stagedCount()})` : "Commit"}
+            {(() => {
+              const verb = amend() ? "Amend" : stagedCount() > 0 ? `Commit (${stagedCount()})` : "Commit";
+              return shiftHeld() ? `${verb} + Push` : verb;
+            })()}
           </button>
         </div>
       </div>

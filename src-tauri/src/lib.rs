@@ -1962,12 +1962,14 @@ mod tests {
 
     #[test]
     fn settings_round_trip_preserves_defaults_and_overrides() {
-        let mut s = Settings::default();
-        s.defaults = RepoSettings {
-            sign: Some(true),
-            ff: Some(FfMode::Only),
-            base_branch: None,
-            ai_model: Some("claude-opus-4-8".to_string()),
+        let mut s = Settings {
+            defaults: RepoSettings {
+                sign: Some(true),
+                ff: Some(FfMode::Only),
+                base_branch: None,
+                ai_model: Some("claude-opus-4-8".to_string()),
+            },
+            ..Default::default()
         };
         s.repo_overrides.insert(
             "/repo/a".to_string(),
