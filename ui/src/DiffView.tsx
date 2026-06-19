@@ -5,6 +5,7 @@ import hljs from "highlight.js";
 // Syntax token colors are themed via CSS variables in styles.css (no static
 // highlight.js stylesheet, so the diff recolors with the app theme).
 import type { DiffHunk, DiffLine, DiffSpec, FileDiff, RepoId } from "./commands";
+import { wrapDiff } from "./prefs";
 
 type Mode = "unified" | "split";
 
@@ -136,14 +137,25 @@ const DEL_BG = "var(--diff-del-bg)";
 const ADD_GUT = "rgba(63, 185, 80, 0.22)";
 const DEL_GUT = "rgba(229, 83, 75, 0.2)";
 
-const code = {
+// Code cell. When wrapping is off the cell keeps its natural (un-shrunk) width
+// so the longest line drives a horizontal scroll; when on it flexes and wraps.
+const codeStyle = (wrap: boolean): JSX.CSSProperties => ({
   "font-family": "ui-monospace, 'SF Mono', 'JetBrains Mono', monospace",
   "font-size": "12.5px",
-  "white-space": "pre" as const,
+  "white-space": wrap ? "pre-wrap" : "pre",
+  "overflow-wrap": wrap ? "anywhere" : "normal",
   padding: "0 8px",
-  overflow: "hidden",
-  flex: "1",
-};
+  ...(wrap ? { flex: "1", "min-width": "0" } : { "flex-shrink": "0" }),
+});
+
+// Horizontal-scroll scaffold shared by unified rows and each split half. The
+// outer scroller clips/scrolls; the inner sizing column grows to the widest
+// line (max-content) but never narrower than the viewport so row backgrounds
+// span full width. When wrapping is on it collapses to normal flow.
+const scrollerStyle = (wrap: boolean): JSX.CSSProperties =>
+  wrap ? { "overflow-x": "visible" } : { "overflow-x": "auto" };
+const sizerStyle = (wrap: boolean): JSX.CSSProperties =>
+  wrap ? { width: "auto", "min-width": "100%" } : { width: "max-content", "min-width": "100%" };
 
 const rowBgFor = (kind: DiffLine["kind"]) =>
   kind === "Added" ? ADD_BG : kind === "Deleted" ? DEL_BG : "transparent";
@@ -152,8 +164,9 @@ const codeColorFor = (kind: DiffLine["kind"]) =>
 const gutBgFor = (kind: DiffLine["kind"]) =>
   kind === "Added" ? ADD_GUT : kind === "Deleted" ? DEL_GUT : "var(--diffgut)";
 
-/** A right-aligned line-number gutter cell. */
-const Gutter: Component<{ n: number | null; bg: string }> = (props) => (
+/** A right-aligned line-number gutter cell. `left` pins it during horizontal
+ * scroll so line numbers stay visible when lines run off-screen. */
+const Gutter: Component<{ n: number | null; bg: string; left?: string }> = (props) => (
   <span
     style={{
       width: "46px",
@@ -166,6 +179,9 @@ const Gutter: Component<{ n: number | null; bg: string }> = (props) => (
       "font-size": "12px",
       "user-select": "none",
       "line-height": "21px",
+      position: "sticky",
+      left: props.left ?? "0",
+      "z-index": "1",
     }}
   >
     {props.n ?? ""}
@@ -208,11 +224,14 @@ const HunkSplit: Component<{ rows: SplitRow[]; lang: string | undefined }> = (pr
       const half = (nl: NumberedLine | undefined, side: "old" | "new") => {
         const kind = nl?.line.kind;
         const sign = kind === "Added" ? "+" : kind === "Deleted" ? "-" : kind ? " " : "";
+        const bg = nl ? rowBgFor(kind!) : "var(--diffgut)";
         return (
-          <div style={{ display: "flex", flex: "1", "min-width": "0", background: nl ? rowBgFor(kind!) : "var(--diffgut)" }}>
-            <Gutter n={nl ? (side === "old" ? nl.oldNo : nl.newNo) : null} bg={nl ? gutBgFor(kind!) : "var(--diffgut)"} />
-            <span style={{ width: "18px", "flex-shrink": "0", "text-align": "center", color: codeColorFor(kind ?? "Context"), "font-family": "ui-monospace, monospace", "font-size": "12px", "line-height": "21px" }}>{sign}</span>
-            <span style={{ ...code, color: codeColorFor(kind ?? "Context") }} innerHTML={nl ? highlight(nl.line.content, props.lang) : "&nbsp;"} />
+          <div style={{ ...scrollerStyle(wrapDiff()), flex: "1", "min-width": "0", background: bg }}>
+            <div style={{ ...sizerStyle(wrapDiff()), display: "flex", background: bg }}>
+              <Gutter n={nl ? (side === "old" ? nl.oldNo : nl.newNo) : null} bg={nl ? gutBgFor(kind!) : "var(--diffgut)"} />
+              <span style={{ width: "18px", "flex-shrink": "0", "text-align": "center", color: codeColorFor(kind ?? "Context"), "font-family": "ui-monospace, monospace", "font-size": "12px", "line-height": "21px", position: "sticky", left: "46px", "z-index": "1", background: bg }}>{sign}</span>
+              <span style={{ ...codeStyle(wrapDiff()), color: codeColorFor(kind ?? "Context") }} innerHTML={nl ? highlight(nl.line.content, props.lang) : "&nbsp;"} />
+            </div>
           </div>
         );
       };
@@ -298,37 +317,41 @@ const HunkBlock: Component<{
         when={props.mode === "unified"}
         fallback={<HunkSplit rows={splitRows(numbered())} lang={props.lang} />}
       >
-        <For each={numbered()}>
-          {(nl) => {
-            const kind = nl.line.kind;
-            const canSelect = () => selectable() && (kind === "Added" || kind === "Deleted");
-            const sign = kind === "Added" ? "+" : kind === "Deleted" ? "-" : " ";
-            const bg = () => (isSel(nl.index) ? "var(--diff-sel-bg)" : rowBgFor(kind));
-            return (
-              <div style={{ display: "flex", "min-height": "21px", background: bg() }}>
-                <Gutter n={nl.oldNo} bg={gutBgFor(kind)} />
-                <Gutter n={nl.newNo} bg={gutBgFor(kind)} />
-                <Show
-                  when={canSelect()}
-                  fallback={
-                    <span style={{ width: "20px", "flex-shrink": "0", "text-align": "center", color: codeColorFor(kind), "font-family": "ui-monospace, monospace", "font-size": "12px", "line-height": "21px" }}>
-                      {sign}
-                    </span>
-                  }
-                >
-                  <input
-                    type="checkbox"
-                    checked={isSel(nl.index)}
-                    onChange={() => toggle(nl.index)}
-                    style={{ width: "20px", "flex-shrink": "0", margin: "0", cursor: "pointer" }}
-                    title={`${sign} select line`}
-                  />
-                </Show>
-                <span style={{ ...code, color: codeColorFor(kind) }} innerHTML={highlight(nl.line.content, props.lang)} />
-              </div>
-            );
-          }}
-        </For>
+        <div style={scrollerStyle(wrapDiff())}>
+          <div style={sizerStyle(wrapDiff())}>
+            <For each={numbered()}>
+              {(nl) => {
+                const kind = nl.line.kind;
+                const canSelect = () => selectable() && (kind === "Added" || kind === "Deleted");
+                const sign = kind === "Added" ? "+" : kind === "Deleted" ? "-" : " ";
+                const bg = () => (isSel(nl.index) ? "var(--diff-sel-bg)" : rowBgFor(kind));
+                return (
+                  <div style={{ display: "flex", "min-height": "21px", background: bg() }}>
+                    <Gutter n={nl.oldNo} bg={gutBgFor(kind)} left="0" />
+                    <Gutter n={nl.newNo} bg={gutBgFor(kind)} left="46px" />
+                    <Show
+                      when={canSelect()}
+                      fallback={
+                        <span style={{ width: "20px", "flex-shrink": "0", "text-align": "center", color: codeColorFor(kind), "font-family": "ui-monospace, monospace", "font-size": "12px", "line-height": "21px", position: "sticky", left: "92px", "z-index": "1", background: bg() }}>
+                          {sign}
+                        </span>
+                      }
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isSel(nl.index)}
+                        onChange={() => toggle(nl.index)}
+                        style={{ width: "20px", "flex-shrink": "0", margin: "0", cursor: "pointer", position: "sticky", left: "92px", "z-index": "1", background: bg() }}
+                        title={`${sign} select line`}
+                      />
+                    </Show>
+                    <span style={{ ...codeStyle(wrapDiff()), color: codeColorFor(kind) }} innerHTML={highlight(nl.line.content, props.lang)} />
+                  </div>
+                );
+              }}
+            </For>
+          </div>
+        </div>
       </Show>
     </div>
   );

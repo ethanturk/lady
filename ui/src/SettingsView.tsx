@@ -32,6 +32,8 @@ import {
   THEME_MODES,
   themeMode,
   uiPadding,
+  wrapDiff,
+  setWrapDiff,
 } from "./prefs";
 import type { Accent, SizeStep, ThemeMode } from "./prefs";
 import {
@@ -319,6 +321,14 @@ const SettingsView: Component<{ repoId: RepoId | null }> = (props) => {
           >
             <For each={SIZE_OPTIONS}>{(s) => <option value={s}>{SIZE_LABEL[s]}</option>}</For>
           </select>
+        </label>
+        <label style={{ display: "flex", "align-items": "center", gap: "0.4rem", "font-size": "0.85rem" }}>
+          <input
+            type="checkbox"
+            checked={wrapDiff()}
+            onChange={(e) => setWrapDiff(e.currentTarget.checked)}
+          />
+          Wrap long lines in diffs
         </label>
       </div>
 
