@@ -150,6 +150,16 @@ pub fn ai_set_repo_enabled(
     write_settings(&settings)
 }
 
+/// The per-repo AI model override for `repo`, if any (keyed like `ai_repos`).
+/// Used to steer model selection in [`run_task`] before the global default.
+fn repo_ai_model(repo: &RepoId, engine: &GixEngine) -> Option<String> {
+    let key = repo_key(repo, engine).ok()?;
+    load_settings_inner()
+        .repo_overrides
+        .get(&key)
+        .and_then(|o| o.ai_model.clone())
+}
+
 /// Whether AI is enabled for `repo`.
 #[tauri::command]
 pub fn ai_repo_enabled(repo: RepoId, engine: State<'_, GixEngine>) -> Result<bool, String> {
@@ -157,11 +167,16 @@ pub fn ai_repo_enabled(repo: RepoId, engine: State<'_, GixEngine>) -> Result<boo
     Ok(load_settings_inner().ai_repos.contains(&key))
 }
 
-/// List models available from the local Ollama endpoint (PH5-003).
+/// List models from the configured OpenAI-compatible server (`/models`). The
+/// API key is optional (local servers ignore it).
 #[tauri::command]
-pub async fn ai_ollama_models() -> Result<Vec<String>, String> {
+pub async fn ai_list_models(ai: State<'_, AiState>) -> Result<Vec<String>, String> {
     let cfg = load_settings_inner().ai;
-    lady_ai::OllamaProvider::new(&cfg.ollama_host)
+    let key = ProviderKind::OpenAiCompatible
+        .key_id()
+        .and_then(|id| ai.keys.get(id).ok().flatten())
+        .unwrap_or_default();
+    lady_ai::OpenAiProvider::with_base_url(cfg.openai_base_url.trim_end_matches('/'), key)
         .list_models()
         .await
         .map_err(|e| e.to_string())
@@ -205,6 +220,7 @@ async fn run_task(
     temperature: f32,
     event: String,
     req_id: String,
+    repo_model: Option<String>,
 ) -> Result<String, String> {
     let cfg = load_settings_inner().ai;
     let kind = cfg
@@ -217,7 +233,13 @@ async fn run_task(
     };
     let provider = lady_ai::build_provider(kind, &cfg, api_key).map_err(|e| e.to_string())?;
 
-    let mut req = AiRequest::new(task, cfg.model_for(task));
+    // Model precedence: explicit per-task override > per-repo override > global
+    // default > the provider's built-in default.
+    let model = match repo_model {
+        Some(m) if !m.is_empty() && !cfg.models.contains_key(task.id()) => m,
+        _ => cfg.model_for(task),
+    };
+    let mut req = AiRequest::new(task, model);
     req.system = system;
     req.prompt = prompt;
     req.temperature = temperature;
@@ -242,7 +264,7 @@ fn active_budget() -> Budget {
     let window = cfg
         .active
         .map(|k| match k {
-            ProviderKind::Ollama => 8192,
+            ProviderKind::OpenAiCompatible => 8192,
             ProviderKind::Mistral => 32_000,
             ProviderKind::Anthropic => 200_000,
             ProviderKind::Gemini => 1_000_000,
@@ -327,6 +349,7 @@ pub async fn ai_commit_message(
         0.2,
         "ai-stream".to_string(),
         req_id,
+        repo_ai_model(&repo, &engine),
     )
     .await
 }
@@ -387,6 +410,7 @@ pub async fn ai_compose_commits(
         0.1,
         "ai-stream".to_string(),
         req_id,
+        repo_ai_model(&repo, &engine),
     )
     .await?;
     lady_ai::prompts::parse_commit_plan(&raw, &ids).map_err(|e| e.to_string())
@@ -433,10 +457,22 @@ pub(crate) fn apply_commit_plan_inner(
             let file = by_path
                 .get(path.as_str())
                 .ok_or_else(|| format!("unknown path {path} in plan"))?;
-            let patch = lady_diff::build_patch(&path, &file.hunks, &idxs);
-            engine
-                .apply_patch(repo, &patch, false, true)
-                .map_err(|e| e.to_string())?;
+            // Added/deleted/binary/image files have no text hunks that
+            // `git apply --cached` can create (no `/dev/null` header), so stage
+            // the whole path. Modified files stage just the selected hunks.
+            match file.kind {
+                lady_proto::FileDiffKind::Modified => {
+                    let patch = lady_diff::build_patch(&path, &file.hunks, &idxs);
+                    engine
+                        .apply_patch(repo, &patch, false, true)
+                        .map_err(|e| e.to_string())?;
+                }
+                _ => {
+                    engine
+                        .stage_paths(repo, std::slice::from_ref(&path))
+                        .map_err(|e| e.to_string())?;
+                }
+            }
         }
         engine
             .commit(repo, &commit.message, &CommitOpts::default())
@@ -444,6 +480,176 @@ pub(crate) fn apply_commit_plan_inner(
         made += 1;
     }
     Ok(made)
+}
+
+// ── Recompose commits (AI regroup of a HEAD-attached span) ──────────────────────
+
+/// Result of planning a recompose: the AI's regroup plan plus context the UI
+/// needs to warn/confirm before applying.
+#[derive(serde::Serialize)]
+pub struct RecomposePlan {
+    /// The proposed commits (reuses the Composer plan shape).
+    pub plan: lady_ai::prompts::CommitPlan,
+    /// Whether any commit in the span has already been pushed (force-push needed).
+    pub pushed: bool,
+    /// How many commits the span currently has (for the "N → M" confirm).
+    pub commit_count: usize,
+}
+
+/// The recompose base = the parent of `from_oid`. Errors on a root commit (v1
+/// cannot recompose the very first commit, which has no parent to reset to).
+fn recompose_base(
+    repo: &RepoId,
+    engine: &GixEngine,
+    from_oid: &str,
+) -> Result<lady_proto::Oid, String> {
+    let meta = engine
+        .walk_log(
+            repo,
+            lady_git::GraphQuery {
+                start: Some(lady_proto::Oid(from_oid.to_string())),
+                limit: 1,
+            },
+        )
+        .map_err(|e| e.to_string())?;
+    let first = meta
+        .into_iter()
+        .next()
+        .ok_or_else(|| format!("commit {from_oid} not found"))?;
+    first
+        .parents
+        .into_iter()
+        .next()
+        .ok_or_else(|| "Cannot recompose the root commit (it has no parent).".to_string())
+}
+
+/// Guard recompose: working tree must be clean and the span `base..HEAD` must be
+/// linear (no merge commits). Returns the number of commits in the span.
+fn recompose_guard(
+    repo: &RepoId,
+    engine: &GixEngine,
+    base: &lady_proto::Oid,
+) -> Result<usize, String> {
+    let wt = engine.status(repo).map_err(|e| e.to_string())?;
+    if !wt.staged.is_empty() || !wt.unstaged.is_empty() || !wt.untracked.is_empty() {
+        return Err("Commit or stash your working changes before recomposing.".to_string());
+    }
+    let range = format!("{}..HEAD", base.as_str());
+    let merges = engine
+        .run_custom(
+            repo,
+            &[
+                "git".into(),
+                "rev-list".into(),
+                "--merges".into(),
+                range.clone(),
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+    if !merges.stdout.trim().is_empty() {
+        return Err(
+            "This span contains a merge commit; recompose only linear history.".to_string(),
+        );
+    }
+    let count = engine
+        .run_custom(
+            repo,
+            &["git".into(), "rev-list".into(), "--count".into(), range],
+        )
+        .map_err(|e| e.to_string())?;
+    count
+        .stdout
+        .trim()
+        .parse::<usize>()
+        .map_err(|_| "could not count commits in the range".to_string())
+}
+
+/// Plan a recompose of the commits from `from_oid` up to HEAD into fewer logical
+/// commits. Read-only: computes the span's net diff and asks the model to
+/// regroup it; does NOT touch history (that is [`ai_recompose_apply`]).
+#[tauri::command]
+pub async fn ai_recompose_plan(
+    repo: RepoId,
+    from_oid: String,
+    req_id: String,
+    engine: State<'_, GixEngine>,
+    ai: State<'_, AiState>,
+    app: AppHandle,
+) -> Result<RecomposePlan, String> {
+    require_repo_enabled(&repo, &engine)?;
+    let base = recompose_base(&repo, &engine, &from_oid)?;
+    let commit_count = recompose_guard(&repo, &engine, &base)?;
+    if commit_count == 0 {
+        return Err("No commits to recompose.".to_string());
+    }
+    let head = engine.head_commit(&repo).map_err(|e| e.to_string())?;
+    let files = engine
+        .diff_range(&repo, &base, &head)
+        .map_err(|e| e.to_string())?;
+    let (text, ids) = render_with_ids(&files);
+    if ids.is_empty() {
+        return Err("These commits have no net changes to recompose.".to_string());
+    }
+    let (system, prompt) = lady_ai::prompts::split_commits(&text, &ids);
+    let raw = run_task(
+        &app,
+        &ai,
+        AiTask::SplitCommits,
+        system,
+        prompt,
+        0.1,
+        "ai-stream".to_string(),
+        req_id,
+        repo_ai_model(&repo, &engine),
+    )
+    .await?;
+    let plan = lady_ai::prompts::parse_commit_plan(&raw, &ids).map_err(|e| e.to_string())?;
+    let pushed = engine
+        .commit_is_pushed(&repo, &lady_proto::Oid(from_oid.clone()))
+        .map_err(|e| e.to_string())?;
+    Ok(RecomposePlan {
+        plan,
+        pushed,
+        commit_count,
+    })
+}
+
+/// Apply a reviewed recompose plan: mixed-reset the span to its base so the net
+/// change becomes working changes, then stage+commit each planned group. On any
+/// failure the original history is restored (`reset --hard` to the prior HEAD).
+/// Never runs without an explicit user confirm in the UI.
+#[tauri::command]
+pub fn ai_recompose_apply(
+    repo: RepoId,
+    from_oid: String,
+    plan: lady_ai::prompts::CommitPlan,
+    engine: State<'_, GixEngine>,
+) -> Result<usize, String> {
+    require_repo_enabled(&repo, &engine)?;
+    recompose_apply_inner(&repo, &from_oid, &plan, &engine)
+}
+
+/// Core of [`ai_recompose_apply`] (no per-repo gate) so it is unit-testable.
+pub(crate) fn recompose_apply_inner(
+    repo: &RepoId,
+    from_oid: &str,
+    plan: &lady_ai::prompts::CommitPlan,
+    engine: &GixEngine,
+) -> Result<usize, String> {
+    let base = recompose_base(repo, engine, from_oid)?;
+    recompose_guard(repo, engine, &base)?;
+    let orig = engine.head_commit(repo).map_err(|e| e.to_string())?;
+    engine
+        .reset(repo, &base, false)
+        .map_err(|e| e.to_string())?;
+    match apply_commit_plan_inner(repo, plan, engine) {
+        Ok(made) => Ok(made),
+        Err(e) => {
+            // Roll the original commits back so a failure leaves history intact.
+            let _ = engine.reset(repo, &orig, true);
+            Err(format!("Recompose failed and was rolled back: {e}"))
+        }
+    }
 }
 
 // ── PH5-008: Explain ────────────────────────────────────────────────────────────
@@ -454,12 +660,18 @@ pub(crate) fn apply_commit_plan_inner(
 pub enum ExplainArg {
     /// A single commit by oid.
     Commit { oid: String },
+    /// A user-selected set of commits by oid.
+    Commits { oids: Vec<String> },
     /// A branch range `base..head`.
     BranchRange { base: String, head: String },
     /// A stash entry by index.
     Stash { index: usize },
     /// The current working changes.
     Working,
+    /// A single file's uncommitted changes (working + staged vs HEAD).
+    Path { path: String },
+    /// A raw diff snippet (e.g. a single hunk) supplied by the UI.
+    Diff { diff: String },
 }
 
 /// Explain a target in plain English (PH5-008). `regenerate` re-rolls at a
@@ -494,10 +706,70 @@ pub async fn ai_explain(
                 ),
             )
         }
+        ExplainArg::Commits { oids } => {
+            if oids.is_empty() {
+                return Err("No commits selected to explain.".to_string());
+            }
+            // Share the context budget across the selected commits.
+            let full = active_budget();
+            let n = oids.len();
+            let per = Budget {
+                max_tokens: (full.max_tokens / n).max(256),
+                max_bytes: (full.max_bytes / n).max(1024),
+            };
+            let mut content = String::new();
+            for oid in &oids {
+                let o = lady_proto::Oid(oid.clone());
+                let summary = engine
+                    .walk_log(
+                        &repo,
+                        lady_git::GraphQuery {
+                            start: Some(o.clone()),
+                            limit: 1,
+                        },
+                    )
+                    .ok()
+                    .and_then(|m| m.into_iter().next())
+                    .map(|m| m.summary)
+                    .unwrap_or_default();
+                let files = engine.diff_commit(&repo, &o).map_err(|e| e.to_string())?;
+                content.push_str(&format!(
+                    "===== Commit {oid}: {summary} =====\n{}\n\n",
+                    context::budget_diff(&files, per)
+                ));
+            }
+            (ExplainTarget::Commits, content)
+        }
         ExplainArg::Working => (
             ExplainTarget::WorkingChanges,
             working_diff_text(&repo, &engine)?,
         ),
+        ExplainArg::Path { path } => {
+            // Working + staged changes for one file (everything vs HEAD).
+            let out = engine
+                .run_custom(
+                    &repo,
+                    &[
+                        "git".into(),
+                        "diff".into(),
+                        "HEAD".into(),
+                        "--".into(),
+                        path.clone(),
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+            let diff = out.stdout.trim();
+            if diff.is_empty() {
+                return Err(format!("No uncommitted changes in {path} to explain."));
+            }
+            (ExplainTarget::Changes, format!("File {path}:\n{diff}"))
+        }
+        ExplainArg::Diff { diff } => {
+            if diff.trim().is_empty() {
+                return Err("Nothing to explain.".to_string());
+            }
+            (ExplainTarget::Changes, diff)
+        }
         ExplainArg::Stash { index } => {
             let out = engine
                 .run_custom(
@@ -548,6 +820,7 @@ pub async fn ai_explain(
         temp,
         "ai-stream".to_string(),
         req_id,
+        repo_ai_model(&repo, &engine),
     )
     .await
 }
@@ -585,6 +858,7 @@ pub async fn ai_resolve_conflict(
         0.1,
         "ai-stream".to_string(),
         req_id,
+        repo_ai_model(&repo, &engine),
     )
     .await
 }
@@ -652,6 +926,7 @@ pub async fn ai_pr_title(
         0.3,
         "ai-stream".to_string(),
         req_id,
+        repo_ai_model(&repo, &engine),
     )
     .await
 }
@@ -680,6 +955,7 @@ pub async fn ai_pr_description(
         0.3,
         "ai-stream".to_string(),
         req_id,
+        repo_ai_model(&repo, &engine),
     )
     .await
 }
@@ -707,6 +983,7 @@ pub async fn ai_changelog(
         0.2,
         "ai-stream".to_string(),
         req_id,
+        repo_ai_model(&repo, &engine),
     )
     .await
 }
@@ -735,6 +1012,7 @@ pub async fn ai_stash_note(
         0.3,
         "ai-stream".to_string(),
         req_id,
+        repo_ai_model(&repo, &engine),
     )
     .await
 }

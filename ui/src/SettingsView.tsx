@@ -1,17 +1,56 @@
-import { createSignal, onMount, Show } from "solid-js";
+import { createEffect, createSignal, onMount, Show } from "solid-js";
 import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { For } from "solid-js";
-import type { ForgeKind, HostingInfo, LicenseStatus, RepoId, RepoInfo } from "./commands";
+import type {
+  FfMode,
+  ForgeKind,
+  GitIdentity,
+  HostingInfo,
+  LicenseStatus,
+  RepoId,
+  RepoInfo,
+  RepoSettings,
+  ResolvedRepoSettings,
+} from "./commands";
 import { FORGE_KINDS, FORGE_LABEL } from "./commands";
 import AiSettings from "./AiSettings";
+import {
+  accent,
+  ACCENT_LABEL,
+  ACCENTS,
+  changesLayout,
+  setAccent,
+  SIZE_LABEL,
+  SIZE_OPTIONS,
+  setChangesLayout,
+  setTextSize,
+  setThemeMode,
+  setUiPadding,
+  textSize,
+  THEME_LABEL,
+  THEME_MODES,
+  themeMode,
+  uiPadding,
+} from "./prefs";
+import type { Accent, SizeStep, ThemeMode } from "./prefs";
+import {
+  BUILTIN_FF,
+  BUILTIN_SIGN,
+  globalDefaults,
+  repoIdentityGet,
+  repoIdentitySet,
+  repoSettings,
+  setGlobalDefaults,
+  setRepoOverride,
+} from "./repoSettings";
 
 /**
  * Settings panel (PH3-011 / PH4): connect/disconnect the active repo's forge
  * (GitHub / GitLab / Bitbucket / Azure DevOps, auto-detected from the remote)
  * via a token stored in the OS keychain (never on disk), plus license entry.
  */
-const SettingsView: Component<{ repoId: RepoId }> = (props) => {
+const SettingsView: Component<{ repoId: RepoId | null }> = (props) => {
   const [status, setStatus] = createSignal<HostingInfo>({
     kind: null,
     connected: false,
@@ -116,14 +155,89 @@ const SettingsView: Component<{ repoId: RepoId }> = (props) => {
   };
 
   const loadStatus = () => {
+    if (!props.repoId) return;
     invoke<HostingInfo>("hosting_status", { repo: props.repoId })
       .then(setStatus)
       .catch((e) => setErr(String(e)));
   };
 
+  // Global defaults + per-repo overrides (Plan 2). One round-trip returns all
+  // three layers (effective / override / global); identity is read separately
+  // from the repo's .git/config.
+  const [resolved, setResolved] = createSignal<ResolvedRepoSettings | null>(null);
+  // Global defaults loaded directly when no repo is open (no resolved layer).
+  const [globalOnly, setGlobalOnly] = createSignal<RepoSettings | null>(null);
+  const [ident, setIdent] = createSignal<GitIdentity>({ name: null, email: null });
+  const [rsErr, setRsErr] = createSignal<string | null>(null);
+  const [idName, setIdName] = createSignal("");
+  const [idEmail, setIdEmail] = createSignal("");
+
+  const loadRepoSettings = () => {
+    const repo = props.repoId;
+    if (!repo) {
+      // No repo: load just the global defaults so the global section still works.
+      setResolved(null);
+      globalDefaults().then(setGlobalOnly).catch((e) => setRsErr(String(e)));
+      return;
+    }
+    repoSettings(repo).then(setResolved).catch((e) => setRsErr(String(e)));
+    repoIdentityGet(repo)
+      .then((i) => {
+        setIdent(i);
+        setIdName(i.name ?? "");
+        setIdEmail(i.email ?? "");
+      })
+      .catch(() => {});
+  };
+
+  const global = (): RepoSettings => resolved()?.global ?? globalOnly() ?? {};
+  const override = (): RepoSettings => resolved()?.override ?? {};
+  const overridden = (k: keyof RepoSettings) =>
+    override()[k] !== undefined && override()[k] !== null;
+
+  const saveGlobal = (patch: Partial<RepoSettings>) => {
+    setRsErr(null);
+    setGlobalDefaults({ ...global(), ...patch })
+      .then(loadRepoSettings)
+      .catch((e) => setRsErr(String(e)));
+  };
+  const saveOverride = (patch: Partial<RepoSettings>) => {
+    const repo = props.repoId;
+    if (!repo) return;
+    setRsErr(null);
+    setRepoOverride(repo, { ...override(), ...patch })
+      .then(loadRepoSettings)
+      .catch((e) => setRsErr(String(e)));
+  };
+  // Turning an override on seeds it with the current effective value; off clears
+  // it (null ⇒ inherit the global default).
+  const toggleOverride = <K extends keyof RepoSettings>(
+    k: K,
+    on: boolean,
+    seed: NonNullable<RepoSettings[K]>,
+  ) =>
+    saveOverride({
+      [k]: on ? (resolved()?.effective[k] ?? seed) : null,
+    } as Partial<RepoSettings>);
+
+  const saveIdentity = () => {
+    const repo = props.repoId;
+    if (!repo) return;
+    setRsErr(null);
+    repoIdentitySet(repo, idName().trim(), idEmail().trim())
+      .then(loadRepoSettings)
+      .catch((e) => setRsErr(String(e)));
+  };
+
   onMount(() => {
-    loadStatus();
     invoke<LicenseStatus>("license_status").then(setLicense).catch(() => {});
+  });
+  // Reload repo-dependent data whenever the active repo changes (the dialog can
+  // stay mounted across repo switches, and opens with no repo at all).
+  createEffect(() => {
+    void props.repoId;
+    loadStatus();
+    loadRepoSettings();
   });
 
   const connect = () => {
@@ -148,8 +262,226 @@ const SettingsView: Component<{ repoId: RepoId }> = (props) => {
   };
 
   return (
-    <div style={{ height: "100%", "overflow-y": "auto", padding: "0.9rem 1rem", "max-width": "40rem" }}>
-      <h3 style={{ margin: "0 0 0.4rem", "font-size": "0.95rem" }}>Updates</h3>
+    <div style={{ height: "100%", width: "100%", "box-sizing": "border-box", "overflow-y": "auto", padding: "1rem 1.4rem" }}>
+      <h3 style={{ margin: "0 0 0.4rem", "font-size": "0.95rem" }}>Appearance</h3>
+      <div style={{ display: "flex", "flex-direction": "column", gap: "0.55rem", "max-width": "30rem" }}>
+        <label style={{ display: "flex", "align-items": "center", gap: "0.5rem", "font-size": "0.85rem" }}>
+          <span style={{ "min-width": "11rem" }}>Color scheme</span>
+          <select
+            value={themeMode()}
+            onChange={(e) => setThemeMode(e.currentTarget.value as ThemeMode)}
+            style={{ "font-size": "0.82rem" }}
+          >
+            <For each={THEME_MODES}>{(m) => <option value={m}>{THEME_LABEL[m]}</option>}</For>
+          </select>
+        </label>
+        <label style={{ display: "flex", "align-items": "center", gap: "0.5rem", "font-size": "0.85rem" }}>
+          <span style={{ "min-width": "11rem" }}>Accent color</span>
+          <select
+            value={accent()}
+            onChange={(e) => setAccent(e.currentTarget.value as Accent)}
+            style={{ "font-size": "0.82rem" }}
+          >
+            <For each={ACCENTS}>{(a) => <option value={a}>{ACCENT_LABEL[a]}</option>}</For>
+          </select>
+          <span
+            aria-hidden="true"
+            style={{ width: "0.9rem", height: "0.9rem", "border-radius": "50%", background: "var(--accent)", display: "inline-block", border: "1px solid var(--bd)" }}
+          />
+        </label>
+        <label style={{ display: "flex", "align-items": "center", gap: "0.5rem", "font-size": "0.85rem" }}>
+          <span style={{ "min-width": "11rem" }}>Local Changes file layout</span>
+          <select
+            value={changesLayout()}
+            onChange={(e) => setChangesLayout(e.currentTarget.value as "list" | "tree")}
+            style={{ "font-size": "0.82rem" }}
+          >
+            <option value="list">List</option>
+            <option value="tree">Tree</option>
+          </select>
+        </label>
+        <label style={{ display: "flex", "align-items": "center", gap: "0.5rem", "font-size": "0.85rem" }}>
+          <span style={{ "min-width": "11rem" }}>Text size</span>
+          <select
+            value={textSize()}
+            onChange={(e) => setTextSize(e.currentTarget.value as SizeStep)}
+            style={{ "font-size": "0.82rem" }}
+          >
+            <For each={SIZE_OPTIONS}>{(s) => <option value={s}>{SIZE_LABEL[s]}</option>}</For>
+          </select>
+        </label>
+        <label style={{ display: "flex", "align-items": "center", gap: "0.5rem", "font-size": "0.85rem" }}>
+          <span style={{ "min-width": "11rem" }}>Padding</span>
+          <select
+            value={uiPadding()}
+            onChange={(e) => setUiPadding(e.currentTarget.value as SizeStep)}
+            style={{ "font-size": "0.82rem" }}
+          >
+            <For each={SIZE_OPTIONS}>{(s) => <option value={s}>{SIZE_LABEL[s]}</option>}</For>
+          </select>
+        </label>
+      </div>
+
+      <h3 style={{ margin: "1.2rem 0 0.4rem", "font-size": "0.95rem" }}>Git defaults</h3>
+      <p style={{ "font-size": "0.8rem", color: "var(--fg-muted)", margin: "0 0 0.5rem" }}>
+        Used for every repository unless overridden below.
+      </p>
+      <Show when={rsErr()}>
+        <p role="alert" style={{ color: "var(--error)", "font-size": "0.82rem" }}>{rsErr()}</p>
+      </Show>
+      <div style={{ display: "flex", "flex-direction": "column", gap: "0.5rem", "max-width": "30rem" }}>
+        <label style={{ display: "flex", "align-items": "center", gap: "0.4rem", "font-size": "0.85rem" }}>
+          <input
+            type="checkbox"
+            checked={global().sign ?? BUILTIN_SIGN}
+            onChange={(e) => saveGlobal({ sign: e.currentTarget.checked })}
+          />
+          Sign commits by default
+        </label>
+        <label style={{ display: "flex", "align-items": "center", gap: "0.4rem", "font-size": "0.85rem" }}>
+          <span style={{ "min-width": "11rem" }}>Default merge fast-forward</span>
+          <select
+            value={global().ff ?? BUILTIN_FF}
+            onChange={(e) => saveGlobal({ ff: e.currentTarget.value as FfMode })}
+            style={{ "font-size": "0.82rem" }}
+          >
+            <option value="Auto">Auto (--ff)</option>
+            <option value="Only">Only (--ff-only)</option>
+            <option value="Never">Never (--no-ff)</option>
+          </select>
+        </label>
+        <label style={{ display: "flex", "align-items": "center", gap: "0.4rem", "font-size": "0.85rem" }}>
+          <span style={{ "min-width": "11rem" }}>Default base branch</span>
+          <input
+            style={{ flex: "1", padding: "0.3rem 0.5rem", "font-size": "0.85rem" }}
+            placeholder="(auto-detect main/master)"
+            value={global().base_branch ?? ""}
+            onChange={(e) => saveGlobal({ base_branch: e.currentTarget.value.trim() || null })}
+          />
+        </label>
+      </div>
+
+      <Show when={props.repoId}>
+      <h3 style={{ margin: "1.2rem 0 0.4rem", "font-size": "0.95rem" }}>This repository</h3>
+      <p style={{ "font-size": "0.8rem", color: "var(--fg-muted)", margin: "0 0 0.5rem" }}>
+        Overrides apply only to this repo; unchecked rows inherit the global default.
+      </p>
+      <div style={{ display: "flex", "flex-direction": "column", gap: "0.6rem", "max-width": "30rem" }}>
+        {/* Commit signing override */}
+        <div style={{ display: "flex", "align-items": "center", gap: "0.5rem", "font-size": "0.85rem" }}>
+          <label style={{ display: "flex", "align-items": "center", gap: "0.4rem", "min-width": "11rem" }}>
+            <input
+              type="checkbox"
+              checked={overridden("sign")}
+              onChange={(e) => toggleOverride("sign", e.currentTarget.checked, !(global().sign ?? BUILTIN_SIGN))}
+            />
+            Override commit signing
+          </label>
+          <Show
+            when={overridden("sign")}
+            fallback={<span style={{ color: "var(--fg-muted)" }}>inherits: {(global().sign ?? BUILTIN_SIGN) ? "on" : "off"}</span>}
+          >
+            <label style={{ display: "flex", "align-items": "center", gap: "0.3rem" }}>
+              <input type="checkbox" checked={!!override().sign} onChange={(e) => saveOverride({ sign: e.currentTarget.checked })} />
+              sign commits
+            </label>
+          </Show>
+        </div>
+
+        {/* Fast-forward override */}
+        <div style={{ display: "flex", "align-items": "center", gap: "0.5rem", "font-size": "0.85rem" }}>
+          <label style={{ display: "flex", "align-items": "center", gap: "0.4rem", "min-width": "11rem" }}>
+            <input
+              type="checkbox"
+              checked={overridden("ff")}
+              onChange={(e) => toggleOverride("ff", e.currentTarget.checked, global().ff ?? BUILTIN_FF)}
+            />
+            Override merge fast-forward
+          </label>
+          <Show
+            when={overridden("ff")}
+            fallback={<span style={{ color: "var(--fg-muted)" }}>inherits: {global().ff ?? BUILTIN_FF}</span>}
+          >
+            <select value={override().ff ?? BUILTIN_FF} onChange={(e) => saveOverride({ ff: e.currentTarget.value as FfMode })} style={{ "font-size": "0.82rem" }}>
+              <option value="Auto">Auto</option>
+              <option value="Only">Only</option>
+              <option value="Never">Never</option>
+            </select>
+          </Show>
+        </div>
+
+        {/* Base branch override */}
+        <div style={{ display: "flex", "align-items": "center", gap: "0.5rem", "font-size": "0.85rem" }}>
+          <label style={{ display: "flex", "align-items": "center", gap: "0.4rem", "min-width": "11rem" }}>
+            <input
+              type="checkbox"
+              checked={overridden("base_branch")}
+              onChange={(e) => toggleOverride("base_branch", e.currentTarget.checked, global().base_branch ?? "main")}
+            />
+            Override base branch
+          </label>
+          <Show
+            when={overridden("base_branch")}
+            fallback={<span style={{ color: "var(--fg-muted)" }}>inherits: {global().base_branch ?? "auto"}</span>}
+          >
+            <input
+              style={{ flex: "1", padding: "0.3rem 0.5rem", "font-size": "0.85rem" }}
+              value={override().base_branch ?? ""}
+              onChange={(e) => saveOverride({ base_branch: e.currentTarget.value.trim() || null })}
+            />
+          </Show>
+        </div>
+
+        {/* AI model override */}
+        <div style={{ display: "flex", "align-items": "center", gap: "0.5rem", "font-size": "0.85rem" }}>
+          <label style={{ display: "flex", "align-items": "center", gap: "0.4rem", "min-width": "11rem" }}>
+            <input
+              type="checkbox"
+              checked={overridden("ai_model")}
+              onChange={(e) => toggleOverride("ai_model", e.currentTarget.checked, global().ai_model ?? "")}
+            />
+            Override AI model
+          </label>
+          <Show
+            when={overridden("ai_model")}
+            fallback={<span style={{ color: "var(--fg-muted)" }}>inherits: {global().ai_model || "provider default"}</span>}
+          >
+            <input
+              style={{ flex: "1", padding: "0.3rem 0.5rem", "font-size": "0.85rem" }}
+              placeholder="model id"
+              value={override().ai_model ?? ""}
+              onChange={(e) => saveOverride({ ai_model: e.currentTarget.value.trim() || null })}
+            />
+          </Show>
+        </div>
+
+        {/* Git identity (writes .git/config --local) */}
+        <div style={{ "border-top": "1px solid var(--border)", "padding-top": "0.6rem", "margin-top": "0.2rem" }}>
+          <div style={{ "font-size": "0.85rem", margin: "0 0 0.4rem" }}>
+            Git identity <span style={{ color: "var(--fg-muted)" }}>(this repo's .git/config)</span>
+          </div>
+          <div style={{ display: "flex", "flex-direction": "column", gap: "0.4rem" }}>
+            <input
+              style={{ padding: "0.3rem 0.5rem", "font-size": "0.85rem" }}
+              placeholder={ident().name ? "" : "user.name (leave blank to inherit global git)"}
+              value={idName()}
+              onInput={(e) => setIdName(e.currentTarget.value)}
+            />
+            <input
+              style={{ padding: "0.3rem 0.5rem", "font-size": "0.85rem" }}
+              placeholder="user.email"
+              value={idEmail()}
+              onInput={(e) => setIdEmail(e.currentTarget.value)}
+            />
+            <button onClick={saveIdentity} style={{ "align-self": "flex-start", padding: "0.3rem 0.9rem" }}>
+              Save identity
+            </button>
+          </div>
+        </div>
+      </div>
+      </Show>
+
+      <h3 style={{ margin: "1.2rem 0 0.4rem", "font-size": "0.95rem" }}>Updates</h3>
       <div style={{ display: "flex", gap: "0.4rem", "align-items": "center" }}>
         <button onClick={checkUpdates} disabled={updBusy()} style={{ padding: "0.3rem 0.9rem" }}>
           {updBusy() ? "Working…" : "Check for updates"}
@@ -195,6 +527,7 @@ const SettingsView: Component<{ repoId: RepoId }> = (props) => {
         <p style={{ color: "var(--error)", "font-size": "0.82rem" }}>{licenseErr()}</p>
       </Show>
 
+      <Show when={props.repoId}>
       <h3 style={{ margin: "1.2rem 0 0.6rem", "font-size": "0.95rem" }}>Hosting — {forgeName()}</h3>
 
       <Show when={err()}>
@@ -297,7 +630,10 @@ const SettingsView: Component<{ repoId: RepoId }> = (props) => {
           </button>
         </div>
       </Show>
+      </Show>
 
+      {/* AI is global config (provider / keys / consent / model); the per-repo
+          enable toggle inside appears only when a repo is open. */}
       <AiSettings repoId={props.repoId} />
     </div>
   );

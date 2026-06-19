@@ -1,11 +1,11 @@
-import { createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, Show } from "solid-js";
 import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import type { CommitMeta, RepoId } from "./commands";
 import { relTime } from "./time";
 import DiffView from "./DiffView";
 
-const FileHistory: Component<{ repoId: RepoId }> = (props) => {
+const FileHistory: Component<{ repoId: RepoId; initialPath?: string }> = (props) => {
   const [file, setFile] = createSignal("");
   const [commits, setCommits] = createSignal<CommitMeta[]>([]);
   const [selected, setSelected] = createSignal<string | null>(null);
@@ -30,6 +30,15 @@ const FileHistory: Component<{ repoId: RepoId }> = (props) => {
       setLoading(false);
     }
   };
+
+  // When opened from a file context menu, prefill the path and load it once.
+  createEffect(() => {
+    const p = props.initialPath;
+    if (p && p !== file()) {
+      setFile(p);
+      run();
+    }
+  });
 
   return (
     <div style={{ height: "100%", display: "flex", "flex-direction": "column" }}>

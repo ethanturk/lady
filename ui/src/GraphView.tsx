@@ -1,60 +1,37 @@
-import {
-  createEffect,
-  createMemo,
-  createSignal,
-  For,
-  onMount,
-  Show,
-} from "solid-js";
+import { createEffect, createMemo, createSignal, For, onMount, Show } from "solid-js";
 import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
-import type {
-  CommitGraphRow,
-  RepoId,
-  SignatureStatus,
-  StashEntry,
-  WalkLogGraphResult,
-  WalkLogQuery,
-} from "./commands";
+import type { CommitGraphRow, RepoId, StashEntry, WalkLogGraphResult, WalkLogQuery } from "./commands";
 import { relTime } from "./time";
-import SignatureBadge from "./SignatureBadge";
+import { authorColor, initials } from "./avatar";
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 const ROW_H = 48;
-const LANE_W = 16; // horizontal pixels per lane column
-const COMMIT_R = 4; // commit circle radius in CSS pixels
+const LANE_W = 20; // horizontal pixels per lane column
+const COMMIT_R = 7; // commit circle radius in CSS pixels (design node)
 const BATCH = 500;
 const LOAD_AHEAD_PX = 800;
 const BUFFER = 5;
 
-// Lane colors (cycled for different lanes). This is an intentional categorical
-// palette drawn on the canvas — mid-tone hues chosen to read on BOTH the light
-// and dark surfaces — not a theme-token leak (PH6-004). The commit-dot ring uses
-// the resolved --bg below so it adapts per theme.
-const LANE_COLORS = ["#0070f3", "#cc2200", "#0a8a0a", "#8a0a8a", "#cc7700", "#0a7a8a"];
+// Lane colors. Main lane = blue, first branch = magenta (design), then a
+// categorical palette of mid-tone hues that read on both themes. The node ring
+// uses the lane color; the node fill is the author's avatar color.
+const LANE_COLORS = ["#5b8def", "#db61a2", "#0a8a0a", "#cc7700", "#8a5cf6", "#0a7a8a"];
 const laneColor = (lane: number) => LANE_COLORS[lane % LANE_COLORS.length];
 
 // ── Canvas draw ───────────────────────────────────────────────────────────────
 
-function drawGraph(
-  canvas: HTMLCanvasElement,
-  rows: CommitGraphRow[],
-  scrollTop: number,
-  viewportH: number,
-) {
+function drawGraph(canvas: HTMLCanvasElement, rows: CommitGraphRow[], scrollTop: number, viewportH: number) {
   const dpr = window.devicePixelRatio || 1;
   const graphW = canvas.width / dpr;
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
 
-  // Resolve the themed background once so the commit-dot ring matches the
-  // surface in light and dark (canvas can't reference CSS vars directly).
-  const ringColor =
-    getComputedStyle(canvas).getPropertyValue("--bg").trim() || "#ffffff";
-
   ctx.clearRect(0, 0, graphW, viewportH);
   ctx.save();
   ctx.scale(dpr, dpr);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
 
   const sr = Math.max(0, Math.floor(scrollTop / ROW_H) - 1);
   const er = Math.min(rows.length - 1, Math.ceil((scrollTop + viewportH) / ROW_H) + 1);
@@ -65,7 +42,7 @@ function drawGraph(
     const screenY = i * ROW_H - scrollTop;
     const cy = screenY + ROW_H / 2;
 
-    // Draw edges from this row to the next.
+    // Edges from this row to the next.
     for (const edge of row.edges) {
       const x1 = edge.from_lane * LANE_W + LANE_W / 2;
       const y1 = cy;
@@ -73,38 +50,93 @@ function drawGraph(
       const y2 = screenY + ROW_H + ROW_H / 2;
       ctx.beginPath();
       ctx.moveTo(x1, y1);
-      if (Math.abs(x1 - x2) < 0.5) {
-        ctx.lineTo(x2, y2);
-      } else {
-        ctx.bezierCurveTo(x1, y1 + ROW_H * 0.5, x2, y2 - ROW_H * 0.5, x2, y2);
-      }
+      if (Math.abs(x1 - x2) < 0.5) ctx.lineTo(x2, y2);
+      else ctx.bezierCurveTo(x1, y1 + ROW_H * 0.5, x2, y2 - ROW_H * 0.5, x2, y2);
       ctx.strokeStyle = laneColor(edge.from_lane);
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = 2;
       ctx.stroke();
     }
 
-    // Draw commit circle on top of edges.
+    // Commit node: author-colored fill, lane-colored ring, dark initials.
     const cx = row.lane * LANE_W + LANE_W / 2;
     ctx.beginPath();
     ctx.arc(cx, cy, COMMIT_R, 0, 2 * Math.PI);
-    ctx.fillStyle = laneColor(row.lane);
+    ctx.fillStyle = authorColor(row.author_name);
     ctx.fill();
-    ctx.strokeStyle = ringColor;
-    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = laneColor(row.lane);
+    ctx.lineWidth = 2.5;
     ctx.stroke();
+    ctx.fillStyle = "#0c0d10";
+    ctx.font = "700 7.5px ui-monospace, monospace";
+    ctx.fillText(initials(row.author_name).slice(0, 2), cx, cy + 0.5);
   }
 
   ctx.restore();
 }
 
+// ── Ref chips ───────────────────────────────────────────────────────────────
+type ChipKind = "head" | "remote" | "tag" | "branch";
+function classifyRef(ref: string): { label: string; kind: ChipKind } {
+  if (ref === "HEAD") return { label: "HEAD", kind: "head" };
+  if (ref.startsWith("tag:")) return { label: ref.slice(4).trim(), kind: "tag" };
+  if (ref.includes("/")) return { label: ref, kind: "remote" };
+  return { label: ref, kind: "branch" };
+}
+const chipStyle = (kind: ChipKind) => {
+  const base = {
+    "font-size": "11px",
+    "font-weight": 600,
+    "border-radius": "4px",
+    padding: "1px 7px",
+    border: "1px solid var(--bd)",
+    "white-space": "nowrap" as const,
+  };
+  if (kind === "branch")
+    return { ...base, color: "var(--chip-branch-tx)", background: "var(--chip-branch-bg)", "border-color": "var(--chip-branch-bd)" };
+  if (kind === "remote") return { ...base, color: "var(--tx3)", background: "var(--hov)" };
+  if (kind === "tag") return { ...base, color: "var(--warning)", background: "var(--warning-bg)", "border-color": "var(--warning-border)" };
+  return { ...base, color: "var(--tx)", background: "var(--hov)" }; // head
+};
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 const GraphView: Component<{
   repoId: RepoId;
-  selected?: string;
-  onSelectCommit?: (oid: string) => void;
+  /** All selected commit oids (multi-select, controlled by the parent). */
+  selected?: string[];
+  /** The last-clicked oid — drives the detail pane and gets the accent bar. */
+  primary?: string;
+  /** Emits the new selection after a click resolves Cmd/Ctrl + Shift gestures. */
+  onSelectionChange?: (oids: string[], primary: string) => void;
 }> = (props) => {
   const [rows, setRows] = createSignal<CommitGraphRow[]>([]);
+  // Anchor oid for Shift-range selection (the last plainly/Cmd-clicked row).
+  const [anchor, setAnchor] = createSignal<string | null>(null);
+
+  // Resolve a click into a new selection given the modifier keys, then hand it
+  // up to the parent (which owns the selection state).
+  const handleClick = (oid: string, mods: { meta: boolean; shift: boolean }) => {
+    const cur = props.selected ?? [];
+    if (mods.shift && anchor()) {
+      const order = rows().map((r) => r.oid);
+      const a = order.indexOf(anchor()!);
+      const b = order.indexOf(oid);
+      if (a !== -1 && b !== -1) {
+        const [lo, hi] = a <= b ? [a, b] : [b, a];
+        props.onSelectionChange?.(order.slice(lo, hi + 1), oid);
+        return;
+      }
+    }
+    if (mods.meta) {
+      const next = cur.includes(oid) ? cur.filter((o) => o !== oid) : [...cur, oid];
+      setAnchor(oid);
+      // Keep a primary even after de-selecting the clicked row.
+      props.onSelectionChange?.(next, next.includes(oid) ? oid : next[next.length - 1] ?? oid);
+      return;
+    }
+    setAnchor(oid);
+    props.onSelectionChange?.([oid], oid);
+  };
   const [scrollTop, setScrollTop] = createSignal(0);
   const [viewportH, setViewportH] = createSignal(400);
   const [loading, setLoading] = createSignal(false);
@@ -112,27 +144,18 @@ const GraphView: Component<{
   const [cursor, setCursor] = createSignal<string | undefined>(undefined);
   const [layoutState, setLayoutState] = createSignal<(string | null)[]>([]);
   const [stashes, setStashes] = createSignal<StashEntry[]>([]);
-  // Signature verification status per commit oid (PH3-005), fetched per page.
-  const [sigs, setSigs] = createSignal<Record<string, SignatureStatus>>({});
 
   let listContainer!: HTMLDivElement;
   let canvasEl!: HTMLCanvasElement;
 
   const totalH = () => rows().length * ROW_H;
-
-  // Max lanes across loaded rows — determines canvas width.
-  const maxLanes = createMemo(() =>
-    rows().reduce((m, r) => Math.max(m, r.num_lanes), 1),
-  );
+  const maxLanes = createMemo(() => rows().reduce((m, r) => Math.max(m, r.num_lanes), 1));
   const graphW = () => Math.max(1, maxLanes()) * LANE_W + LANE_W;
 
-  // Virtual window for DOM rows.
   const startRow = () => Math.max(0, Math.floor(scrollTop() / ROW_H) - BUFFER);
-  const endRow = () =>
-    Math.min(rows().length, Math.ceil((scrollTop() + viewportH()) / ROW_H) + BUFFER);
+  const endRow = () => Math.min(rows().length, Math.ceil((scrollTop() + viewportH()) / ROW_H) + BUFFER);
   const visibleSlice = createMemo(() => rows().slice(startRow(), endRow()));
 
-  // Resize and redraw canvas whenever scroll/rows/viewport change.
   const resizeCanvas = () => {
     const dpr = window.devicePixelRatio || 1;
     const w = graphW();
@@ -144,11 +167,10 @@ const GraphView: Component<{
   };
 
   createEffect(() => {
-    // Track reactive dependencies.
     const st = scrollTop();
     const vh = viewportH();
     const allRows = rows();
-    graphW(); // track lane count change
+    graphW();
     if (!canvasEl) return;
     resizeCanvas();
     drawGraph(canvasEl, allRows, st, vh);
@@ -170,29 +192,13 @@ const GraphView: Component<{
       setHasMore(fresh.length === BATCH);
       setLayoutState(result.layout_state);
       if (fresh.length > 0) setCursor(fresh[fresh.length - 1].oid);
-      // Fetch signature statuses for this page in one batch call.
-      if (fresh.length > 0) {
-        const oids = fresh.map((r) => r.oid);
-        invoke<SignatureStatus[]>("signature_statuses", { repo: props.repoId, oids })
-          .then((statuses) => {
-            setSigs((prev) => {
-              const next = { ...prev };
-              oids.forEach((o, i) => (next[o] = statuses[i]));
-              return next;
-            });
-          })
-          .catch(() => {});
-      }
     } finally {
       setLoading(false);
     }
   };
 
-  // Stashes are shown as distinct marker rows above the commits (Fork parity).
   const loadStashes = () => {
-    invoke<StashEntry[]>("stash_list", { repo: props.repoId })
-      .then(setStashes)
-      .catch(() => setStashes([]));
+    invoke<StashEntry[]>("stash_list", { repo: props.repoId }).then(setStashes).catch(() => setStashes([]));
   };
   createEffect(() => {
     props.repoId;
@@ -211,146 +217,143 @@ const GraphView: Component<{
     if (st + viewportH() >= totalH() - LOAD_AHEAD_PX) loadMore();
   };
 
+  const colDesc = { flex: "1 1 0", "min-width": "210px", overflow: "hidden" } as const;
+  const colAuthor = { flex: "0 1 156px", "min-width": "90px" } as const;
+  const colCommit = { flex: "0 0 74px" } as const;
+  const colDate = { flex: "0 1 142px", "min-width": "80px", "text-align": "right" as const };
+
   return (
-    <div style={{ display: "flex", "flex-direction": "column", height: "100%", overflow: "hidden" }}>
-      {/* Stash markers shown inline above the commit graph (Fork parity). */}
+    <div style={{ display: "flex", "flex-direction": "column", height: "100%", overflow: "hidden", background: "var(--bg)" }}>
+      {/* Stash markers above the commit graph (Fork parity). */}
       <Show when={stashes().length > 0}>
-        <div style={{ "flex-shrink": 0, "border-bottom": "1px solid var(--border)" }}>
+        <div style={{ "flex-shrink": 0, "border-bottom": "1px solid var(--bd)" }}>
           <For each={stashes()}>
             {(s) => (
-              <div
-                style={{
-                  display: "flex",
-                  "align-items": "center",
-                  gap: "0.5rem",
-                  padding: "0.2rem 0.5rem",
-                  "font-size": "0.8rem",
-                  background: "var(--surface-2)",
-                }}
-              >
+              <div style={{ display: "flex", "align-items": "center", gap: "0.5rem", padding: "0.2rem 0.5rem", "font-size": "0.8rem", background: "var(--sub)" }}>
                 <span style={{ color: "var(--accent-2)" }}>⬡</span>
-                <span style={{ "font-family": "monospace", color: "var(--accent-2)", "min-width": "8ch" }}>
-                  {`stash@{${s.index}}`}
-                </span>
-                <span
-                  style={{
-                    flex: "1",
-                    overflow: "hidden",
-                    "text-overflow": "ellipsis",
-                    "white-space": "nowrap",
-                  }}
-                  title={s.message}
-                >
-                  {s.message}
-                </span>
+                <span style={{ "font-family": "ui-monospace, monospace", color: "var(--accent-2)", "min-width": "8ch" }}>{`stash@{${s.index}}`}</span>
+                <span style={{ flex: "1", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }} title={s.message}>{s.message}</span>
               </div>
             )}
           </For>
         </div>
       </Show>
 
-      <div style={{ display: "flex", flex: "1", "min-height": "0", overflow: "hidden" }}>
-        {/* Canvas column: graph lanes and edges (redraws on scroll) */}
-      <canvas
-        ref={canvasEl}
-        style={{
-          "flex-shrink": "0",
-          "pointer-events": "none",
-          "align-self": "flex-start",
-        }}
-      />
-
-      {/* Commit list column: virtualized DOM rows */}
+      {/* Column header (non-scrolling), aligned over the list via a graph-width spacer. */}
       <div
-        ref={listContainer}
-        style={{ flex: "1", "overflow-y": "auto" }}
-        onScroll={onScroll}
+        style={{
+          display: "flex",
+          "align-items": "center",
+          height: "30px",
+          "flex-shrink": 0,
+          "padding-right": "18px",
+          "border-bottom": "1px solid var(--bd)",
+          color: "var(--tx4)",
+          "font-size": "10.5px",
+          "text-transform": "uppercase",
+          "letter-spacing": "0.05em",
+        }}
       >
-        {/* Full-height spacer for scroll range */}
-        <div style={{ height: `${totalH()}px`, position: "relative" }}>
-          <div
-            style={{
-              position: "absolute",
-              top: `${startRow() * ROW_H}px`,
-              left: 0,
-              right: 0,
-            }}
-          >
-            <For each={visibleSlice()}>
-              {(row) => (
-                <div
-                  onClick={() => props.onSelectCommit?.(row.oid)}
-                  style={{
-                    height: `${ROW_H}px`,
-                    display: "flex",
-                    "align-items": "center",
-                    gap: "0.5rem",
-                    padding: "0 0.5rem",
-                    "border-bottom": "1px solid var(--border)",
-                    "box-sizing": "border-box",
-                    "font-size": "0.875rem",
-                    cursor: "pointer",
-                    background: props.selected === row.oid ? "var(--selection)" : "transparent",
-                  }}
-                >
-                  <span
-                    style={{
-                      "font-family": "monospace",
-                      color: "var(--fg-muted)",
-                      "min-width": "6.5ch",
-                    }}
-                  >
-                    {row.oid.slice(0, 8)}
-                  </span>
-                  <span
-                    style={{
-                      flex: "1",
-                      overflow: "hidden",
-                      "text-overflow": "ellipsis",
-                      "white-space": "nowrap",
-                    }}
-                  >
-                    {row.summary}
-                  </span>
-                  <SignatureBadge status={sigs()[row.oid]} />
-                  <span
-                    style={{
-                      color: "var(--fg-muted)",
-                      "white-space": "nowrap",
-                      "max-width": "12ch",
-                      overflow: "hidden",
-                      "text-overflow": "ellipsis",
-                    }}
-                  >
-                    {row.author_name}
-                  </span>
-                  <span
-                    style={{
-                      color: "var(--fg-muted)",
-                      "white-space": "nowrap",
-                      "min-width": "7ch",
-                      "text-align": "right",
-                    }}
-                  >
-                    {relTime(row.time)}
-                  </span>
-                </div>
-              )}
-            </For>
+        <span style={{ width: `${graphW() + 8}px`, "flex-shrink": 0 }} />
+        <span style={colDesc}>Description</span>
+        <span style={colAuthor}>Author</span>
+        <span style={colCommit}>Commit</span>
+        <span style={colDate}>Date</span>
+      </div>
+
+      <div style={{ display: "flex", flex: "1", "min-height": "0", overflow: "hidden" }}>
+        {/* Canvas column: graph lanes and edges (redraws on scroll). */}
+        <canvas ref={canvasEl} style={{ "flex-shrink": "0", "pointer-events": "none", "align-self": "flex-start" }} />
+
+        {/* Commit list column: virtualized DOM rows. */}
+        <div ref={listContainer} class="scroll-thin" style={{ flex: "1", "min-width": "0", "overflow-y": "auto" }} onScroll={onScroll}>
+          <div style={{ height: `${totalH()}px`, position: "relative" }}>
+            <div style={{ position: "absolute", top: `${startRow() * ROW_H}px`, left: 0, right: 0 }}>
+              <For each={visibleSlice()}>
+                {(row) => {
+                  const isHead = () => row.refs.includes("HEAD");
+                  const isSel = () => (props.selected ?? []).includes(row.oid);
+                  const isPrimary = () => props.primary === row.oid;
+                  return (
+                    <div
+                      class="hov"
+                      onClick={(e) =>
+                        handleClick(row.oid, {
+                          meta: e.metaKey || e.ctrlKey,
+                          shift: e.shiftKey,
+                        })
+                      }
+                      style={{
+                        position: "relative",
+                        height: `${ROW_H}px`,
+                        display: "flex",
+                        "align-items": "center",
+                        "padding-left": "8px",
+                        "padding-right": "18px",
+                        "box-sizing": "border-box",
+                        "font-size": "13px",
+                        cursor: "pointer",
+                        background: isSel() ? "color-mix(in srgb, var(--accent) 15%, transparent)" : "transparent",
+                        "box-shadow": isPrimary() ? "inset 2px 0 0 var(--accent)" : "none",
+                      }}
+                    >
+                      {/* Description: ref chips + subject */}
+                      <span style={{ ...colDesc, display: "flex", "align-items": "center", gap: "6px" }}>
+                        <For each={row.refs}>
+                          {(ref) => {
+                            const c = classifyRef(ref);
+                            return (
+                              <span style={chipStyle(c.kind)}>
+                                <Show when={c.kind === "head"}>
+                                  <span style={{ color: "#46b06a", "margin-right": "3px" }}>✓</span>
+                                </Show>
+                                {c.label}
+                              </span>
+                            );
+                          }}
+                        </For>
+                        <span style={{ overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap", color: "var(--tx)", "font-weight": isHead() ? 600 : 400 }}>
+                          {row.summary}
+                        </span>
+                      </span>
+
+                      {/* Author: avatar + name */}
+                      <span style={{ ...colAuthor, display: "flex", "align-items": "center", gap: "7px", overflow: "hidden" }}>
+                        <span
+                          style={{
+                            width: "19px",
+                            height: "19px",
+                            "flex-shrink": 0,
+                            "border-radius": "50%",
+                            background: authorColor(row.author_name),
+                            color: "#0c0d10",
+                            display: "inline-flex",
+                            "align-items": "center",
+                            "justify-content": "center",
+                            "font-size": "9px",
+                            "font-weight": 700,
+                          }}
+                        >
+                          {initials(row.author_name)}
+                        </span>
+                        <span style={{ color: "var(--tx2)", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>{row.author_name}</span>
+                      </span>
+
+                      <span style={{ ...colCommit, "font-family": "ui-monospace, monospace", "font-size": "12px", color: "var(--tx3)" }}>
+                        {row.oid.slice(0, 7)}
+                      </span>
+                      <span style={{ ...colDate, "font-size": "12px", color: "var(--tx3)", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>
+                        {relTime(row.time)}
+                      </span>
+                    </div>
+                  );
+                }}
+              </For>
+            </div>
           </div>
-        </div>
-        <Show when={loading()}>
-          <div
-            style={{
-              "text-align": "center",
-              padding: "0.4rem",
-              color: "var(--fg-muted)",
-              "font-size": "0.8rem",
-            }}
-          >
-            Loading…
-          </div>
-        </Show>
+          <Show when={loading()}>
+            <div style={{ "text-align": "center", padding: "0.4rem", color: "var(--tx3)", "font-size": "0.8rem" }}>Loading…</div>
+          </Show>
         </div>
       </div>
     </div>

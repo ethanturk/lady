@@ -159,6 +159,33 @@ export interface StashEntry {
 /** Mirrors lady_proto::FfMode. */
 export type FfMode = "Auto" | "Only" | "Never";
 
+/**
+ * Mirrors lady_proto::RepoSettings — the settings that can be set globally and
+ * overridden per repo. A `null`/absent field means "inherit".
+ */
+export interface RepoSettings {
+  sign?: boolean | null;
+  ff?: FfMode | null;
+  base_branch?: string | null;
+  ai_model?: string | null;
+}
+
+/** Mirrors the backend `ResolvedRepoSettings` (the three layers in one call). */
+export interface ResolvedRepoSettings {
+  /** override ?? global (built-in fallbacks applied client-side). */
+  effective: RepoSettings;
+  /** This repo's raw override block. */
+  override: RepoSettings;
+  /** The global defaults. */
+  global: RepoSettings;
+}
+
+/** Mirrors lady_proto::GitIdentity (local `.git/config` user.name/email). */
+export interface GitIdentity {
+  name?: string | null;
+  email?: string | null;
+}
+
 /** Mirrors lady_proto::MergeOutcome. */
 export type MergeOutcome =
   | { kind: "AlreadyUpToDate" }

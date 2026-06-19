@@ -14,9 +14,9 @@ pub mod custom;
 use lady_proto::{
     AheadBehind, ApplyOutcome, BisectState, Blame, BlameLine, ChangeKind, CommandOutput,
     CommitMeta, ConflictSides, ConflictState, FfMode, FileDiff, FileDiffKind, FileStatus,
-    FlowConfig, FlowKind, LfsFile, LfsStatus, MergeOutcome, Oid, ParsedConflict, RebaseOutcome,
-    RebaseStep, RefInfo, RefKind, ReflogEntry, RepoId, Signature, SignatureStatus, StashEntry,
-    Submodule, WorkingTree, Worktree,
+    FlowConfig, FlowKind, GitIdentity, LfsFile, LfsStatus, MergeOutcome, Oid, ParsedConflict,
+    RebaseOutcome, RebaseStep, RefInfo, RefKind, ReflogEntry, RepoId, Signature, SignatureStatus,
+    StashEntry, Submodule, WorkingTree, Worktree,
 };
 
 /// Whether `git-lfs` is installed and usable (`git lfs version`). Free function
@@ -123,6 +123,22 @@ pub trait GitEngine: Send + Sync {
     /// Returns one `FileDiff` per changed file.
     fn diff_commit(&self, repo: &RepoId, commit: &Oid) -> Result<Vec<FileDiff>>;
 
+    /// Diff the `base` tree against the `head` tree (the net change of the span
+    /// `base..head`). Used to plan a recompose without touching the working tree.
+    fn diff_range(&self, repo: &RepoId, base: &Oid, head: &Oid) -> Result<Vec<FileDiff>>;
+
+    /// `git reset --hard|--mixed <target>`. Mixed moves HEAD and unstages but
+    /// keeps the working tree; hard also discards working-tree changes (used to
+    /// roll a failed recompose back to the original HEAD).
+    fn reset(&self, repo: &RepoId, target: &Oid, hard: bool) -> Result<()>;
+
+    /// The current `HEAD` commit oid.
+    fn head_commit(&self, repo: &RepoId) -> Result<Oid>;
+
+    /// Whether `oid` is reachable from the current branch's upstream (i.e. it has
+    /// been pushed). `false` when there is no upstream configured.
+    fn commit_is_pushed(&self, repo: &RepoId, oid: &Oid) -> Result<bool>;
+
     /// Diff per a [`DiffSpec`]: a commit, one file's unstaged changes
     /// (working vs index), or one file's staged changes (index vs HEAD).
     fn diff_spec(&self, repo: &RepoId, spec: &DiffSpec) -> Result<Vec<FileDiff>>;
@@ -183,6 +199,46 @@ pub trait GitEngine: Send + Sync {
     /// Delete branch `name`. `force` allows deleting an unmerged branch
     /// (`git branch -D` vs `-d`).
     fn delete_branch(&self, repo: &RepoId, name: &str, force: bool) -> Result<()>;
+
+    /// Rename branch `old` to `new` (`git branch -m`).
+    fn rename_branch(&self, repo: &RepoId, old: &str, new: &str) -> Result<()>;
+
+    /// The short upstream of `branch` (e.g. `origin/main`), or `None` when unset.
+    fn branch_upstream(&self, repo: &RepoId, branch: &str) -> Result<Option<String>>;
+
+    /// Set (`Some`) or unset (`None`) the upstream tracking ref of `branch`.
+    fn set_branch_upstream(
+        &self,
+        repo: &RepoId,
+        branch: &str,
+        upstream: Option<&str>,
+    ) -> Result<()>;
+
+    /// Fast-forward local `branch` to `upstream` WITHOUT checking it out. Errors
+    /// when `branch` is not an ancestor of `upstream` (not fast-forwardable).
+    fn fast_forward_branch(&self, repo: &RepoId, branch: &str, upstream: &str) -> Result<()>;
+
+    /// Discard all working-tree + index changes to tracked `paths`
+    /// (`git checkout HEAD -- …`). Untracked files use [`Self::discard_untracked`].
+    fn discard_files(&self, repo: &RepoId, paths: &[String]) -> Result<()>;
+
+    /// Stash only `paths` (`git stash push [-u] [-m] -- …`).
+    fn stash_paths(
+        &self,
+        repo: &RepoId,
+        message: Option<&str>,
+        include_untracked: bool,
+        paths: &[String],
+    ) -> Result<()>;
+
+    /// Write the uncommitted diff of `paths` (`git diff HEAD -- …`) to `dest`.
+    fn export_patch(&self, repo: &RepoId, paths: &[String], dest: &str) -> Result<()>;
+
+    /// Append `patterns` (one per line) to the repo-root `.gitignore`.
+    fn add_to_gitignore(&self, repo: &RepoId, patterns: &[String]) -> Result<()>;
+
+    /// Resolve `path` (repo-relative) to an absolute path under the workdir.
+    fn resolve_path(&self, repo: &RepoId, path: &str) -> Result<PathBuf>;
 
     /// Check out `target` (a branch name or revision). On a plain revision this
     /// produces a detached HEAD. Refuses (surfacing git's message) when the
@@ -420,6 +476,13 @@ pub trait GitEngine: Send + Sync {
     /// Track `pattern` with LFS (`git lfs track <pattern>`), writing
     /// `.gitattributes`. Errors clearly when git-lfs is not installed.
     fn lfs_track(&self, repo: &RepoId, pattern: &str) -> Result<()>;
+
+    /// Read the repo's local git identity (`.git/config` `user.name`/`user.email`).
+    fn repo_identity_get(&self, repo: &RepoId) -> Result<GitIdentity>;
+
+    /// Write the repo's local git identity. An empty `name`/`email` unsets that
+    /// key. Writes `.git/config --local` (the scoped ADR-0006 carve-out).
+    fn repo_identity_set(&self, repo: &RepoId, name: &str, email: &str) -> Result<()>;
 
     /// Read the persisted git-flow config (`gitflow.*`), or defaults when not
     /// initialized (PH4-008).
@@ -842,10 +905,19 @@ impl GitEngine for GixEngine {
         }
 
         // HEAD (detached-aware): include it when it resolves to a commit. An
-        // unborn HEAD (fresh repo, no commits) is simply omitted.
+        // unborn HEAD (fresh repo, no commits) is simply omitted. The ref's
+        // `name` is the checked-out branch's short name (e.g. `main`) so the UI
+        // can identify the *current* branch even when several branches share the
+        // same tip commit; a detached HEAD falls back to the literal `HEAD`.
         if let Ok(head) = repo.head_id() {
+            let name = repo
+                .head_ref()
+                .ok()
+                .flatten()
+                .map(|r| r.name().shorten().to_string())
+                .unwrap_or_else(|| "HEAD".to_string());
             out.push(RefInfo {
-                name: "HEAD".to_string(),
+                name,
                 kind: RefKind::Head,
                 target: Oid::from(head.detach().to_string()),
             });
@@ -885,87 +957,65 @@ impl GitEngine for GixEngine {
     }
 
     fn diff_commit(&self, repo: &RepoId, commit_oid: &Oid) -> Result<Vec<FileDiff>> {
-        use std::collections::HashMap;
-        let repo = self.repo(repo)?;
-
-        let commit = repo
+        let grepo = self.repo(repo)?;
+        let commit = grepo
             .find_commit(gix::ObjectId::from_hex(commit_oid.as_str().as_bytes()).map_err(backend)?)
             .map_err(backend)?;
-
         let new_tree_id = commit.tree().map_err(backend)?.id;
-
-        // Parent tree (empty tree ObjectId for root commits).
+        // Parent tree (None for root commits ⇒ everything is "added").
         let old_tree_id: Option<gix::ObjectId> = commit
             .parent_ids()
             .next()
             .map(|pid| {
-                repo.find_commit(pid.detach())
+                grepo
+                    .find_commit(pid.detach())
                     .map_err(backend)
                     .and_then(|p| Ok(p.tree().map_err(backend)?.id))
             })
             .transpose()?;
+        diff_trees(&grepo, old_tree_id, new_tree_id)
+    }
 
-        // Collect (path → blob_id) for both trees.
-        let mut old_blobs: HashMap<String, gix::ObjectId> = HashMap::new();
-        let mut new_blobs: HashMap<String, gix::ObjectId> = HashMap::new();
+    fn diff_range(&self, repo: &RepoId, base: &Oid, head: &Oid) -> Result<Vec<FileDiff>> {
+        let grepo = self.repo(repo)?;
+        let find_tree = |oid: &Oid| -> Result<gix::ObjectId> {
+            let c = grepo
+                .find_commit(gix::ObjectId::from_hex(oid.as_str().as_bytes()).map_err(backend)?)
+                .map_err(backend)?;
+            Ok(c.tree().map_err(backend)?.id)
+        };
+        let old_tree_id = find_tree(base)?;
+        let new_tree_id = find_tree(head)?;
+        diff_trees(&grepo, Some(old_tree_id), new_tree_id)
+    }
 
-        if let Some(old_id) = old_tree_id {
-            collect_tree_blobs(&repo, old_id, String::new(), &mut old_blobs)?;
+    fn reset(&self, repo: &RepoId, target: &Oid, hard: bool) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        let mode = if hard { "--hard" } else { "--mixed" };
+        run_git(&wd, &["reset", mode, target.as_str()]).map(|_| ())
+    }
+
+    fn head_commit(&self, repo: &RepoId) -> Result<Oid> {
+        let wd = self.workdir(repo)?;
+        head_oid(&wd)
+    }
+
+    fn commit_is_pushed(&self, repo: &RepoId, oid: &Oid) -> Result<bool> {
+        let wd = self.workdir(repo)?;
+        // `<oid>` is pushed iff it is reachable from the branch's upstream. No
+        // upstream (rev-parse fails) ⇒ nothing to compare against ⇒ not pushed.
+        if run_git_raw(&wd, &["rev-parse", "--abbrev-ref", "@{u}"])?
+            .status
+            .success()
+        {
+            Ok(
+                run_git_raw(&wd, &["merge-base", "--is-ancestor", oid.as_str(), "@{u}"])?
+                    .status
+                    .success(),
+            )
+        } else {
+            Ok(false)
         }
-        collect_tree_blobs(&repo, new_tree_id, String::new(), &mut new_blobs)?;
-
-        // Diff the two sets.
-        let mut diffs: Vec<FileDiff> = Vec::new();
-
-        // Added files (in new but not old).
-        for (path, new_id) in &new_blobs {
-            if !old_blobs.contains_key(path) {
-                let bd = blob_diff(&repo, None, Some(*new_id), path)?;
-                diffs.push(FileDiff {
-                    path: path.clone(),
-                    old_path: None,
-                    kind: bd.kind,
-                    hunks: bd.hunks,
-                    old_image_b64: bd.old_image_b64,
-                    new_image_b64: bd.new_image_b64,
-                });
-            }
-        }
-
-        // Deleted files (in old but not new).
-        for (path, old_id) in &old_blobs {
-            if !new_blobs.contains_key(path) {
-                let bd = blob_diff(&repo, Some(*old_id), None, path)?;
-                diffs.push(FileDiff {
-                    path: path.clone(),
-                    old_path: None,
-                    kind: bd.kind,
-                    hunks: bd.hunks,
-                    old_image_b64: bd.old_image_b64,
-                    new_image_b64: bd.new_image_b64,
-                });
-            }
-        }
-
-        // Modified files (in both, different OID).
-        for (path, new_id) in &new_blobs {
-            if let Some(old_id) = old_blobs.get(path) {
-                if old_id != new_id {
-                    let bd = blob_diff(&repo, Some(*old_id), Some(*new_id), path)?;
-                    diffs.push(FileDiff {
-                        path: path.clone(),
-                        old_path: None,
-                        kind: bd.kind,
-                        hunks: bd.hunks,
-                        old_image_b64: bd.old_image_b64,
-                        new_image_b64: bd.new_image_b64,
-                    });
-                }
-            }
-        }
-
-        diffs.sort_by(|a, b| a.path.cmp(&b.path));
-        Ok(diffs)
     }
 
     fn diff_spec(&self, repo: &RepoId, spec: &DiffSpec) -> Result<Vec<FileDiff>> {
@@ -1225,6 +1275,120 @@ impl GitEngine for GixEngine {
         let wd = self.workdir(repo)?;
         let flag = if force { "-D" } else { "-d" };
         run_git(&wd, &["branch", flag, "--", name]).map(|_| ())
+    }
+
+    fn rename_branch(&self, repo: &RepoId, old: &str, new: &str) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        run_git(&wd, &["branch", "-m", old, new]).map(|_| ())
+    }
+
+    fn branch_upstream(&self, repo: &RepoId, branch: &str) -> Result<Option<String>> {
+        let wd = self.workdir(repo)?;
+        let refspec = format!("refs/heads/{branch}");
+        let out = run_git(
+            &wd,
+            &["for-each-ref", "--format=%(upstream:short)", &refspec],
+        )?;
+        let up = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        Ok(if up.is_empty() { None } else { Some(up) })
+    }
+
+    fn set_branch_upstream(
+        &self,
+        repo: &RepoId,
+        branch: &str,
+        upstream: Option<&str>,
+    ) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        match upstream {
+            Some(up) => {
+                let flag = format!("--set-upstream-to={up}");
+                run_git(&wd, &["branch", &flag, branch]).map(|_| ())
+            }
+            None => run_git(&wd, &["branch", "--unset-upstream", branch]).map(|_| ()),
+        }
+    }
+
+    fn fast_forward_branch(&self, repo: &RepoId, branch: &str, upstream: &str) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        // Refuse non-fast-forward moves: branch must be an ancestor of upstream.
+        let anc = run_git_raw(&wd, &["merge-base", "--is-ancestor", branch, upstream])?;
+        if !anc.status.success() {
+            return Err(Error::Git(format!(
+                "{branch} is not behind {upstream} (not fast-forwardable)"
+            )));
+        }
+        let refspec = format!("refs/heads/{branch}");
+        run_git(&wd, &["update-ref", &refspec, upstream]).map(|_| ())
+    }
+
+    fn discard_files(&self, repo: &RepoId, paths: &[String]) -> Result<()> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let wd = self.workdir(repo)?;
+        let mut args: Vec<&str> = vec!["checkout", "HEAD", "--"];
+        args.extend(paths.iter().map(String::as_str));
+        run_git(&wd, &args).map(|_| ())
+    }
+
+    fn stash_paths(
+        &self,
+        repo: &RepoId,
+        message: Option<&str>,
+        include_untracked: bool,
+        paths: &[String],
+    ) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        let mut args: Vec<&str> = vec!["stash", "push"];
+        if include_untracked {
+            args.push("-u");
+        }
+        if let Some(m) = message {
+            args.push("-m");
+            args.push(m);
+        }
+        args.push("--");
+        args.extend(paths.iter().map(String::as_str));
+        run_git(&wd, &args).map(|_| ())
+    }
+
+    fn export_patch(&self, repo: &RepoId, paths: &[String], dest: &str) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        let mut args: Vec<&str> = vec!["diff", "HEAD", "--"];
+        args.extend(paths.iter().map(String::as_str));
+        let out = run_git(&wd, &args)?;
+        std::fs::write(dest, &out.stdout)
+            .map_err(|e| Error::Git(format!("failed to write patch {dest}: {e}")))
+    }
+
+    fn add_to_gitignore(&self, repo: &RepoId, patterns: &[String]) -> Result<()> {
+        if patterns.is_empty() {
+            return Ok(());
+        }
+        let wd = self.workdir(repo)?;
+        let path = wd.join(".gitignore");
+        let existing = std::fs::read_to_string(&path).unwrap_or_default();
+        let mut body = existing.clone();
+        // Keep a trailing newline before appending so entries never merge onto
+        // a prior unterminated line.
+        if !body.is_empty() && !body.ends_with('\n') {
+            body.push('\n');
+        }
+        for p in patterns {
+            // Skip patterns already present (exact-line match) to avoid dupes.
+            let present = existing.lines().any(|l| l == p);
+            if !present {
+                body.push_str(p);
+                body.push('\n');
+            }
+        }
+        std::fs::write(&path, body)
+            .map_err(|e| Error::Git(format!("failed to write .gitignore: {e}")))
+    }
+
+    fn resolve_path(&self, repo: &RepoId, path: &str) -> Result<PathBuf> {
+        Ok(self.workdir(repo)?.join(path))
     }
 
     fn checkout(&self, repo: &RepoId, target: &str, force: bool) -> Result<()> {
@@ -1998,6 +2162,21 @@ exit 0\n";
         run_git(&wd, &["lfs", "track", pattern]).map(|_| ())
     }
 
+    fn repo_identity_get(&self, repo: &RepoId) -> Result<GitIdentity> {
+        let wd = self.workdir(repo)?;
+        Ok(GitIdentity {
+            name: git_config_get_local(&wd, "user.name"),
+            email: git_config_get_local(&wd, "user.email"),
+        })
+    }
+
+    fn repo_identity_set(&self, repo: &RepoId, name: &str, email: &str) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        set_or_unset_local(&wd, "user.name", name)?;
+        set_or_unset_local(&wd, "user.email", email)?;
+        Ok(())
+    }
+
     fn flow_config(&self, repo: &RepoId) -> Result<FlowConfig> {
         let wd = self.workdir(repo)?;
         let get = |key: &str| git_config_get(&wd, key);
@@ -2210,6 +2389,33 @@ fn git_config_get(workdir: &Path, key: &str) -> Option<String> {
     (!val.is_empty()).then_some(val)
 }
 
+/// Read a config value from the repo's local scope only (`.git/config`), or
+/// `None` when unset there. Used for per-repo identity so an inherited
+/// global/system value is shown as "not overridden".
+fn git_config_get_local(workdir: &Path, key: &str) -> Option<String> {
+    let out = run_git_raw(workdir, &["config", "--local", "--get", key]).ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let val = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!val.is_empty()).then_some(val)
+}
+
+/// Set (or, when `value` is blank, unset) a local config `key`. A missing key on
+/// unset is not an error (git exits 5).
+fn set_or_unset_local(workdir: &Path, key: &str, value: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        let out = run_git_raw(workdir, &["config", "--local", "--unset", key])?;
+        if !out.status.success() && out.status.code() != Some(5) {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            return Err(Error::Git(stderr.trim().to_string()));
+        }
+        Ok(())
+    } else {
+        run_git(workdir, &["config", "--local", key, value]).map(|_| ())
+    }
+}
+
 /// Pull an integer out of `text` immediately following `marker` (skipping any
 /// non-digits in between).
 fn num_after(text: &str, marker: &str) -> Option<usize> {
@@ -2365,6 +2571,71 @@ fn parse_status_v2(bytes: &[u8]) -> WorkingTree {
 }
 
 // ── Tree helpers ──────────────────────────────────────────────────────────────
+
+/// Diff two trees (`old_tree_id` = `None` ⇒ a root commit, so everything is
+/// added) into a path-sorted [`FileDiff`] list. Shared by `diff_commit` (commit
+/// vs its parent) and `diff_range` (base vs head across a span of commits).
+fn diff_trees(
+    repo: &gix::Repository,
+    old_tree_id: Option<gix::ObjectId>,
+    new_tree_id: gix::ObjectId,
+) -> Result<Vec<FileDiff>> {
+    use std::collections::HashMap;
+    let mut old_blobs: HashMap<String, gix::ObjectId> = HashMap::new();
+    let mut new_blobs: HashMap<String, gix::ObjectId> = HashMap::new();
+    if let Some(old_id) = old_tree_id {
+        collect_tree_blobs(repo, old_id, String::new(), &mut old_blobs)?;
+    }
+    collect_tree_blobs(repo, new_tree_id, String::new(), &mut new_blobs)?;
+
+    let mut diffs: Vec<FileDiff> = Vec::new();
+    let push = |diffs: &mut Vec<FileDiff>, path: &str, bd: BlobDiff| {
+        diffs.push(FileDiff {
+            path: path.to_string(),
+            old_path: None,
+            kind: bd.kind,
+            hunks: bd.hunks,
+            old_image_b64: bd.old_image_b64,
+            new_image_b64: bd.new_image_b64,
+        });
+    };
+
+    // Added files (in new, not old).
+    for (path, new_id) in &new_blobs {
+        if !old_blobs.contains_key(path) {
+            push(
+                &mut diffs,
+                path,
+                blob_diff(repo, None, Some(*new_id), path)?,
+            );
+        }
+    }
+    // Deleted files (in old, not new).
+    for (path, old_id) in &old_blobs {
+        if !new_blobs.contains_key(path) {
+            push(
+                &mut diffs,
+                path,
+                blob_diff(repo, Some(*old_id), None, path)?,
+            );
+        }
+    }
+    // Modified files (in both, different OID).
+    for (path, new_id) in &new_blobs {
+        if let Some(old_id) = old_blobs.get(path) {
+            if old_id != new_id {
+                push(
+                    &mut diffs,
+                    path,
+                    blob_diff(repo, Some(*old_id), Some(*new_id), path)?,
+                );
+            }
+        }
+    }
+
+    diffs.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(diffs)
+}
 
 /// Recursively collect all blob OIDs in a tree into `out`, keyed by path.
 fn collect_tree_blobs(
@@ -2605,6 +2876,107 @@ mod tests {
     }
 
     #[test]
+    fn repo_identity_round_trips_local_config() {
+        let dir = fixture_repo();
+        let engine = GixEngine::new();
+        let id = engine.open(dir.path()).expect("open the fixture repo");
+
+        engine
+            .repo_identity_set(&id, "Ada Lovelace", "ada@example.com")
+            .expect("set identity");
+        let got = engine.repo_identity_get(&id).expect("get identity");
+        assert_eq!(got.name.as_deref(), Some("Ada Lovelace"));
+        assert_eq!(got.email.as_deref(), Some("ada@example.com"));
+
+        // An empty value unsets the key (so it inherits the global/system value).
+        engine
+            .repo_identity_set(&id, "", "keep@example.com")
+            .expect("unset the name");
+        let got = engine.repo_identity_get(&id).expect("get identity again");
+        assert_eq!(got.name, None, "blank name should unset user.name locally");
+        assert_eq!(got.email.as_deref(), Some("keep@example.com"));
+    }
+
+    #[test]
+    fn diff_range_spans_commits_and_matches_diff_commit_for_one() {
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open the fixture repo");
+        let rev = |r: &str| {
+            String::from_utf8_lossy(&run_git(p, &["rev-parse", r]).expect("rev-parse").stdout)
+                .trim()
+                .to_string()
+        };
+        // fixture has commits adding file1..file3.
+        let head = Oid::from(rev("HEAD"));
+        let base2 = Oid::from(rev("HEAD~2")); // commit 1
+        let parent3 = Oid::from(rev("HEAD~1")); // commit 2
+
+        // Span commit2..commit3 == diff_commit(commit3) (both = file3 added).
+        let span = engine
+            .diff_range(&id, &parent3, &head)
+            .expect("diff_range one");
+        let single = engine.diff_commit(&id, &head).expect("diff_commit");
+        let names = |v: &[FileDiff]| {
+            let mut n: Vec<String> = v.iter().map(|f| f.path.clone()).collect();
+            n.sort();
+            n
+        };
+        assert_eq!(names(&span), names(&single));
+        assert_eq!(names(&span), vec!["file3.txt".to_string()]);
+
+        // Span commit1..commit3 covers file2 + file3.
+        let wide = engine
+            .diff_range(&id, &base2, &head)
+            .expect("diff_range wide");
+        assert_eq!(
+            names(&wide),
+            vec!["file2.txt".to_string(), "file3.txt".to_string()]
+        );
+    }
+
+    #[test]
+    fn reset_mixed_then_hard_round_trips() {
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open the fixture repo");
+        let rev = |r: &str| {
+            String::from_utf8_lossy(&run_git(p, &["rev-parse", r]).expect("rev-parse").stdout)
+                .trim()
+                .to_string()
+        };
+        let tip = Oid::from(rev("HEAD"));
+        let base = Oid::from(rev("HEAD~2"));
+
+        // Mixed reset to base: HEAD moves back, the span's files remain on disk
+        // (now untracked/modified), so the tree is dirty.
+        engine.reset(&id, &base, false).expect("mixed reset");
+        assert_eq!(
+            engine.head_commit(&id).expect("head").as_str(),
+            base.as_str()
+        );
+        let dirty = engine.status(&id).expect("status");
+        assert!(
+            !dirty.staged.is_empty() || !dirty.unstaged.is_empty() || !dirty.untracked.is_empty(),
+            "mixed reset should leave the span's changes in the working tree"
+        );
+
+        // Hard reset back to the tip restores the original clean state.
+        engine.reset(&id, &tip, true).expect("hard reset");
+        assert_eq!(
+            engine.head_commit(&id).expect("head").as_str(),
+            tip.as_str()
+        );
+        let clean = engine.status(&id).expect("status");
+        assert!(
+            clean.staged.is_empty() && clean.unstaged.is_empty() && clean.untracked.is_empty(),
+            "hard reset to the tip should restore a clean tree"
+        );
+    }
+
+    #[test]
     fn list_refs_covers_branch_tag_and_head() {
         let dir = fixture_repo();
         let engine = GixEngine::new();
@@ -2619,7 +2991,8 @@ mod tests {
 
         let branch = named(RefKind::Branch, "main");
         let tag = named(RefKind::Tag, "v1");
-        let head = named(RefKind::Head, "HEAD");
+        // The Head ref is named after the checked-out branch (here, `main`).
+        let head = named(RefKind::Head, "main");
 
         // HEAD resolves to the same commit as `main` (and `v1`, the tip tag).
         assert_eq!(head.target, branch.target, "HEAD should resolve to main");
@@ -4592,5 +4965,174 @@ mod tests {
             engine.conflict_state(&id).expect("state after abort"),
             ConflictState::None
         );
+    }
+
+    // ── Plan 4: context-menu engine primitives ─────────────────────────────
+
+    #[test]
+    fn rename_branch_renames() {
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open");
+        engine.create_branch(&id, "old-name", None).expect("create");
+
+        engine
+            .rename_branch(&id, "old-name", "new-name")
+            .expect("rename");
+        assert_eq!(git_out(p, &["branch", "--list", "old-name"]), "");
+        assert!(git_out(p, &["branch", "--list", "new-name"]).contains("new-name"));
+    }
+
+    #[test]
+    fn branch_upstream_round_trips() {
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open");
+        // A second branch acts as the "upstream" target without needing a remote.
+        engine.create_branch(&id, "track", None).expect("create");
+
+        assert_eq!(
+            engine.branch_upstream(&id, "track").expect("read unset"),
+            None,
+            "no upstream by default"
+        );
+
+        engine
+            .set_branch_upstream(&id, "track", Some("main"))
+            .expect("set upstream");
+        assert_eq!(
+            engine.branch_upstream(&id, "track").expect("read set"),
+            Some("main".to_string())
+        );
+
+        engine
+            .set_branch_upstream(&id, "track", None)
+            .expect("unset upstream");
+        assert_eq!(
+            engine
+                .branch_upstream(&id, "track")
+                .expect("read after unset"),
+            None
+        );
+    }
+
+    #[test]
+    fn fast_forward_branch_advances_only_when_ancestor() {
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open");
+
+        // `behind` points at HEAD~2; main is two commits ahead (fast-forwardable).
+        let target = git_out(p, &["rev-parse", "main"]);
+        git(p, &["branch", "behind", "main~2"]);
+
+        engine
+            .fast_forward_branch(&id, "behind", "main")
+            .expect("ff succeeds for an ancestor");
+        assert_eq!(git_out(p, &["rev-parse", "behind"]), target);
+
+        // Diverge: a branch off main~1 with its own commit is NOT an ancestor.
+        git(p, &["checkout", "-q", "-b", "diverged", "main~1"]);
+        std::fs::write(p.join("d.txt"), "d\n").expect("write");
+        git(p, &["add", "."]);
+        git(p, &["commit", "-q", "-m", "diverged commit"]);
+        git(p, &["checkout", "-q", "main"]);
+
+        let err = engine
+            .fast_forward_branch(&id, "diverged", "main")
+            .expect_err("non-ancestor must error");
+        assert!(
+            err.to_string().contains("not fast-forwardable"),
+            "clear error: {err}"
+        );
+    }
+
+    #[test]
+    fn discard_files_restores_tracked_changes() {
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open");
+
+        let original = std::fs::read_to_string(p.join("file1.txt")).expect("read original");
+        std::fs::write(p.join("file1.txt"), "scribbled over\n").expect("write");
+        assert!(!engine.status(&id).unwrap().unstaged.is_empty());
+
+        engine
+            .discard_files(&id, &["file1.txt".to_string()])
+            .expect("discard");
+        assert_eq!(
+            std::fs::read_to_string(p.join("file1.txt")).unwrap(),
+            original
+        );
+        assert!(engine.status(&id).unwrap().unstaged.is_empty());
+    }
+
+    #[test]
+    fn stash_paths_stashes_only_named_files() {
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open");
+
+        std::fs::write(p.join("file1.txt"), "edit one\n").expect("write");
+        std::fs::write(p.join("file2.txt"), "edit two\n").expect("write");
+
+        engine
+            .stash_paths(&id, Some("just file1"), false, &["file1.txt".to_string()])
+            .expect("stash one");
+
+        // file1 reverted (stashed away); file2 still dirty.
+        assert_eq!(
+            git_out(p, &["show", "HEAD:file1.txt"]),
+            std::fs::read_to_string(p.join("file1.txt")).unwrap().trim()
+        );
+        assert_eq!(
+            std::fs::read_to_string(p.join("file2.txt")).unwrap(),
+            "edit two\n"
+        );
+        assert!(git_out(p, &["stash", "list"]).contains("just file1"));
+    }
+
+    #[test]
+    fn export_patch_writes_uncommitted_diff() {
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open");
+
+        std::fs::write(p.join("file1.txt"), "patched line\n").expect("write");
+        let dest = p.join("out.patch");
+        engine
+            .export_patch(&id, &["file1.txt".to_string()], dest.to_str().unwrap())
+            .expect("export");
+
+        let patch = std::fs::read_to_string(&dest).expect("read patch");
+        assert!(patch.contains("--- a/file1.txt"), "patch header: {patch}");
+        assert!(patch.contains("+patched line"), "patch body: {patch}");
+    }
+
+    #[test]
+    fn add_to_gitignore_appends_without_dupes() {
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open");
+
+        engine
+            .add_to_gitignore(&id, &["*.tmp".to_string(), "build/".to_string()])
+            .expect("first add");
+        // Re-add one existing + one new: existing must not duplicate.
+        engine
+            .add_to_gitignore(&id, &["*.tmp".to_string(), "*.log".to_string()])
+            .expect("second add");
+
+        let body = std::fs::read_to_string(p.join(".gitignore")).expect("read");
+        assert_eq!(body.matches("*.tmp").count(), 1, "no dup: {body}");
+        assert!(body.contains("build/"));
+        assert!(body.contains("*.log"));
     }
 }

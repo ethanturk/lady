@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 export type ProviderKind =
-  | "Ollama"
+  | "OpenAiCompatible"
   | "OpenAi"
   | "Anthropic"
   | "Gemini"
@@ -13,7 +13,7 @@ export type ProviderKind =
   | "Mistral";
 
 export const PROVIDERS: ProviderKind[] = [
-  "Ollama",
+  "OpenAiCompatible",
   "OpenAi",
   "Anthropic",
   "Gemini",
@@ -22,7 +22,7 @@ export const PROVIDERS: ProviderKind[] = [
 ];
 
 export const PROVIDER_LABEL: Record<ProviderKind, string> = {
-  Ollama: "Ollama (local)",
+  OpenAiCompatible: "OpenAI Compatible",
   OpenAi: "OpenAI",
   Anthropic: "Anthropic Claude",
   Gemini: "Google Gemini",
@@ -30,13 +30,15 @@ export const PROVIDER_LABEL: Record<ProviderKind, string> = {
   Mistral: "Mistral",
 };
 
-export const isRemote = (p: ProviderKind): boolean => p !== "Ollama";
+// The OpenAI-compatible endpoint is the consent-free, local-first path (point it
+// only at servers you trust); every other provider sends data off-machine.
+export const isRemote = (p: ProviderKind): boolean => p !== "OpenAiCompatible";
 
 export interface AiConfig {
   active: ProviderKind | null;
   models: Record<string, string>;
   default_model: string | null;
-  ollama_host: string;
+  openai_base_url: string;
   azure_endpoint: string;
   azure_deployment: string;
   consented: ProviderKind[];
@@ -49,6 +51,15 @@ export interface PlannedCommit {
 
 export interface CommitPlan {
   commits: PlannedCommit[];
+}
+
+/** Mirrors the backend `RecomposePlan` (ai_recompose_plan result). */
+export interface RecomposePlan {
+  plan: CommitPlan;
+  /** Any commit in the span is already pushed (rewriting needs a force-push). */
+  pushed: boolean;
+  /** How many commits the span currently has (for the "N → M" confirm). */
+  commit_count: number;
 }
 
 let reqCounter = 0;
@@ -112,4 +123,4 @@ export const setRepoEnabled = (
 ): Promise<void> => invoke("ai_set_repo_enabled", { repo, enabled });
 export const repoEnabled = (repo: string): Promise<boolean> =>
   invoke("ai_repo_enabled", { repo });
-export const ollamaModels = (): Promise<string[]> => invoke("ai_ollama_models");
+export const listModels = (): Promise<string[]> => invoke("ai_list_models");

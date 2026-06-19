@@ -1,4 +1,4 @@
-import { createSignal, For, onMount, Show } from "solid-js";
+import { createEffect, createSignal, onMount, For, Show } from "solid-js";
 import type { Component } from "solid-js";
 import type { RepoId } from "./commands";
 import {
@@ -11,7 +11,7 @@ import {
   grantConsent,
   hasAiKey,
   isRemote,
-  ollamaModels,
+  listModels,
   repoEnabled,
   revokeConsent,
   setAiConfig,
@@ -24,7 +24,7 @@ import {
  * keychain, grant/revoke per-provider remote-send consent, and toggle AI for
  * this repo (default off). Ollama is surfaced as the local-first option.
  */
-const AiSettings: Component<{ repoId: RepoId }> = (props) => {
+const AiSettings: Component<{ repoId: RepoId | null }> = (props) => {
   const [cfg, setCfg] = createSignal<AiConfig | null>(null);
   const [keyInput, setKeyInput] = createSignal("");
   const [keyStored, setKeyStored] = createSignal(false);
@@ -37,13 +37,21 @@ const AiSettings: Component<{ repoId: RepoId }> = (props) => {
     try {
       const c = await getAiConfig();
       setCfg(c);
-      setEnabled(await repoEnabled(props.repoId));
       if (c.active) setKeyStored(await hasAiKey(c.active));
     } catch (e) {
       setErr(String(e));
     }
   };
   onMount(load);
+  // The per-repo enable flag follows the active repo (and is undefined with none).
+  createEffect(() => {
+    const repo = props.repoId;
+    if (!repo) {
+      setEnabled(false);
+      return;
+    }
+    repoEnabled(repo).then(setEnabled).catch((e) => setErr(String(e)));
+  });
 
   const active = () => cfg()?.active ?? null;
 
@@ -103,14 +111,16 @@ const AiSettings: Component<{ repoId: RepoId }> = (props) => {
   };
 
   const toggleRepo = async (on: boolean) => {
+    const repo = props.repoId;
+    if (!repo) return;
     setEnabled(on);
-    await setRepoEnabled(props.repoId, on).catch((e) => setErr(String(e)));
+    await setRepoEnabled(repo, on).catch((e) => setErr(String(e)));
   };
 
   const refreshModels = async () => {
     try {
-      setModels(await ollamaModels());
-      setNotice(`${models().length} local model(s).`);
+      setModels(await listModels());
+      setNotice(`${models().length} model(s).`);
       setTimeout(() => setNotice(null), 1800);
     } catch (e) {
       setErr(String(e));
@@ -136,11 +146,13 @@ const AiSettings: Component<{ repoId: RepoId }> = (props) => {
       </p>
 
       <Show when={cfg()} fallback={<p style={{ "font-size": "0.82rem" }}>Loading…</p>}>
-        {/* Per-repo toggle */}
-        <label style={{ display: "flex", "align-items": "center", gap: "0.4rem", "font-size": "0.85rem", "margin-bottom": "0.6rem" }}>
-          <input type="checkbox" checked={enabled()} onChange={(e) => toggleRepo(e.currentTarget.checked)} />
-          Enable AI for this repository
-        </label>
+        {/* Per-repo override: enable AI for the active repo (off by default). */}
+        <Show when={props.repoId}>
+          <label style={{ display: "flex", "align-items": "center", gap: "0.4rem", "font-size": "0.85rem", "margin-bottom": "0.6rem" }}>
+            <input type="checkbox" checked={enabled()} onChange={(e) => toggleRepo(e.currentTarget.checked)} />
+            Enable AI for this repository
+          </label>
+        </Show>
 
         {/* Active provider */}
         <div style={{ display: "flex", "align-items": "center", gap: "0.4rem", "margin-bottom": "0.5rem" }}>
@@ -172,22 +184,28 @@ const AiSettings: Component<{ repoId: RepoId }> = (props) => {
           </div>
         </Show>
 
-        {/* Local Ollama config */}
-        <Show when={active() === "Ollama"}>
+        {/* OpenAI-compatible server config (Ollama, LM Studio, vLLM, …) */}
+        <Show when={active() === "OpenAiCompatible"}>
           <div style={{ display: "flex", "align-items": "center", gap: "0.4rem", "margin-bottom": "0.5rem" }}>
-            <span style={{ width: "6rem", "font-size": "0.82rem" }}>Ollama host</span>
+            <span style={{ width: "6rem", "font-size": "0.82rem" }}>Base URL</span>
             <input
               style={{ ...field, flex: "1" }}
-              value={cfg()!.ollama_host}
-              onChange={(e) => persist({ ...cfg()!, ollama_host: e.currentTarget.value })}
+              placeholder="http://localhost:11434/v1"
+              value={cfg()!.openai_base_url}
+              onChange={(e) => persist({ ...cfg()!, openai_base_url: e.currentTarget.value })}
             />
             <button style={field} onClick={refreshModels}>
               List models
             </button>
           </div>
+          <p style={{ "font-size": "0.74rem", color: "var(--fg-muted)", margin: "0 0 0.5rem" }}>
+            Any OpenAI-compatible server (Ollama, LM Studio, vLLM, LocalAI, a gateway…).
+            Include the version segment (e.g. <code>/v1</code>). The API key below is
+            optional — local servers ignore it.
+          </p>
           <Show when={models().length > 0}>
             <div style={{ "font-size": "0.78rem", "margin-bottom": "0.5rem" }}>
-              Local models:{" "}
+              Models:{" "}
               <For each={models()}>
                 {(m) => (
                   <button
@@ -223,10 +241,13 @@ const AiSettings: Component<{ repoId: RepoId }> = (props) => {
           </div>
         </Show>
 
-        {/* API key (remote providers only) */}
-        <Show when={active() && isRemote(active()!)}>
+        {/* API key — required for remote providers, optional for the
+            OpenAI-compatible endpoint (local servers ignore it). */}
+        <Show when={active() && (isRemote(active()!) || active() === "OpenAiCompatible")}>
           <div style={{ display: "flex", "align-items": "center", gap: "0.4rem", "margin-bottom": "0.5rem" }}>
-            <span style={{ width: "6rem", "font-size": "0.82rem" }}>API key</span>
+            <span style={{ width: "6rem", "font-size": "0.82rem" }}>
+              API key{active() === "OpenAiCompatible" ? " (optional)" : ""}
+            </span>
             <input
               type="password"
               style={{ ...field, flex: "1" }}
@@ -244,15 +265,17 @@ const AiSettings: Component<{ repoId: RepoId }> = (props) => {
             </Show>
           </div>
 
-          {/* Consent (ADR-0009) */}
-          <label style={{ display: "flex", "align-items": "center", gap: "0.4rem", "font-size": "0.82rem", "margin-bottom": "0.6rem" }}>
-            <input
-              type="checkbox"
-              checked={cfg()!.consented.includes(active()!)}
-              onChange={(e) => toggleConsent(active()!, e.currentTarget.checked)}
-            />
-            I consent to sending code/diffs to {PROVIDER_LABEL[active()!]} (data leaves this machine)
-          </label>
+          {/* Consent (ADR-0009) — only when data leaves the machine. */}
+          <Show when={isRemote(active()!)}>
+            <label style={{ display: "flex", "align-items": "center", gap: "0.4rem", "font-size": "0.82rem", "margin-bottom": "0.6rem" }}>
+              <input
+                type="checkbox"
+                checked={cfg()!.consented.includes(active()!)}
+                onChange={(e) => toggleConsent(active()!, e.currentTarget.checked)}
+              />
+              I consent to sending code/diffs to {PROVIDER_LABEL[active()!]} (data leaves this machine)
+            </label>
+          </Show>
         </Show>
       </Show>
 

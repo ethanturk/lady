@@ -1,17 +1,26 @@
-import { createEffect, createSignal, onMount, Show } from "solid-js";
+import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
 import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
-import type { AppInfo, ApplyOutcome, ConflictState, OpenRepo, RebaseOutcome, RefInfo } from "./commands";
-import GraphView from "./GraphView";
-import DiffView from "./DiffView";
+import type { ApplyOutcome, ConflictState, OpenRepo, RebaseOutcome, RecentRepo, RefInfo, WorkingTree } from "./commands";
+import AllCommitsView from "./AllCommitsView";
 import BlameView from "./BlameView";
 import FileHistory from "./FileHistory";
 import ChangesView from "./ChangesView";
 import RefsView from "./RefsView";
-import SyncBar from "./SyncBar";
 import RepoBar from "./RepoBar";
+import Toolbar from "./Toolbar";
+import type { OverflowItem } from "./Toolbar";
+import Sidebar from "./Sidebar";
+import type { PrimaryView } from "./Sidebar";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import BranchMenu from "./BranchMenu";
+import type { BranchMenuState, PromptSpec } from "./BranchMenu";
+import { addWorktreeFor, checkoutBranch, createBranchAt, createTagAt, deleteBranch } from "./branchActions";
+import { setSettingsWidth, setSidebarWidth, settingsWidth, sidebarWidth } from "./prefs";
 import ConflictResolver from "./ConflictResolver";
 import InteractiveRebase from "./InteractiveRebase";
+import RecomposeView from "./RecomposeView";
+import ExplainPanel from "./ExplainPanel";
 import WorktreesView from "./WorktreesView";
 import ReflogView from "./ReflogView";
 import BisectView from "./BisectView";
@@ -23,15 +32,12 @@ import GitFlowView from "./GitFlowView";
 import SubmodulesView from "./SubmodulesView";
 import AiView from "./AiView";
 import LicenseGate from "./LicenseGate";
-import ThemeToggle from "./ThemeToggle";
-import SignatureBadge from "./SignatureBadge";
 import type { LicenseStatus, SignatureStatus } from "./commands";
 import CommandPalette from "./CommandPalette";
 import type { PaletteEntry } from "./CommandPalette";
 
-type Tab =
-  | "changes"
-  | "commits"
+/** Advanced views, reached from the toolbar "More" menu (overlay the main area). */
+type Overlay =
   | "refs"
   | "blame"
   | "history"
@@ -47,14 +53,30 @@ type Tab =
   | "submodules"
   | "ai";
 
+/** Last path segment, for the repo title in the toolbar/sidebar. */
+const baseName = (path: string) =>
+  path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || path;
+
 const App: Component = () => {
-  const [info, setInfo] = createSignal<AppInfo | null>(null);
   const [license, setLicense] = createSignal<LicenseStatus | null>(null);
   const [unread, setUnread] = createSignal(0);
   const [active, setActive] = createSignal<OpenRepo | null>(null);
   const [refs, setRefs] = createSignal<RefInfo[]>([]);
-  const [tab, setTab] = createSignal<Tab>("changes");
-  const [selectedCommit, setSelectedCommit] = createSignal<string | null>(null);
+  // Primary nav (sidebar) vs. an overlaid advanced view (toolbar "More").
+  const [view, setView] = createSignal<PrimaryView>("changes");
+  const [overlay, setOverlay] = createSignal<Overlay | null>(null);
+  const [changeCount, setChangeCount] = createSignal(0);
+  const [branchMenu, setBranchMenu] = createSignal<BranchMenuState | null>(null);
+  // "New branch from <startPoint>" modal (replaces the unsupported window.prompt).
+  const [newBranchFrom, setNewBranchFrom] = createSignal<string | null>(null);
+  const [newBranchName, setNewBranchName] = createSignal("");
+  // Generalized name prompt (Rename, New Tag, …) — also avoids window.prompt.
+  const [promptSpec, setPromptSpec] = createSignal<PromptSpec | null>(null);
+  const [promptValue, setPromptValue] = createSignal("");
+  // Commit selection (multi-select): all selected oids + the primary (last
+  // clicked) that drives the detail pane and single-commit actions.
+  const [selectedCommits, setSelectedCommits] = createSignal<string[]>([]);
+  const [primaryCommit, setPrimaryCommit] = createSignal<string | null>(null);
   const [selectedSig, setSelectedSig] = createSignal<SignatureStatus | undefined>(undefined);
   const [files, setFiles] = createSignal<string[]>([]);
   const [navFile, setNavFile] = createSignal<string | undefined>(undefined);
@@ -65,10 +87,32 @@ const App: Component = () => {
   const [conflictState, setConflictState] = createSignal<ConflictState>("None");
   // When set, the interactive-rebase editor is open for this start commit oid.
   const [rebaseFrom, setRebaseFrom] = createSignal<string | null>(null);
-  // Opener handed up from RepoBar so a worktree can be opened as a repo tab.
+  // When set, the AI recompose overlay is open for this start commit oid.
+  const [recomposeFrom, setRecomposeFrom] = createSignal<string | null>(null);
+  // When set, the AI "Explain changes" overlay is open for this target.
+  const [explainSpec, setExplainSpec] = createSignal<{ target: Record<string, unknown>; title: string; subtitle?: string } | null>(null);
+  // Recent repositories (from RepoBar) shown in the Launch palette.
+  const [recents, setRecents] = createSignal<RecentRepo[]>([]);
+  // Openers handed up from RepoBar: open a known path (worktrees) + native picker.
   let openRepoPath: ((path: string) => void) | null = null;
+  let repoPicker: (() => void) | null = null;
   // Bumped after any mutation so status/refs/graph views reload (PLAN §3.2).
   const [refreshNonce, setRefreshNonce] = createSignal(0);
+
+  const repoId = () => active()?.id ?? null;
+  const repoName = () => (active() ? baseName(active()!.path) : null);
+  // The Head ref's name is the checked-out branch ("HEAD" when detached).
+  const currentBranchName = () => {
+    const h = refs().find((r) => r.kind === "Head")?.name;
+    return h && h !== "HEAD" ? h : null;
+  };
+
+  const loadChangeCount = (repo: string) => {
+    invoke<WorkingTree>("status", { repo })
+      .then((wt) => setChangeCount(wt.staged.length + wt.unstaged.length + wt.untracked.length))
+      .catch(() => setChangeCount(0));
+  };
+
   // Poll the mid-operation state; auto-surface the resolver when conflicts
   // appear (PH3-002: merge / cherry-pick / revert / rebase report conflicts).
   const updateConflictState = (repo: OpenRepo) => {
@@ -79,15 +123,16 @@ const App: Component = () => {
         if (s !== "None") {
           invoke<string[]>("list_conflicts", { repo: repo.id })
             .then((c) => {
-              if (c.length > 0 && wasIdle) setTab("conflicts");
+              if (c.length > 0 && wasIdle) setOverlay("conflicts");
             })
             .catch(() => {});
-        } else if (tab() === "conflicts") {
-          setTab("changes");
+        } else if (overlay() === "conflicts") {
+          setOverlay(null);
         }
       })
       .catch(() => {});
   };
+
   const refresh = () => {
     setRefreshNonce((n) => n + 1);
     const repo = active();
@@ -95,6 +140,7 @@ const App: Component = () => {
     invoke<RefInfo[]>("list_refs", { repo: repo.id })
       .then(setRefs)
       .catch((e) => setErr(String(e)));
+    loadChangeCount(repo.id);
     updateConflictState(repo);
   };
 
@@ -105,7 +151,7 @@ const App: Component = () => {
 
   const runCommitAction = (cmd: "cherry_pick" | "revert", label: string) => {
     const repo = active();
-    const oid = selectedCommit();
+    const oid = primaryCommit();
     if (!repo || !oid) return;
     if (cmd === "revert" && !confirm(`Revert commit ${oid.slice(0, 8)}?`)) return;
     setErr(null);
@@ -142,11 +188,11 @@ const App: Component = () => {
       setOpNotice("Rebase complete.");
     } else if (outcome.kind === "Stopped") {
       setOpNotice("Rebase stopped to edit a commit — amend, then continue.");
-      setTab("conflicts");
+      setOverlay("conflicts");
     } else {
       setOpConflicts(outcome.value);
       setOpNotice(`Rebase stopped with ${outcome.value.length} conflict(s).`);
-      setTab("conflicts");
+      setOverlay("conflicts");
     }
     refresh();
   };
@@ -154,7 +200,7 @@ const App: Component = () => {
   // Fetch the selected commit's signature status for the details badge.
   createEffect(() => {
     const repo = active();
-    const oid = selectedCommit();
+    const oid = primaryCommit();
     setSelectedSig(undefined);
     if (!repo || !oid) return;
     invoke<SignatureStatus[]>("signature_statuses", { repo: repo.id, oids: [oid] })
@@ -162,9 +208,22 @@ const App: Component = () => {
       .catch(() => {});
   });
 
-  onMount(async () => {
-    const data = await invoke<AppInfo>("app_info");
-    setInfo(data);
+  // Status notices ("Checked out …", "Merged …") auto-dismiss as a transient
+  // toast: hold briefly, fade out, then clear so they never accrue on screen.
+  const [toastLeaving, setToastLeaving] = createSignal(false);
+  let toastTimers: number[] = [];
+  createEffect(() => {
+    const msg = opNotice();
+    toastTimers.forEach(clearTimeout);
+    toastTimers = [];
+    setToastLeaving(false);
+    if (!msg) return;
+    toastTimers.push(window.setTimeout(() => setToastLeaving(true), 3000));
+    toastTimers.push(window.setTimeout(() => setOpNotice(null), 3400));
+  });
+  onCleanup(() => toastTimers.forEach(clearTimeout));
+
+  onMount(() => {
     invoke<LicenseStatus>("license_status").then(setLicense).catch(() => {});
     // Background poll for the notifications badge (best-effort; needs a GitHub
     // token, otherwise silently stays at 0).
@@ -176,14 +235,16 @@ const App: Component = () => {
     setInterval(pollUnread, 60_000);
   });
 
-  const repoId = () => active()?.id ?? null;
-
-  // Reload refs + file list whenever the active repo changes.
+  // Reload refs + file list whenever the active repo changes; reset navigation.
   createEffect(() => {
     const repo = active();
-    setSelectedCommit(null);
+    setSelectedCommits([]);
+    setPrimaryCommit(null);
     setRefs([]);
     setFiles([]);
+    setView("changes");
+    setOverlay(null);
+    setChangeCount(0);
     if (!repo) return;
     invoke<RefInfo[]>("list_refs", { repo: repo.id })
       .then(setRefs)
@@ -191,295 +252,468 @@ const App: Component = () => {
     invoke<string[]>("list_files", { repo: repo.id })
       .then(setFiles)
       .catch(() => setFiles([]));
+    loadChangeCount(repo.id);
     setConflictState("None");
     updateConflictState(repo);
   });
 
-  // Palette entries: tab actions + branches (→ Refs) + files (→ Blame).
+  // Palette entries: recent repos first (the Launch menu), then nav actions +
+  // branches (→ Refs) + files (→ Blame).
   const paletteEntries = (): PaletteEntry[] => {
+    const repos: PaletteEntry[] = recents().map((r) => ({
+      kind: "repo",
+      label: `${baseName(r.path)}   ${r.path}`,
+      run: () => openRepoPath?.(r.path),
+    }));
     const actions: PaletteEntry[] = [
-      { kind: "action", label: "Go to Changes", run: () => setTab("changes") },
-      { kind: "action", label: "Go to Commits", run: () => setTab("commits") },
-      { kind: "action", label: "Go to Refs", run: () => setTab("refs") },
-      { kind: "action", label: "Go to Blame", run: () => setTab("blame") },
-      { kind: "action", label: "Go to File History", run: () => setTab("history") },
+      { kind: "action", label: "Go to Local Changes", run: () => goPrimary("changes") },
+      { kind: "action", label: "Go to All Commits", run: () => goPrimary("commits") },
+      { kind: "action", label: "Refs / Pull Requests", run: () => setOverlay("refs") },
+      { kind: "action", label: "Blame", run: () => setOverlay("blame") },
+      { kind: "action", label: "File History", run: () => setOverlay("history") },
+      { kind: "action", label: "Settings", run: () => setOverlay("settings") },
     ];
     const branches: PaletteEntry[] = refs()
       .filter((r) => r.kind === "Branch" || r.kind === "Remote")
-      .map((r) => ({ kind: "branch", label: r.name, run: () => setTab("refs") }));
+      .map((r) => ({ kind: "branch", label: r.name, run: () => setOverlay("refs") }));
     const fileEntries: PaletteEntry[] = files().map((f) => ({
       kind: "file",
       label: f,
       run: () => {
         setNavFile(f);
-        setTab("blame");
+        setOverlay("blame");
       },
     }));
-    return [...actions, ...branches, ...fileEntries];
+    return [...repos, ...actions, ...branches, ...fileEntries];
   };
 
-  const tabStyle = (t: Tab) => ({
-    padding: "0.3rem 0.9rem",
-    cursor: "pointer",
-    border: "none",
-    background: tab() === t ? "var(--accent)" : "var(--border)",
-    color: tab() === t ? "var(--on-accent)" : "var(--fg)",
-    "border-radius": "4px 4px 0 0",
-    "font-size": "0.875rem",
-  });
-  // ARIA tab semantics so a screen reader announces "tab, selected" (PH6-003).
-  const tabProps = (t: Tab) => ({
-    style: tabStyle(t),
-    role: "tab" as const,
-    "aria-selected": tab() === t,
-  });
+  const goPrimary = (v: PrimaryView) => {
+    setOverlay(null);
+    setView(v);
+  };
+
+  // Advanced views in the toolbar "More" menu.
+  const overflowItems = (): OverflowItem[] => [
+    { key: "refs", label: "Refs / Pull Requests" },
+    { key: "blame", label: "Blame" },
+    { key: "history", label: "File History" },
+    { key: "worktrees", label: "Worktrees" },
+    { key: "submodules", label: "Submodules" },
+    { key: "reflog", label: "Reflog" },
+    { key: "bisect", label: "Bisect" },
+    { key: "flow", label: "git-flow" },
+    { key: "lfs", label: "Git LFS" },
+    { key: "commands", label: "Custom Commands" },
+    { key: "ai", label: "✨ AI Assistant" },
+    { key: "notifications", label: "Notifications", badge: unread() || undefined },
+  ];
+
+  const openBranchMenu = (branch: string, at: { x: number; y: number }) =>
+    setBranchMenu({
+      branch,
+      isCurrent: branch === currentBranchName(),
+      x: at.x,
+      y: at.y,
+    });
+
+  // Create a branch from the modal's start point + name.
+  const doCreateBranch = async () => {
+    const repo = repoId();
+    const startPoint = newBranchFrom();
+    const name = newBranchName().trim();
+    if (!repo || !startPoint || !name) return;
+    const r = await createBranchAt(repo, name, startPoint);
+    setNewBranchFrom(null);
+    setNewBranchName("");
+    if (r.ok) {
+      setErr(null);
+      setOpNotice(r.message);
+    } else {
+      setErr(r.message);
+    }
+    refresh();
+  };
+
+  // Surface a branch/file ActionResult as a toast or error, then refresh.
+  const showResult = (r: { ok: boolean; message: string } | null) => {
+    if (!r) return;
+    if (r.ok) {
+      setErr(null);
+      setOpNotice(r.message);
+    } else {
+      setErr(r.message);
+    }
+    refresh();
+  };
+
+  // Open the generalized name prompt (Rename, New Tag, …).
+  const openPrompt = (spec: PromptSpec) => {
+    setPromptValue(spec.initial ?? "");
+    setPromptSpec(spec);
+  };
+  const submitPrompt = () => {
+    const spec = promptSpec();
+    const v = promptValue().trim();
+    if (!spec || !v) return;
+    setPromptSpec(null);
+    setPromptValue("");
+    spec.onSubmit(v);
+  };
+
+  // Pick a directory and create a worktree for `branch` there.
+  const pickWorktreeDir = async (branch: string) => {
+    const repo = repoId();
+    if (!repo) return;
+    const dir = await openDialog({ directory: true, title: `Worktree directory for ${branch}` });
+    if (typeof dir !== "string") return;
+    showResult(await addWorktreeFor(repo, branch, dir));
+  };
+
+  // Sidebar branch-row keyboard shortcuts (⇧⌘B / ⇧⌘G / ⌫).
+  const onBranchKey = async (branch: string, action: "new-branch" | "new-tag" | "delete") => {
+    const repo = repoId();
+    if (!repo) return;
+    if (action === "new-branch") {
+      setNewBranchName("");
+      setNewBranchFrom(branch);
+    } else if (action === "new-tag") {
+      openPrompt({
+        title: `New tag at ${branch}`,
+        placeholder: "tag-name",
+        submitLabel: "Create Tag",
+        onSubmit: async (name) => showResult(await createTagAt(repo, name, branch)),
+      });
+    } else {
+      showResult(await deleteBranch(repo, branch));
+    }
+  };
+
+  // Generic horizontal drag: feed each pointermove delta to `apply`.
+  const hDrag = (e: PointerEvent, apply: (dx: number) => void) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const target = e.currentTarget as HTMLElement;
+    target.setPointerCapture(e.pointerId);
+    const move = (ev: PointerEvent) => apply(ev.clientX - startX);
+    const up = (ev: PointerEvent) => {
+      target.releasePointerCapture(ev.pointerId);
+      target.removeEventListener("pointermove", move);
+      target.removeEventListener("pointerup", up);
+    };
+    target.addEventListener("pointermove", move);
+    target.addEventListener("pointerup", up);
+  };
+  const startSidebarDrag = (e: PointerEvent) => {
+    const startW = sidebarWidth();
+    hDrag(e, (dx) => setSidebarWidth(Math.max(180, Math.min(startW + dx, window.innerWidth - 320))));
+  };
+  // Settings dialog: a right-edge handle; dragging right grows the dialog.
+  const startSettingsDrag = (e: PointerEvent) => {
+    const startW = settingsWidth();
+    hDrag(e, (dx) => setSettingsWidth(Math.max(420, Math.min(startW + dx * 2, window.innerWidth - 48))));
+  };
+
+  // Open the AI "Explain changes" overlay for any ai_explain target.
+  const openExplain = (target: Record<string, unknown>, title: string, subtitle?: string) =>
+    setExplainSpec({ target, title, subtitle });
+
+  // Explain a branch's changes vs the mainline (main/master), else its tip.
+  const explainBranch = (branch: string) => {
+    const names = refs().filter((r) => r.kind === "Branch").map((r) => r.name);
+    const base = ["main", "master"].find((b) => names.includes(b) && b !== branch);
+    if (base) {
+      openExplain({ kind: "branch_range", base, head: branch }, `Explain ${branch}`, `${base}..${branch}`);
+    } else {
+      // No mainline to diff against (or branch IS it): explain its tip commit.
+      openExplain({ kind: "branch_range", base: `${branch}^`, head: branch }, `Explain ${branch}`, `latest commit`);
+    }
+  };
+
+  // Open the Blame / File-History overlay focused on a path (from file menus).
+  const openBlameFor = (path: string) => {
+    setNavFile(path);
+    setOverlay("blame");
+  };
+  const openHistoryFor = (path: string) => {
+    setNavFile(path);
+    setOverlay("history");
+  };
+
+  // Double-click a sidebar branch → check it out (force-fallback handled inside).
+  const checkoutByName = async (branch: string) => {
+    const repo = repoId();
+    if (!repo) return;
+    const r = await checkoutBranch(repo, branch);
+    if (r.ok) {
+      setErr(null);
+      setOpNotice(r.message);
+    } else {
+      setErr(r.message);
+    }
+    refresh();
+  };
+
+  const bar = {
+    margin: 0,
+    padding: "4px 16px",
+    "font-size": "12px",
+    "flex-shrink": 0,
+  } as const;
 
   return (
-    <div
-      style={{
-        height: "100%",
-        display: "flex",
-        "flex-direction": "column",
-        "font-family": "sans-serif",
-        overflow: "hidden",
-      }}
-    >
-      {/* App title + trial banner */}
-      <div style={{ padding: "0.5rem 1rem 0", "flex-shrink": 0, display: "flex", "align-items": "center", gap: "0.6rem" }}>
-        <Show when={info()}>
-          <span style={{ "font-weight": 600 }}>
-            {info()?.name} {info()?.version}
-          </span>
-        </Show>
-        <Show when={license()?.kind === "Trial"}>
-          <span style={{ background: "var(--warning-bg)", color: "var(--warning)", "border-radius": "3px", padding: "0.05rem 0.5rem", "font-size": "0.75rem" }}>
-            Trial — {(license() as { days_left: number }).days_left} day
-            {(license() as { days_left: number }).days_left === 1 ? "" : "s"} left
-          </span>
-        </Show>
-        <Show when={license()?.kind === "Licensed"}>
-          <span style={{ color: "var(--success)", "font-size": "0.72rem" }}>● Licensed</span>
-        </Show>
-        <span style={{ flex: "1" }} />
-        <ThemeToggle />
-      </div>
+    <div style={{ height: "100%", display: "flex", "flex-direction": "column", overflow: "hidden" }}>
+      <Toolbar
+        repoId={repoId()}
+        repoName={repoName()}
+        currentBranch={currentBranchName()}
+        refreshNonce={refreshNonce()}
+        onChanged={refresh}
+        overflowItems={overflowItems()}
+        onOverflow={(k) => setOverlay(k as Overlay)}
+        onQuickLaunch={() => setPaletteOpen(true)}
+        onAddRepo={() => repoPicker?.()}
+        onBranchMenu={(at) => {
+          const b = currentBranchName();
+          if (b) openBranchMenu(b, at);
+        }}
+        onSettings={() => setOverlay("settings")}
+      />
 
       {/* Licensing gate: blocks the UI when the trial has expired (ADR-0007). */}
       <Show when={license()?.kind === "Expired"}>
         <LicenseGate onActivated={setLicense} />
       </Show>
 
-      {/* Repository manager */}
-      <RepoBar active={repoId()} onActiveChange={setActive} apiRef={(open) => (openRepoPath = open)} />
+      {/* Repo tab strip (34px) */}
+      <RepoBar
+        active={repoId()}
+        onActiveChange={setActive}
+        apiRef={(api) => {
+          openRepoPath = api.open;
+          repoPicker = api.pick;
+        }}
+        onRecents={setRecents}
+      />
 
-      <Show when={err()}>
-        <p role="alert" style={{ color: "var(--error)", margin: "0.25rem 1rem", "font-size": "0.85rem" }}>{err()}</p>
+      {/* Thin status bars */}
+      <Show when={license()?.kind === "Trial"}>
+        <div role="status" style={{ ...bar, background: "var(--warning-bg)", color: "var(--warning)" }}>
+          Trial — {(license() as { days_left: number }).days_left} day
+          {(license() as { days_left: number }).days_left === 1 ? "" : "s"} left
+        </div>
       </Show>
-      <Show when={opNotice()}>
-        <p role="status" style={{ color: "var(--success)", margin: "0.25rem 1rem", "font-size": "0.85rem" }}>{opNotice()}</p>
+      <Show when={err()}>
+        <p role="alert" style={{ ...bar, color: "var(--error)" }}>{err()}</p>
       </Show>
       <Show when={opConflicts().length > 0}>
-        <div role="alert" style={{ margin: "0.25rem 1rem", padding: "0.35rem", border: "1px solid var(--warning-border)", background: "var(--warning-bg)", "font-size": "0.8rem" }}>
+        <div role="alert" style={{ ...bar, border: "1px solid var(--warning-border)", background: "var(--warning-bg)" }}>
           <span style={{ "font-weight": 700 }}>Conflicts: </span>
           <span>{opConflicts().join(", ")}</span>
-          <button style={{ margin: "0 0 0 0.5rem" }} onClick={() => setTab("conflicts")}>
-            Resolve
-          </button>
-          <button style={{ margin: "0 0 0 0.5rem" }} onClick={abortSequencer}>
-            Abort
-          </button>
+          <button style={{ "margin-left": "0.5rem" }} onClick={() => setOverlay("conflicts")}>Resolve</button>
+          <button style={{ "margin-left": "0.5rem" }} onClick={abortSequencer}>Abort</button>
         </div>
       </Show>
 
-      {/* View tabs for the active repo */}
-      <Show when={active()}>
-        <div role="tablist" aria-label="Repository views" style={{ display: "flex", "flex-wrap": "wrap", gap: "0.25rem", padding: "0.5rem 1rem 0", "flex-shrink": 0 }}>
-          <button {...tabProps("changes")} onClick={() => setTab("changes")}>
-            Changes
-          </button>
-          <button {...tabProps("commits")} onClick={() => setTab("commits")}>
-            Commits
-          </button>
-          <button {...tabProps("refs")} onClick={() => setTab("refs")}>
-            Refs
-          </button>
-          <button {...tabProps("blame")} onClick={() => setTab("blame")}>
-            Blame
-          </button>
-          <button {...tabProps("history")} onClick={() => setTab("history")}>
-            History
-          </button>
-          <button {...tabProps("worktrees")} onClick={() => setTab("worktrees")}>
-            Worktrees
-          </button>
-          <button {...tabProps("reflog")} onClick={() => setTab("reflog")}>
-            Reflog
-          </button>
-          <button {...tabProps("bisect")} onClick={() => setTab("bisect")}>
-            Bisect
-          </button>
-          <button {...tabProps("commands")} onClick={() => setTab("commands")}>
-            Commands
-          </button>
-          <button {...tabProps("lfs")} onClick={() => setTab("lfs")}>
-            LFS
-          </button>
-          <button {...tabProps("flow")} onClick={() => setTab("flow")}>
-            git-flow
-          </button>
-          <button {...tabProps("submodules")} onClick={() => setTab("submodules")}>
-            Submodules
-          </button>
-          <button {...tabProps("ai")} onClick={() => setTab("ai")}>
-            ✨ AI
-          </button>
-          <button {...tabProps("settings")} onClick={() => setTab("settings")}>
-            Settings
-          </button>
-          <button {...tabProps("notifications")} onClick={() => setTab("notifications")}>
-            Notifications
-            <Show when={unread() > 0}>
-              <span style={{ "margin-left": "0.3rem", background: "var(--danger)", color: "var(--on-accent)", "border-radius": "8px", padding: "0 0.35rem", "font-size": "0.7rem" }}>
-                {unread()}
-              </span>
-            </Show>
-          </button>
-          <Show when={conflictState() !== "None"}>
-            <button
-              role="tab"
-              aria-selected={tab() === "conflicts"}
-              style={{ ...tabStyle("conflicts"), background: tab() === "conflicts" ? "var(--danger)" : "var(--danger-bg)", color: tab() === "conflicts" ? "var(--on-accent)" : "var(--danger)" }}
-              onClick={() => setTab("conflicts")}
-            >
-              Conflicts ⚠
-            </button>
-          </Show>
-        </div>
-      </Show>
+      {/* Body: sidebar + main */}
+      <Show
+        when={active()}
+        fallback={
+          <div style={{ flex: "1", display: "flex", "align-items": "center", "justify-content": "center", color: "var(--tx3)" }}>
+            Open a repository to begin.
+          </div>
+        }
+      >
+        <div style={{ flex: "1", display: "flex", "min-height": "0", overflow: "hidden" }}>
+          <Sidebar
+            repoName={repoName()}
+            changeCount={changeCount()}
+            view={view()}
+            onView={goPrimary}
+            refs={refs()}
+            onBranchMenu={openBranchMenu}
+            onCheckout={checkoutByName}
+            onBranchKey={onBranchKey}
+          />
 
-      {/* Remote sync: fetch / pull / push + ahead/behind */}
-      <Show when={active()}>
-        <SyncBar repoId={repoId()!} refreshNonce={refreshNonce()} onChanged={refresh} />
-      </Show>
+          {/* Drag handle: resize the sidebar (col-resize). */}
+          <div
+            onPointerDown={startSidebarDrag}
+            title="Drag to resize the sidebar"
+            style={{ "flex-shrink": 0, width: "6px", cursor: "col-resize", "margin-left": "-3px", "z-index": 5, "touch-action": "none" }}
+          />
 
-      {/* Content */}
-      <Show when={active()}>
-        <div role="main" aria-label={`${tab()} view`} style={{ flex: "1", overflow: "hidden" }}>
-          <Show when={tab() === "changes"}>
-            <ChangesView
-              repoId={repoId()!}
-              refreshNonce={refreshNonce()}
-              onChanged={refresh}
-            />
-          </Show>
-          <Show when={tab() === "commits"}>
-            <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
-              <div style={{ flex: "1", "min-width": "0", overflow: "hidden" }}>
-                <GraphView
+          <div role="main" aria-label={overlay() ?? view()} style={{ flex: "1", "min-width": "0", overflow: "hidden", background: "var(--bg)" }}>
+            {/* Overlay (advanced view) takes precedence over the primary view —
+                except Settings, which floats as a dialog over the primary view. */}
+            <Show when={overlay() === null || overlay() === "settings"} fallback={renderOverlay()}>
+              <Show when={view() === "changes"}>
+                <ChangesView
                   repoId={repoId()!}
-                  selected={selectedCommit() ?? undefined}
-                  onSelectCommit={setSelectedCommit}
+                  refreshNonce={refreshNonce()}
+                  onChanged={refresh}
+                  onResult={showResult}
+                  onOpenBlame={openBlameFor}
+                  onOpenHistory={openHistoryFor}
+                  onExplain={openExplain}
                 />
-              </div>
-              <Show when={selectedCommit()}>
-                <div
-                  style={{
-                    flex: "1",
-                    "min-width": "0",
-                    "border-left": "1px solid var(--border)",
-                    overflow: "hidden",
-                    display: "flex",
-                    "flex-direction": "column",
-                  }}
-                >
-                  <div style={{ display: "flex", gap: "0.4rem", padding: "0.35rem", "border-bottom": "1px solid var(--border)", "font-size": "0.8rem" }}>
-                    <button onClick={() => runCommitAction("cherry_pick", "Cherry-pick")}>
-                      Cherry-pick
-                    </button>
-                    <button onClick={() => runCommitAction("revert", "Revert")}>
-                      Revert
-                    </button>
-                    <button onClick={() => setRebaseFrom(selectedCommit())}>
-                      Rebase i from here
-                    </button>
-                    <span style={{ flex: "1" }} />
-                    <SignatureBadge status={selectedSig()} />
-                  </div>
-                  <div style={{ flex: "1", "min-height": "0" }}>
-                    <DiffView repoId={repoId()!} commit={selectedCommit()!} />
-                  </div>
-                </div>
               </Show>
+              <Show when={view() === "commits"}>
+                <AllCommitsView
+                  repoId={repoId()!}
+                  refs={refs()}
+                  selected={selectedCommits()}
+                  primary={primaryCommit() ?? undefined}
+                  onSelectionChange={(oids, primary) => {
+                    setSelectedCommits(oids);
+                    setPrimaryCommit(primary);
+                  }}
+                  sig={selectedSig()}
+                  onCherryPick={() => runCommitAction("cherry_pick", "Cherry-pick")}
+                  onRevert={() => runCommitAction("revert", "Revert")}
+                  onRebaseInteractive={(oid) => setRebaseFrom(oid)}
+                  onRecompose={(oid) => setRecomposeFrom(oid)}
+                />
+              </Show>
+            </Show>
+          </div>
+        </div>
+      </Show>
+
+      {/* Branch context menu (sidebar ⋯ / right-click, toolbar Branch button) */}
+      <Show when={branchMenu() && active()}>
+        <BranchMenu
+          repoId={repoId()!}
+          currentBranch={currentBranchName()}
+          refs={refs()}
+          state={branchMenu()!}
+          onClose={() => setBranchMenu(null)}
+          onResult={showResult}
+          onCreateBranch={(startPoint) => {
+            setNewBranchName("");
+            setNewBranchFrom(startPoint);
+          }}
+          onPrompt={openPrompt}
+          onWorktree={pickWorktreeDir}
+          onAiExplain={explainBranch}
+          onCreatePr={() => setOverlay("refs")}
+        />
+      </Show>
+
+      {/* New-branch name modal (Create Branch Here…) */}
+      <Show when={newBranchFrom()}>
+        <div
+          style={{ position: "fixed", inset: "0", background: "rgba(0,0,0,0.35)", display: "flex", "align-items": "flex-start", "justify-content": "center", "padding-top": "18vh", "z-index": "1000" }}
+          onClick={() => setNewBranchFrom(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "min(420px, 90vw)", background: "var(--pill)", border: "1px solid var(--bd)", "border-radius": "9px", padding: "16px", "box-shadow": "0 14px 38px rgba(0,0,0,0.45)", display: "flex", "flex-direction": "column", gap: "10px" }}
+          >
+            <div style={{ "font-size": "13px", color: "var(--tx2)" }}>
+              New branch from <span style={{ "font-family": "ui-monospace, monospace", color: "var(--tx)" }}>{newBranchFrom()}</span>
             </div>
-          </Show>
-          <Show when={tab() === "refs"}>
-            <RefsView
-              repoId={repoId()!}
-              refs={refs()}
-              onChanged={refresh}
-              onInteractiveRebase={(oid) => setRebaseFrom(oid)}
-            />
-          </Show>
-          <Show when={tab() === "blame"}>
-            <BlameView repoId={repoId()!} initialPath={navFile()} />
-          </Show>
-          <Show when={tab() === "history"}>
-            <FileHistory repoId={repoId()!} />
-          </Show>
-          <Show when={tab() === "worktrees"}>
-            <WorktreesView
-              repoId={repoId()!}
-              refreshNonce={refreshNonce()}
-              onChanged={refresh}
-              onOpen={(path) => openRepoPath?.(path)}
-            />
-          </Show>
-          <Show when={tab() === "reflog"}>
-            <ReflogView repoId={repoId()!} refreshNonce={refreshNonce()} onChanged={refresh} />
-          </Show>
-          <Show when={tab() === "bisect"}>
-            <BisectView repoId={repoId()!} refreshNonce={refreshNonce()} onChanged={refresh} />
-          </Show>
-          <Show when={tab() === "commands"}>
-            <CustomCommandsView repoId={repoId()!} refs={refs()} files={files()} />
-          </Show>
-          <Show when={tab() === "lfs"}>
-            <LfsView repoId={repoId()!} refreshNonce={refreshNonce()} onChanged={refresh} />
-          </Show>
-          <Show when={tab() === "flow"}>
-            <GitFlowView repoId={repoId()!} refreshNonce={refreshNonce()} onChanged={refresh} />
-          </Show>
-          <Show when={tab() === "submodules"}>
-            <SubmodulesView
-              repoId={repoId()!}
-              repoPath={active()!.path}
-              refreshNonce={refreshNonce()}
-              onChanged={refresh}
-              onOpen={(path) => openRepoPath?.(path)}
-            />
-          </Show>
-          <Show when={tab() === "ai"}>
-            <AiView repoId={repoId()!} onChanged={refresh} />
-          </Show>
-          <Show when={tab() === "settings"}>
-            <SettingsView repoId={repoId()!} />
-          </Show>
-          <Show when={tab() === "notifications"}>
-            <NotificationsView refreshNonce={refreshNonce()} onUnread={setUnread} />
-          </Show>
-          <Show when={tab() === "conflicts"}>
-            <ConflictResolver
-              repoId={repoId()!}
-              refreshNonce={refreshNonce()}
-              conflictState={conflictState()}
-              onChanged={refresh}
-              onDone={() => {
-                setOpConflicts([]);
-                setOpNotice("All conflicts resolved. Commit to finish the operation.");
-                refresh();
+            <input
+              ref={(el) => queueMicrotask(() => el.focus())}
+              value={newBranchName()}
+              onInput={(e) => setNewBranchName(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") doCreateBranch();
+                if (e.key === "Escape") setNewBranchFrom(null);
               }}
+              placeholder="new-branch-name"
+              style={{ background: "var(--input)", border: "1px solid var(--bd)", "border-radius": "7px", color: "var(--tx)", "font-size": "13px", padding: "9px 12px" }}
             />
-          </Show>
+            <div style={{ display: "flex", "justify-content": "flex-end", gap: "8px" }}>
+              <button onClick={() => setNewBranchFrom(null)} style={{ border: "1px solid var(--bd)", background: "var(--btn)", color: "var(--tx)", "border-radius": "7px", padding: "7px 16px", cursor: "pointer", "font-size": "12.5px" }}>
+                Cancel
+              </button>
+              <button
+                onClick={doCreateBranch}
+                disabled={!newBranchName().trim()}
+                style={{ border: "none", background: newBranchName().trim() ? "var(--accent)" : "var(--btn)", color: newBranchName().trim() ? "var(--on-accent-strong)" : "var(--tx3)", "border-radius": "7px", padding: "7px 16px", cursor: newBranchName().trim() ? "pointer" : "not-allowed", "font-size": "12.5px", "font-weight": 600 }}
+              >
+                Create Branch
+              </button>
+            </div>
+          </div>
+        </div>
+      </Show>
+
+      {/* Generalized name prompt (Rename, New Tag, …) */}
+      <Show when={promptSpec()}>
+        <div
+          style={{ position: "fixed", inset: "0", background: "rgba(0,0,0,0.35)", display: "flex", "align-items": "flex-start", "justify-content": "center", "padding-top": "18vh", "z-index": "1000" }}
+          onClick={() => setPromptSpec(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "min(420px, 90vw)", background: "var(--pill)", border: "1px solid var(--bd)", "border-radius": "9px", padding: "16px", "box-shadow": "0 14px 38px rgba(0,0,0,0.45)", display: "flex", "flex-direction": "column", gap: "10px" }}
+          >
+            <div style={{ "font-size": "13px", color: "var(--tx2)" }}>{promptSpec()!.title}</div>
+            <input
+              ref={(el) => queueMicrotask(() => el.focus())}
+              value={promptValue()}
+              onInput={(e) => setPromptValue(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") submitPrompt();
+                if (e.key === "Escape") setPromptSpec(null);
+              }}
+              placeholder={promptSpec()!.placeholder}
+              style={{ background: "var(--input)", border: "1px solid var(--bd)", "border-radius": "7px", color: "var(--tx)", "font-size": "13px", padding: "9px 12px" }}
+            />
+            <div style={{ display: "flex", "justify-content": "flex-end", gap: "8px" }}>
+              <button onClick={() => setPromptSpec(null)} style={{ border: "1px solid var(--bd)", background: "var(--btn)", color: "var(--tx)", "border-radius": "7px", padding: "7px 16px", cursor: "pointer", "font-size": "12.5px" }}>
+                Cancel
+              </button>
+              <button
+                onClick={submitPrompt}
+                disabled={!promptValue().trim()}
+                style={{ border: "none", background: promptValue().trim() ? "var(--accent)" : "var(--btn)", color: promptValue().trim() ? "var(--on-accent-strong)" : "var(--tx3)", "border-radius": "7px", padding: "7px 16px", cursor: promptValue().trim() ? "pointer" : "not-allowed", "font-size": "12.5px", "font-weight": 600 }}
+              >
+                {promptSpec()!.submitLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      </Show>
+
+      {/* Global settings dialog — opens with or without a repo (repo-specific
+          sections appear only when a repo is active). */}
+      <Show when={overlay() === "settings"}>
+        <div
+          style={{ position: "fixed", inset: "0", background: "rgba(0,0,0,0.45)", display: "flex", "align-items": "center", "justify-content": "center", "z-index": "1100" }}
+          onClick={() => setOverlay(null)}
+        >
+          <div
+            role="dialog"
+            aria-label="Settings"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setOverlay(null);
+            }}
+            style={{ position: "relative", width: `min(${settingsWidth()}px, 94vw)`, height: "min(860px, 90vh)", background: "var(--panel)", border: "1px solid var(--bd)", "border-radius": "12px", "box-shadow": "0 24px 70px rgba(0,0,0,0.5)", display: "flex", "flex-direction": "column", overflow: "hidden" }}
+          >
+            {/* Right-edge drag handle to widen / narrow the dialog. */}
+            <div
+              onPointerDown={startSettingsDrag}
+              title="Drag to resize"
+              style={{ position: "absolute", top: 0, right: "-4px", width: "12px", height: "100%", cursor: "col-resize", "touch-action": "none", "z-index": 2 }}
+            />
+            <div style={{ "flex-shrink": 0, display: "flex", "align-items": "center", gap: "8px", padding: "12px 16px", "border-bottom": "1px solid var(--bd)", background: "var(--toolbar)" }}>
+              <span style={{ "font-size": "13px", "font-weight": 600, color: "var(--tx)" }}>Settings</span>
+              <span style={{ flex: "1" }} />
+              <button
+                aria-label="Close settings"
+                onClick={() => setOverlay(null)}
+                style={{ border: "1px solid var(--bd)", background: "var(--btn)", color: "var(--tx)", "border-radius": "7px", padding: "5px 12px", cursor: "pointer", "font-size": "12.5px" }}
+              >
+                Close
+              </button>
+            </div>
+            <div style={{ flex: "1", "min-height": "0", overflow: "hidden" }}>
+              <SettingsView repoId={repoId()} />
+            </div>
+          </div>
         </div>
       </Show>
 
@@ -493,6 +727,60 @@ const App: Component = () => {
         />
       </Show>
 
+      {/* AI "Explain changes" overlay (file / branch / hunk) */}
+      <Show when={explainSpec() && active()}>
+        <ExplainPanel
+          repoId={repoId()!}
+          target={explainSpec()!.target}
+          title={explainSpec()!.title}
+          subtitle={explainSpec()!.subtitle}
+          onClose={() => setExplainSpec(null)}
+        />
+      </Show>
+
+      {/* AI recompose overlay (Plan 3) */}
+      <Show when={recomposeFrom() && active()}>
+        <RecomposeView
+          repoId={repoId()!}
+          fromOid={recomposeFrom()!}
+          onClose={() => setRecomposeFrom(null)}
+          onComplete={refresh}
+        />
+      </Show>
+
+      {/* Transient status toast (auto-fades; conflicts/errors stay as bars). */}
+      <Show when={opNotice()}>
+        <div
+          role="status"
+          onClick={() => setOpNotice(null)}
+          style={{
+            position: "fixed",
+            bottom: "20px",
+            left: "50%",
+            transform: "translateX(-50%)",
+            "z-index": "1200",
+            "max-width": "min(560px, 90vw)",
+            display: "flex",
+            "align-items": "center",
+            gap: "8px",
+            padding: "9px 16px",
+            background: "var(--pill)",
+            border: "1px solid var(--bd)",
+            "border-radius": "9px",
+            "box-shadow": "0 12px 32px rgba(0,0,0,0.4)",
+            color: "var(--tx)",
+            "font-size": "12.5px",
+            cursor: "pointer",
+            opacity: toastLeaving() ? 0 : 1,
+            transition: "opacity 0.35s ease",
+            animation: "toastIn 0.22s ease",
+          }}
+        >
+          <span style={{ color: "var(--success)" }}>✓</span>
+          {opNotice()}
+        </div>
+      </Show>
+
       <CommandPalette
         open={paletteOpen()}
         entries={paletteEntries()}
@@ -501,6 +789,66 @@ const App: Component = () => {
       />
     </div>
   );
+
+  // ── Overlay (advanced) view rendering ───────────────────────────────────────
+  function renderOverlay() {
+    const id = repoId();
+    if (!id) return null;
+    return (
+      <>
+        <Show when={overlay() === "refs"}>
+          <RefsView repoId={id} refs={refs()} onChanged={refresh} onInteractiveRebase={(oid) => setRebaseFrom(oid)} />
+        </Show>
+        <Show when={overlay() === "blame"}>
+          <BlameView repoId={id} initialPath={navFile()} />
+        </Show>
+        <Show when={overlay() === "history"}>
+          <FileHistory repoId={id} initialPath={navFile()} />
+        </Show>
+        <Show when={overlay() === "worktrees"}>
+          <WorktreesView repoId={id} refreshNonce={refreshNonce()} onChanged={refresh} onOpen={(path) => openRepoPath?.(path)} />
+        </Show>
+        <Show when={overlay() === "reflog"}>
+          <ReflogView repoId={id} refreshNonce={refreshNonce()} onChanged={refresh} />
+        </Show>
+        <Show when={overlay() === "bisect"}>
+          <BisectView repoId={id} refreshNonce={refreshNonce()} onChanged={refresh} />
+        </Show>
+        <Show when={overlay() === "commands"}>
+          <CustomCommandsView repoId={id} refs={refs()} files={files()} />
+        </Show>
+        <Show when={overlay() === "lfs"}>
+          <LfsView repoId={id} refreshNonce={refreshNonce()} onChanged={refresh} />
+        </Show>
+        <Show when={overlay() === "flow"}>
+          <GitFlowView repoId={id} refreshNonce={refreshNonce()} onChanged={refresh} />
+        </Show>
+        <Show when={overlay() === "submodules"}>
+          <SubmodulesView repoId={id} repoPath={active()!.path} refreshNonce={refreshNonce()} onChanged={refresh} onOpen={(path) => openRepoPath?.(path)} />
+        </Show>
+        <Show when={overlay() === "ai"}>
+          <AiView repoId={id} onChanged={refresh} />
+        </Show>
+        {/* Settings renders as a centered dialog (see below), not a pane. */}
+        <Show when={overlay() === "notifications"}>
+          <NotificationsView refreshNonce={refreshNonce()} onUnread={setUnread} />
+        </Show>
+        <Show when={overlay() === "conflicts"}>
+          <ConflictResolver
+            repoId={id}
+            refreshNonce={refreshNonce()}
+            conflictState={conflictState()}
+            onChanged={refresh}
+            onDone={() => {
+              setOpConflicts([]);
+              setOpNotice("All conflicts resolved. Commit to finish the operation.");
+              refresh();
+            }}
+          />
+        </Show>
+      </>
+    );
+  }
 };
 
 export default App;

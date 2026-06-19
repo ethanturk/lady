@@ -24,7 +24,7 @@ mod providers;
 
 pub use providers::{
     anthropic::AnthropicProvider, azure::AzureOpenAiProvider, gemini::GeminiProvider,
-    mistral::MistralProvider, ollama::OllamaProvider, openai::OpenAiProvider,
+    mistral::MistralProvider, openai::OpenAiProvider,
 };
 
 /// Errors surfaced by AI operations.
@@ -103,8 +103,12 @@ impl AiTask {
 /// the rest are remote and require consent + redaction (ADR-0009).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub enum ProviderKind {
-    /// Local Ollama endpoint — never leaves the machine (ADR-0008/0009).
-    Ollama,
+    /// Any OpenAI-compatible Chat Completions server (Ollama, LM Studio, vLLM,
+    /// llama.cpp, LocalAI, …) at a user-set base URL. Treated as the local-first
+    /// path (consent-free, redaction-optional); point it only at servers you
+    /// trust. `serde(alias)` migrates configs that stored the old `Ollama` kind.
+    #[serde(alias = "Ollama")]
+    OpenAiCompatible,
     /// OpenAI Chat Completions.
     OpenAi,
     /// Anthropic Claude Messages.
@@ -120,7 +124,7 @@ pub enum ProviderKind {
 impl ProviderKind {
     /// Every provider kind, for UI enumeration.
     pub const ALL: [ProviderKind; 6] = [
-        ProviderKind::Ollama,
+        ProviderKind::OpenAiCompatible,
         ProviderKind::OpenAi,
         ProviderKind::Anthropic,
         ProviderKind::Gemini,
@@ -131,7 +135,7 @@ impl ProviderKind {
     /// Human-facing label.
     pub fn label(self) -> &'static str {
         match self {
-            ProviderKind::Ollama => "Ollama (local)",
+            ProviderKind::OpenAiCompatible => "OpenAI Compatible",
             ProviderKind::OpenAi => "OpenAI",
             ProviderKind::Anthropic => "Anthropic Claude",
             ProviderKind::Gemini => "Google Gemini",
@@ -140,17 +144,19 @@ impl ProviderKind {
         }
     }
 
-    /// Whether using this provider sends data off the machine. Local Ollama is
-    /// the only `false` — it is the consent-free, redaction-optional path.
+    /// Whether using this provider sends data off the machine. The
+    /// user-configured OpenAI-compatible endpoint is the consent-free,
+    /// redaction-optional path (like the old local Ollama option).
     pub fn is_remote(self) -> bool {
-        !matches!(self, ProviderKind::Ollama)
+        !matches!(self, ProviderKind::OpenAiCompatible)
     }
 
-    /// The keychain key under which this provider's API key is stored
-    /// (`None` for the keyless local provider).
+    /// The keychain key under which this provider's API key is stored. The
+    /// OpenAI-compatible endpoint may need a key (remote gateways) or none
+    /// (local servers) — it is optional there.
     pub fn key_id(self) -> Option<&'static str> {
         match self {
-            ProviderKind::Ollama => None,
+            ProviderKind::OpenAiCompatible => Some("ai-openai-compat-key"),
             ProviderKind::OpenAi => Some("ai-openai-key"),
             ProviderKind::Anthropic => Some("ai-anthropic-key"),
             ProviderKind::Gemini => Some("ai-gemini-key"),
@@ -162,7 +168,8 @@ impl ProviderKind {
     /// A sensible default model id for the provider.
     pub fn default_model(self) -> &'static str {
         match self {
-            ProviderKind::Ollama => "llama3.1",
+            // No universal default for a generic server — the user sets it.
+            ProviderKind::OpenAiCompatible => "",
             ProviderKind::OpenAi => "gpt-4o-mini",
             ProviderKind::Anthropic => "claude-3-5-sonnet-latest",
             ProviderKind::Gemini => "gemini-1.5-flash",
@@ -186,9 +193,11 @@ pub struct AiConfig {
     /// Default model for the active provider (overrides the built-in default).
     #[serde(default)]
     pub default_model: Option<String>,
-    /// Ollama host base URL (local path).
-    #[serde(default = "default_ollama_host")]
-    pub ollama_host: String,
+    /// Base URL of the OpenAI-compatible server (must include the API version
+    /// segment, e.g. `http://localhost:11434/v1`). `serde(alias)` migrates the
+    /// old `ollama_host` value.
+    #[serde(default = "default_openai_base_url", alias = "ollama_host")]
+    pub openai_base_url: String,
     /// Azure OpenAI resource endpoint (e.g. `https://my.openai.azure.com`).
     #[serde(default)]
     pub azure_endpoint: String,
@@ -201,8 +210,9 @@ pub struct AiConfig {
     pub consented: Vec<ProviderKind>,
 }
 
-fn default_ollama_host() -> String {
-    "http://localhost:11434".to_string()
+fn default_openai_base_url() -> String {
+    // Ollama's OpenAI-compatible endpoint, the most common local default.
+    "http://localhost:11434/v1".to_string()
 }
 
 impl Default for AiConfig {
@@ -211,7 +221,7 @@ impl Default for AiConfig {
             active: None,
             models: std::collections::BTreeMap::new(),
             default_model: None,
-            ollama_host: default_ollama_host(),
+            openai_base_url: default_openai_base_url(),
             azure_endpoint: String::new(),
             azure_deployment: String::new(),
             consented: Vec::new(),
@@ -354,7 +364,11 @@ pub fn build_provider(
     api_key: Option<String>,
 ) -> Result<Box<dyn AiProvider>> {
     match kind {
-        ProviderKind::Ollama => Ok(Box::new(OllamaProvider::new(&cfg.ollama_host))),
+        // Key is optional (local servers ignore it); pass through whatever is set.
+        ProviderKind::OpenAiCompatible => Ok(Box::new(OpenAiProvider::with_base_url(
+            cfg.openai_base_url.trim_end_matches('/'),
+            api_key.unwrap_or_default(),
+        ))),
         ProviderKind::OpenAi => Ok(Box::new(OpenAiProvider::new(require_key(kind, api_key)?))),
         ProviderKind::Anthropic => Ok(Box::new(AnthropicProvider::new(require_key(
             kind, api_key,
@@ -583,7 +597,7 @@ mod tests {
     #[test]
     fn consent_required_only_for_remote() {
         let cfg = AiConfig::default();
-        assert!(cfg.has_consent(ProviderKind::Ollama));
+        assert!(cfg.has_consent(ProviderKind::OpenAiCompatible));
         assert!(!cfg.has_consent(ProviderKind::OpenAi));
         let cfg = AiConfig {
             consented: vec![ProviderKind::OpenAi],

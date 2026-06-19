@@ -11,8 +11,10 @@ import type {
   RefKind,
   RepoId,
 } from "./commands";
+import type { ResolvedRepoSettings } from "./commands";
 import { requestNoun } from "./commands";
 import { isConsentError, runAiStream } from "./ai";
+import { effectiveFf, repoSettings } from "./repoSettings";
 
 interface RefsViewProps {
   repoId: RepoId;
@@ -45,6 +47,18 @@ const RefsView: Component<RefsViewProps> = (props) => {
   const [newBranch, setNewBranch] = createSignal("");
   const [newTag, setNewTag] = createSignal("");
   const [ffMode, setFfMode] = createSignal<FfMode>("Auto");
+  // Effective settings (per-repo override ?? global default) — seeds the merge
+  // fast-forward dropdown and the default base branch when the repo changes.
+  const [effSettings, setEffSettings] = createSignal<ResolvedRepoSettings | null>(null);
+  createEffect(() => {
+    const repo = props.repoId;
+    repoSettings(repo)
+      .then((r) => {
+        setEffSettings(r);
+        setFfMode(effectiveFf(r));
+      })
+      .catch(() => {});
+  });
   const [mergeMessage, setMergeMessage] = createSignal("");
 
   // The active repo's forge, for PR/MR labelling (PH4-002).
@@ -97,9 +111,12 @@ const RefsView: Component<RefsViewProps> = (props) => {
     }
   };
 
-  // The repo's default base branch (main/master) for prefill.
+  // The repo's default base branch for prefill: the configured (override ??
+  // global) base when it exists as a branch, else the main/master auto-guess.
   const defaultBase = () => {
     const names = props.refs.filter((r) => r.kind === "Branch").map((r) => r.name);
+    const configured = effSettings()?.effective.base_branch;
+    if (configured && names.includes(configured)) return configured;
     return names.find((n) => n === "main") ?? names.find((n) => n === "master") ?? names[0] ?? "main";
   };
 

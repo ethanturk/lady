@@ -2,6 +2,7 @@ import { createSignal, For, onMount, Show } from "solid-js";
 import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import type { CustomCommand, OpenRepo, RecentRepo, RepoId, Settings } from "./commands";
 
 /** Last path segment, for a compact tab label. */
@@ -10,17 +11,24 @@ function baseName(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
+/** API handed up to App: open a known path, or pop the native repo picker. */
+export interface RepoBarApi {
+  open: (path: string) => void;
+  pick: () => void;
+}
+
 const RepoBar: Component<{
   active: string | null;
   onActiveChange: (repo: OpenRepo | null) => void;
-  /** Receives an opener so other views (e.g. worktrees) can open a path as a tab. */
-  apiRef?: (open: (path: string) => void) => void;
+  /** Receives openers so other views (worktrees) and the toolbar can open repos. */
+  apiRef?: (api: RepoBarApi) => void;
+  /** Notified whenever the recent-repository list changes (for the launcher). */
+  onRecents?: (recent: RecentRepo[]) => void;
 }> = (props) => {
   const [opened, setOpened] = createSignal<OpenRepo[]>([]);
   const [recent, setRecent] = createSignal<RecentRepo[]>([]);
   // Preserved verbatim so saving recents never clobbers custom commands.
   const [customCommands, setCustomCommands] = createSignal<CustomCommand[]>([]);
-  const [path, setPath] = createSignal("");
   const [group, setGroup] = createSignal("");
   const [showClone, setShowClone] = createSignal(false);
   const [cloneUrl, setCloneUrl] = createSignal("");
@@ -28,13 +36,29 @@ const RepoBar: Component<{
   const [progress, setProgress] = createSignal("");
   const [err, setErr] = createSignal<string | null>(null);
 
+  // Pop the OS folder picker and open the chosen directory as a repo.
+  const pickAndOpen = async () => {
+    setErr(null);
+    try {
+      const dir = await openDialog({ directory: true, multiple: false, title: "Open a Git repository" });
+      if (typeof dir === "string") {
+        openPath(dir, group().trim() || null);
+        setPanelOpen(false);
+        setGroup("");
+      }
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
+
   onMount(async () => {
-    // Expose an opener so worktrees can open a path as a repo tab.
-    props.apiRef?.((p: string) => openPath(p, null));
+    // Expose openers: a known-path opener (worktrees) + the native picker (toolbar).
+    props.apiRef?.({ open: (p: string) => openPath(p, null), pick: pickAndOpen });
     try {
       const s = await invoke<Settings>("load_settings");
       setRecent(s.recent);
       setCustomCommands(s.custom_commands ?? []);
+      props.onRecents?.(s.recent);
     } catch (e) {
       setErr(String(e));
     }
@@ -42,6 +66,7 @@ const RepoBar: Component<{
 
   const persistRecent = (next: RecentRepo[]) => {
     setRecent(next);
+    props.onRecents?.(next);
     invoke("save_settings", {
       settings: { recent: next, custom_commands: customCommands() },
     }).catch((e) => setErr(String(e)));
@@ -53,6 +78,17 @@ const RepoBar: Component<{
   };
 
   const activate = (repo: OpenRepo) => props.onActiveChange(repo);
+
+  /** Close a loaded repo's tab; if it was active, fall back to the last remaining
+   * tab (or no repository when none are left). */
+  const closeRepo = (repo: OpenRepo, e: MouseEvent) => {
+    e.stopPropagation();
+    const remaining = opened().filter((r) => r.id !== repo.id);
+    setOpened(remaining);
+    if (props.active === repo.id) {
+      props.onActiveChange(remaining.length ? remaining[remaining.length - 1] : null);
+    }
+  };
 
   /** Open `p` (existing repo), de-duping by path; refresh its dirty flag. */
   const openPath = async (p: string, g: string | null) => {
@@ -70,13 +106,6 @@ const RepoBar: Component<{
     } catch (e) {
       setErr(String(e));
     }
-  };
-
-  const onOpen = () => {
-    if (!path()) return;
-    openPath(path(), group() || null);
-    setPath("");
-    setGroup("");
   };
 
   const onClone = async () => {
@@ -99,133 +128,183 @@ const RepoBar: Component<{
     }
   };
 
-  // Distinct groups in first-seen order; ungrouped repos collected under null.
-  const groups = () => {
-    const seen: (string | null)[] = [];
-    for (const r of opened()) {
-      const g = r.group ?? null;
-      if (!seen.includes(g)) seen.push(g);
-    }
-    return seen;
+  const [panelOpen, setPanelOpen] = createSignal(false);
+
+  // Flat tab label: "group: name" when grouped, else the repo's base name.
+  const tabLabel = (repo: OpenRepo) =>
+    repo.group ? `${repo.group}: ${baseName(repo.path)}` : baseName(repo.path);
+
+  const tabStyle = (repo: OpenRepo) => {
+    const on = props.active === repo.id;
+    return {
+      display: "flex",
+      "align-items": "center",
+      gap: "5px",
+      height: "100%",
+      padding: "0 14px",
+      border: "none",
+      "border-left": "1px solid var(--bd)",
+      background: on ? "var(--tabact)" : "transparent",
+      color: on ? "var(--tx)" : "var(--tx3)",
+      "box-shadow": on ? "inset 0 2px 0 var(--accent)" : "none",
+      "font-size": "12.5px",
+      "white-space": "nowrap",
+      cursor: "pointer",
+    } as const;
   };
 
-  const tabStyle = (repo: OpenRepo) => ({
-    padding: "0.25rem 0.6rem",
-    cursor: "pointer",
-    border: "1px solid var(--border)",
-    "border-radius": "4px",
-    "font-size": "0.8rem",
-    background: props.active === repo.id ? "var(--accent)" : "var(--surface-2)",
-    color: props.active === repo.id ? "var(--on-accent)" : "var(--fg)",
-    "white-space": "nowrap",
-  });
+  const fieldStyle = {
+    padding: "7px 10px",
+    "font-size": "12.5px",
+    background: "var(--input)",
+    border: "1px solid var(--bd)",
+    "border-radius": "7px",
+    color: "var(--tx)",
+  };
 
   return (
-    <div style={{ "flex-shrink": 0, "border-bottom": "1px solid var(--border)", padding: "0.5rem 1rem" }}>
-      <div style={{ display: "flex", gap: "0.5rem", "flex-wrap": "wrap" }}>
-        <input
-          type="text"
-          value={path()}
-          onInput={(e) => setPath(e.currentTarget.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") onOpen();
-          }}
-          placeholder="/path/to/repo"
-          style={{ flex: "1", "min-width": "12rem", padding: "0.3rem 0.5rem", "font-size": "0.85rem" }}
-        />
-        <input
-          type="text"
-          value={group()}
-          onInput={(e) => setGroup(e.currentTarget.value)}
-          placeholder="group (optional)"
-          style={{ width: "9rem", padding: "0.3rem 0.5rem", "font-size": "0.85rem" }}
-        />
-        <button onClick={onOpen} style={{ padding: "0.3rem 0.8rem" }}>
-          Open / Add
-        </button>
-        <button onClick={() => setShowClone((v) => !v)} style={{ padding: "0.3rem 0.8rem" }}>
-          Clone…
-        </button>
-      </div>
-
-      <Show when={showClone()}>
-        <div style={{ display: "flex", gap: "0.5rem", "margin-top": "0.4rem", "flex-wrap": "wrap" }}>
-          <input
-            type="text"
-            value={cloneUrl()}
-            onInput={(e) => setCloneUrl(e.currentTarget.value)}
-            placeholder="https://github.com/owner/repo.git"
-            style={{ flex: "1", "min-width": "14rem", padding: "0.3rem 0.5rem", "font-size": "0.85rem" }}
-          />
-          <input
-            type="text"
-            value={cloneDest()}
-            onInput={(e) => setCloneDest(e.currentTarget.value)}
-            placeholder="/path/to/dest"
-            style={{ flex: "1", "min-width": "10rem", padding: "0.3rem 0.5rem", "font-size": "0.85rem" }}
-          />
-          <button onClick={onClone} style={{ padding: "0.3rem 0.8rem" }}>
-            Clone
-          </button>
-          <Show when={progress()}>
-            <span style={{ color: "var(--fg-muted)", "font-size": "0.8rem", "align-self": "center" }}>
-              {progress()}
-            </span>
-          </Show>
-        </div>
-      </Show>
-
-      <Show when={err()}>
-        <p style={{ color: "var(--error)", margin: "0.3rem 0 0", "font-size": "0.8rem" }}>{err()}</p>
-      </Show>
-
-      {/* Opened-repo tabs, grouped */}
-      <Show when={opened().length > 0}>
-        <div style={{ "margin-top": "0.5rem", display: "flex", "flex-direction": "column", gap: "0.3rem" }}>
-          <For each={groups()}>
-            {(g) => (
-              <div style={{ display: "flex", "align-items": "center", gap: "0.4rem", "flex-wrap": "wrap" }}>
-                <span style={{ color: "var(--fg-muted)", "font-size": "0.72rem", "min-width": "5rem" }}>
-                  {g ?? "Ungrouped"}
-                </span>
-                <For each={opened().filter((r) => (r.group ?? null) === g)}>
-                  {(repo) => (
-                    <button style={tabStyle(repo)} onClick={() => activate(repo)} title={repo.path}>
-                      <Show when={repo.dirty}>
-                        <span style={{ "margin-right": "0.25rem" }}>★</span>
-                      </Show>
-                      {baseName(repo.path)}
-                    </button>
-                  )}
-                </For>
-              </div>
-            )}
-          </For>
-        </div>
-      </Show>
-
-      {/* Recent repositories */}
-      <Show when={recent().length > 0}>
-        <div style={{ "margin-top": "0.4rem", display: "flex", gap: "0.4rem", "align-items": "center", "flex-wrap": "wrap" }}>
-          <span style={{ color: "var(--fg-muted)", "font-size": "0.72rem" }}>Recent:</span>
-          <For each={recent()}>
-            {(r) => (
-              <button
-                onClick={() => openPath(r.path, r.group)}
-                title={r.path}
+    <div style={{ "flex-shrink": 0, position: "relative" }}>
+      {/* 34px repo tab strip */}
+      <div
+        class="scroll-thin"
+        style={{
+          display: "flex",
+          "align-items": "stretch",
+          height: "34px",
+          background: "var(--tabs)",
+          "border-bottom": "1px solid var(--bd)",
+          "overflow-x": "auto",
+        }}
+      >
+        <For each={opened()}>
+          {(repo) => (
+            <button
+              class={props.active === repo.id ? undefined : "tab-inactive"}
+              style={tabStyle(repo)}
+              onClick={() => activate(repo)}
+              title={repo.path}
+            >
+              <Show when={repo.dirty}>
+                <span style={{ color: "var(--accent)" }}>●</span>
+              </Show>
+              {tabLabel(repo)}
+              <span
+                class="hov"
+                role="button"
+                aria-label={`Close ${tabLabel(repo)}`}
+                title="Close repository"
+                onClick={(e) => closeRepo(repo, e)}
                 style={{
-                  padding: "0.15rem 0.5rem",
-                  "font-size": "0.78rem",
-                  border: "1px solid var(--border)",
+                  display: "flex",
+                  "align-items": "center",
+                  "justify-content": "center",
+                  width: "16px",
+                  height: "16px",
+                  "margin-left": "2px",
                   "border-radius": "4px",
-                  background: "var(--surface-2)",
+                  color: "var(--tx4)",
+                  "font-size": "14px",
+                  "line-height": "1",
                   cursor: "pointer",
                 }}
               >
-                {baseName(r.path)}
-              </button>
-            )}
-          </For>
+                ×
+              </span>
+            </button>
+          )}
+        </For>
+        <button
+          class="hov"
+          aria-label="Add a repository"
+          onClick={() => setPanelOpen((v) => !v)}
+          style={{
+            display: "flex",
+            "align-items": "center",
+            gap: "4px",
+            padding: "0 14px",
+            border: "none",
+            "border-left": opened().length > 0 ? "1px solid var(--bd)" : "none",
+            background: "transparent",
+            color: "var(--tx3)",
+            "font-size": "12.5px",
+            "white-space": "nowrap",
+            cursor: "pointer",
+          }}
+        >
+          <span style={{ "font-size": "15px", "line-height": "1" }}>+</span> Add a Repo
+        </button>
+      </div>
+
+      {/* Open / Clone / Recent popover (opened from the "+" button) */}
+      <Show when={panelOpen()}>
+        <div style={{ position: "fixed", inset: "0", "z-index": "30" }} onClick={() => setPanelOpen(false)} />
+        <div
+          style={{
+            position: "absolute",
+            top: "36px",
+            right: "8px",
+            "z-index": "31",
+            width: "420px",
+            "max-width": "92vw",
+            background: "var(--pill)",
+            border: "1px solid var(--bd)",
+            "border-radius": "9px",
+            padding: "12px",
+            "box-shadow": "0 14px 38px rgba(0,0,0,0.45)",
+            display: "flex",
+            "flex-direction": "column",
+            gap: "8px",
+          }}
+        >
+          <input
+            type="text"
+            value={group()}
+            onInput={(e) => setGroup(e.currentTarget.value)}
+            placeholder="group (optional)"
+            style={fieldStyle}
+          />
+          <div style={{ display: "flex", gap: "8px" }}>
+            <button
+              onClick={pickAndOpen}
+              style={{ ...fieldStyle, flex: "1", cursor: "pointer", "font-weight": 600, background: "var(--accent)", color: "var(--on-accent-strong)", border: "none" }}
+            >
+              Browse for a folder…
+            </button>
+            <button onClick={() => setShowClone((v) => !v)} style={{ ...fieldStyle, cursor: "pointer" }}>Clone…</button>
+          </div>
+
+          <Show when={showClone()}>
+            <div style={{ display: "flex", "flex-direction": "column", gap: "8px" }}>
+              <input
+                type="text"
+                value={cloneUrl()}
+                onInput={(e) => setCloneUrl(e.currentTarget.value)}
+                placeholder="https://github.com/owner/repo.git"
+                style={fieldStyle}
+              />
+              <input
+                type="text"
+                value={cloneDest()}
+                onInput={(e) => setCloneDest(e.currentTarget.value)}
+                placeholder="/path/to/dest"
+                style={fieldStyle}
+              />
+              <div style={{ display: "flex", "align-items": "center", gap: "8px" }}>
+                <button onClick={onClone} style={{ ...fieldStyle, cursor: "pointer" }}>Clone</button>
+                <Show when={progress()}>
+                  <span style={{ color: "var(--tx3)", "font-size": "12px" }}>{progress()}</span>
+                </Show>
+              </div>
+            </div>
+          </Show>
+
+          <span style={{ color: "var(--tx4)", "font-size": "11px" }}>
+            Recent repositories live in the Launch menu (top-left).
+          </span>
+
+          <Show when={err()}>
+            <p style={{ color: "var(--error)", margin: 0, "font-size": "12px" }}>{err()}</p>
+          </Show>
         </div>
       </Show>
     </div>

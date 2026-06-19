@@ -3,7 +3,7 @@ import type { Component } from "solid-js";
 
 export interface PaletteEntry {
   /** Category shown as a dim prefix in the row. */
-  kind: "action" | "branch" | "file";
+  kind: "action" | "branch" | "file" | "repo";
   label: string;
   run: () => void;
 }
@@ -36,6 +36,7 @@ const KIND_COLOR: Record<PaletteEntry["kind"], string> = {
   action: "var(--accent)",
   branch: "var(--success)",
   file: "var(--accent-2)",
+  repo: "var(--warning)",
 };
 
 const CommandPalette: Component<{
@@ -147,7 +148,7 @@ const CommandPalette: Component<{
               setCursor(0);
             }}
             onKeyDown={onInputKey}
-            placeholder="Jump to action, branch, or file…"
+            placeholder="Open a recent repo, or jump to an action, branch, or file…"
             style={{
               padding: "0.7rem 0.9rem",
               "font-size": "1rem",
