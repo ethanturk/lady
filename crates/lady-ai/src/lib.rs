@@ -198,6 +198,11 @@ pub struct AiConfig {
     /// old `ollama_host` value.
     #[serde(default = "default_openai_base_url", alias = "ollama_host")]
     pub openai_base_url: String,
+    /// Context window (tokens) advertised by the OpenAI-compatible model, used
+    /// to size the diff budget. Local models vary widely (8k–128k+), so it is
+    /// user-configurable; default is a conservative 32k.
+    #[serde(default = "default_openai_context_window")]
+    pub openai_context_window: usize,
     /// Azure OpenAI resource endpoint (e.g. `https://my.openai.azure.com`).
     #[serde(default)]
     pub azure_endpoint: String,
@@ -215,6 +220,10 @@ fn default_openai_base_url() -> String {
     "http://localhost:11434/v1".to_string()
 }
 
+fn default_openai_context_window() -> usize {
+    32_768
+}
+
 impl Default for AiConfig {
     fn default() -> Self {
         AiConfig {
@@ -222,6 +231,7 @@ impl Default for AiConfig {
             models: std::collections::BTreeMap::new(),
             default_model: None,
             openai_base_url: default_openai_base_url(),
+            openai_context_window: default_openai_context_window(),
             azure_endpoint: String::new(),
             azure_deployment: String::new(),
             consented: Vec::new(),

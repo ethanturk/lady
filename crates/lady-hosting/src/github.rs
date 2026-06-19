@@ -3,9 +3,32 @@
 use serde::Deserialize;
 
 use crate::{
-    api_error_message, detect_github_slug, Error, ForgeKind, HostingProvider, NewPullRequest,
-    NewRepo, Notification, RepoInfo, RepoSlug, Result,
+    api_error_message, detect_github_slug, Error, ForgeItem, ForgeKind, HostingProvider,
+    NewPullRequest, NewRepo, Notification, RepoInfo, RepoSlug, Result,
 };
+
+/// Map a GitHub pulls/issues JSON object to a [`ForgeItem`].
+fn forge_item(v: &serde_json::Value) -> ForgeItem {
+    ForgeItem {
+        number: v.get("number").and_then(|n| n.as_u64()).unwrap_or(0),
+        title: v
+            .get("title")
+            .and_then(|t| t.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        url: v
+            .get("html_url")
+            .and_then(|u| u.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        author: v
+            .pointer("/user/login")
+            .and_then(|l| l.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        draft: v.get("draft").and_then(|d| d.as_bool()).unwrap_or(false),
+    }
+}
 
 /// Convert a notification subject's API URL to a best-effort browser URL.
 fn notification_html_url(api_url: &str, full_name: &str) -> String {
@@ -115,6 +138,29 @@ impl GitHubClient {
                 }
             })
             .collect())
+    }
+
+    /// Authenticated GET returning a JSON array (shared by the list endpoints).
+    async fn get_json_array(&self, token: &str, url: &str) -> Result<Vec<serde_json::Value>> {
+        let resp = self
+            .http
+            .get(url)
+            .bearer_auth(token)
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+        let status = resp.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(Error::Unauthorized);
+        }
+        if !status.is_success() {
+            return Err(Error::Api {
+                status: status.as_u16(),
+                message: resp.text().await.unwrap_or_default(),
+            });
+        }
+        resp.json().await.map_err(|e| Error::Http(e.to_string()))
     }
 
     /// Mark a notification thread read (PH4-006).
@@ -254,6 +300,30 @@ impl HostingProvider for GitHubClient {
                 .to_string(),
         })
     }
+
+    async fn list_pull_requests(&self, token: &str, slug: &RepoSlug) -> Result<Vec<ForgeItem>> {
+        let url = format!(
+            "{}/repos/{}/{}/pulls?state=open&per_page=50",
+            self.base_url, slug.owner, slug.repo
+        );
+        let arr = self.get_json_array(token, &url).await?;
+        Ok(arr.iter().map(forge_item).collect())
+    }
+
+    async fn list_issues(&self, token: &str, slug: &RepoSlug) -> Result<Vec<ForgeItem>> {
+        let url = format!(
+            "{}/repos/{}/{}/issues?state=open&per_page=50",
+            self.base_url, slug.owner, slug.repo
+        );
+        let arr = self.get_json_array(token, &url).await?;
+        // The issues endpoint also returns PRs; drop anything with a
+        // `pull_request` field so this panel holds issues only.
+        Ok(arr
+            .iter()
+            .filter(|v| v.get("pull_request").is_none())
+            .map(forge_item)
+            .collect())
+    }
 }
 
 #[cfg(test)]
@@ -261,6 +331,38 @@ mod tests {
     use super::*;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn lists_prs_and_filters_prs_out_of_issues() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/octocat/hello/pulls"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                { "number": 7, "title": "Add feature", "html_url": "https://github.com/octocat/hello/pull/7", "user": { "login": "octocat" }, "draft": true }
+            ])))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/repos/octocat/hello/issues"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                { "number": 3, "title": "A bug", "html_url": "https://github.com/octocat/hello/issues/3", "user": { "login": "alice" } },
+                { "number": 7, "title": "Add feature", "html_url": "https://github.com/octocat/hello/pull/7", "user": { "login": "octocat" }, "pull_request": { "url": "x" } }
+            ])))
+            .mount(&server)
+            .await;
+        let c = GitHubClient::with_base_url(server.uri());
+        let slug = RepoSlug::new("octocat", "hello");
+
+        let prs = c.list_pull_requests("tok", &slug).await.expect("prs");
+        assert_eq!(prs.len(), 1);
+        assert_eq!(prs[0].number, 7);
+        assert!(prs[0].draft);
+
+        let issues = c.list_issues("tok", &slug).await.expect("issues");
+        assert_eq!(issues.len(), 1, "PRs filtered out of issues");
+        assert_eq!(issues[0].number, 3);
+        assert_eq!(issues[0].author, "alice");
+    }
 
     #[test]
     fn detects_github_among_remotes() {

@@ -1442,6 +1442,72 @@ async fn github_create_pr(
         .map_err(|e| e.to_string())
 }
 
+/// Resolve the forge provider, slug, and stored token for `repo` (shared by the
+/// PR/issue list commands). Errors with a clear message when not connected.
+fn resolve_forge(
+    repo: &RepoId,
+    engine: &GixEngine,
+    hosting: &Hosting,
+) -> Result<
+    (
+        Box<dyn lady_hosting::HostingProvider>,
+        lady_hosting::RepoSlug,
+        String,
+    ),
+    String,
+> {
+    let urls = engine.list_remote_urls(repo).map_err(|e| e.to_string())?;
+    let provider = urls
+        .iter()
+        .find_map(|u| lady_hosting::provider_for(u, &hosting.self_hosted))
+        .ok_or_else(|| "No supported forge remote found on this repository.".to_string())?;
+    let slug = provider.detect_slug(&urls).ok_or_else(|| {
+        format!(
+            "Could not parse a {} repository from the remotes.",
+            provider.kind().label()
+        )
+    })?;
+    let token = hosting
+        .store
+        .get(provider.token_key())
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| {
+            format!(
+                "Not connected to {} — connect in Settings first.",
+                provider.kind().label()
+            )
+        })?;
+    Ok((provider, slug, token))
+}
+
+/// List open pull/merge requests for the active repo's forge.
+#[tauri::command]
+async fn list_pull_requests(
+    repo: RepoId,
+    engine: State<'_, GixEngine>,
+    hosting: State<'_, Hosting>,
+) -> Result<Vec<lady_hosting::ForgeItem>, String> {
+    let (provider, slug, token) = resolve_forge(&repo, &engine, &hosting)?;
+    provider
+        .list_pull_requests(&token, &slug)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// List open issues for the active repo's forge.
+#[tauri::command]
+async fn list_issues(
+    repo: RepoId,
+    engine: State<'_, GixEngine>,
+    hosting: State<'_, Hosting>,
+) -> Result<Vec<lady_hosting::ForgeItem>, String> {
+    let (provider, slug, token) = resolve_forge(&repo, &engine, &hosting)?;
+    provider
+        .list_issues(&token, &slug)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Open `url` in the user's default browser (used to view a freshly opened PR).
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
@@ -1789,6 +1855,8 @@ pub fn run() {
             github_notifications,
             github_mark_read,
             github_create_pr,
+            list_pull_requests,
+            list_issues,
             open_url,
             open_path,
             reveal_path,

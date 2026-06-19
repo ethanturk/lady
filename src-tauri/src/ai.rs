@@ -264,7 +264,8 @@ fn active_budget() -> Budget {
     let window = cfg
         .active
         .map(|k| match k {
-            ProviderKind::OpenAiCompatible => 8192,
+            // User-configurable — local models range from 8k to 128k+.
+            ProviderKind::OpenAiCompatible => cfg.openai_context_window.max(2048),
             ProviderKind::Mistral => 32_000,
             ProviderKind::Anthropic => 200_000,
             ProviderKind::Gemini => 1_000_000,

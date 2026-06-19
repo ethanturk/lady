@@ -169,6 +169,21 @@ pub struct Notification {
     pub updated: String,
 }
 
+/// A pull request or issue summary for the sidebar list panels.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ForgeItem {
+    /// Number (`#N`).
+    pub number: u64,
+    /// Title.
+    pub title: String,
+    /// Browser URL.
+    pub url: String,
+    /// Author login/handle.
+    pub author: String,
+    /// Draft PR (always false for issues).
+    pub draft: bool,
+}
+
 /// A forge-agnostic hosting provider. One implementation per forge; resolved
 /// from a remote by [`provider_for`].
 #[async_trait::async_trait]
@@ -197,6 +212,16 @@ pub trait HostingProvider: Send + Sync {
 
     /// Create a remote repository, returning its clone + web URLs (PH4-005).
     async fn create_repo(&self, token: &str, repo: &NewRepo) -> Result<RepoInfo>;
+
+    /// List open pull/merge requests for `slug`. Default: not implemented.
+    async fn list_pull_requests(&self, _token: &str, _slug: &RepoSlug) -> Result<Vec<ForgeItem>> {
+        Err(Error::NotImplemented)
+    }
+
+    /// List open issues for `slug`. Default: not implemented.
+    async fn list_issues(&self, _token: &str, _slug: &RepoSlug) -> Result<Vec<ForgeItem>> {
+        Err(Error::NotImplemented)
+    }
 }
 
 // ── Remote-URL parsing & provider resolution ────────────────────────────────────

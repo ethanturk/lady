@@ -39,6 +39,7 @@ export interface AiConfig {
   models: Record<string, string>;
   default_model: string | null;
   openai_base_url: string;
+  openai_context_window: number;
   azure_endpoint: string;
   azure_deployment: string;
   consented: ProviderKind[];

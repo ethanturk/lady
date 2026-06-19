@@ -156,6 +156,15 @@ export interface StashEntry {
   oid: string;
 }
 
+/** A pull request or issue summary (sidebar panels). Mirrors lady_hosting::ForgeItem. */
+export interface ForgeItem {
+  number: number;
+  title: string;
+  url: string;
+  author: string;
+  draft: boolean;
+}
+
 /** Mirrors lady_proto::FfMode. */
 export type FfMode = "Auto" | "Only" | "Never";
 

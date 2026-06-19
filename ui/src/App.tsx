@@ -30,6 +30,7 @@ import NotificationsView from "./NotificationsView";
 import LfsView from "./LfsView";
 import GitFlowView from "./GitFlowView";
 import SubmodulesView from "./SubmodulesView";
+import StashView from "./StashView";
 import AiView from "./AiView";
 import LicenseGate from "./LicenseGate";
 import type { LicenseStatus, SignatureStatus } from "./commands";
@@ -51,6 +52,7 @@ type Overlay =
   | "lfs"
   | "flow"
   | "submodules"
+  | "stashes"
   | "ai";
 
 /** Last path segment, for the repo title in the toolbar/sidebar. */
@@ -299,6 +301,7 @@ const App: Component = () => {
     { key: "history", label: "File History" },
     { key: "worktrees", label: "Worktrees" },
     { key: "submodules", label: "Submodules" },
+    { key: "stashes", label: "Stashes" },
     { key: "reflog", label: "Reflog" },
     { key: "bisect", label: "Bisect" },
     { key: "flow", label: "git-flow" },
@@ -525,14 +528,17 @@ const App: Component = () => {
       >
         <div style={{ flex: "1", display: "flex", "min-height": "0", overflow: "hidden" }}>
           <Sidebar
+            repoId={repoId()}
             repoName={repoName()}
             changeCount={changeCount()}
+            refreshNonce={refreshNonce()}
             view={view()}
             onView={goPrimary}
             refs={refs()}
             onBranchMenu={openBranchMenu}
             onCheckout={checkoutByName}
             onBranchKey={onBranchKey}
+            onOpenStashes={() => setOverlay("stashes")}
           />
 
           {/* Drag handle: resize the sidebar (col-resize). */}
@@ -825,6 +831,9 @@ const App: Component = () => {
         </Show>
         <Show when={overlay() === "submodules"}>
           <SubmodulesView repoId={id} repoPath={active()!.path} refreshNonce={refreshNonce()} onChanged={refresh} onOpen={(path) => openRepoPath?.(path)} />
+        </Show>
+        <Show when={overlay() === "stashes"}>
+          <StashView repoId={id} refreshNonce={refreshNonce()} onChanged={refresh} />
         </Show>
         <Show when={overlay() === "ai"}>
           <AiView repoId={id} onChanged={refresh} />

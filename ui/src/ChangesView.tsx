@@ -1,7 +1,7 @@
 import { createEffect, createSignal, For, Show } from "solid-js";
 import type { Component, JSX } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
-import type { ChangeKind, DiffSpec, FileStatus, RepoId, StashEntry, WorkingTree } from "./commands";
+import type { ChangeKind, DiffSpec, FileStatus, RepoId, WorkingTree } from "./commands";
 import DiffView from "./DiffView";
 import ContextMenu from "./ContextMenu";
 import type { MenuEntry } from "./ContextMenu";
@@ -101,9 +101,6 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
   // selected file (and thus its spec) is unchanged.
   const [diffNonce, setDiffNonce] = createSignal(0);
   const [recent, setRecent] = createSignal<string[]>([]);
-  const [stashes, setStashes] = createSignal<StashEntry[]>([]);
-  const [stashUntracked, setStashUntracked] = createSignal(false);
-  const [stashMsg, setStashMsg] = createSignal("");
   // AI commit-message generation (PH5-006).
   const [aiBusy, setAiBusy] = createSignal(false);
   const [aiReq, setAiReq] = createSignal<string | null>(null);
@@ -155,7 +152,6 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
     setErr(null);
     invoke<WorkingTree>("status", { repo: props.repoId }).then(setWt).catch((e) => setErr(String(e)));
     invoke<string[]>("recent_messages", { repo: props.repoId, limit: 10 }).then(setRecent).catch(() => setRecent([]));
-    invoke<StashEntry[]>("stash_list", { repo: props.repoId }).then(setStashes).catch(() => setStashes([]));
   };
 
   const selectedSpec = (): DiffSpec | null => {
@@ -315,6 +311,13 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
   const onColumnKeyDown = (e: KeyboardEvent) => {
     const s = selected();
     if (!s) return;
+    // Enter (no modifier) stages the unstaged file (or unstages a staged one)
+    // and advances to the next file in the list.
+    if (e.key === "Enter" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      e.preventDefault();
+      stageOne(s.path, s.staged);
+      return;
+    }
     const mod = e.metaKey || e.ctrlKey;
     if (!mod) return;
     const k = e.key.toLowerCase();
@@ -406,33 +409,6 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
       .catch((e) => setErr(String(e)));
   };
 
-  const stashSave = () => {
-    const msg = stashMsg().trim();
-    invoke("stash_save", { repo: props.repoId, message: msg === "" ? null : msg, includeUntracked: stashUntracked() })
-      .then(() => setStashMsg(""))
-      .then(afterMutation)
-      .catch((e) => setErr(String(e)));
-  };
-
-  const generateStashNote = async () => {
-    if (aiBusy()) return;
-    setErr(null);
-    setAiBusy(true);
-    setStashMsg("");
-    try {
-      const full = await runAiStream("ai_stash_note", { repo: props.repoId }, (acc) => setStashMsg(acc), (id) => setAiReq(id));
-      setStashMsg(full.trim());
-    } catch (e) {
-      const msg = String(e);
-      setErr(isConsentError(msg) ? "AI consent required — enable the provider and grant consent in Settings." : msg);
-    } finally {
-      setAiBusy(false);
-      setAiReq(null);
-    }
-  };
-  const stashOp = (cmd: string, index: number) => {
-    invoke(cmd, { repo: props.repoId, index }).then(afterMutation).catch((e) => setErr(String(e)));
-  };
 
   // Untracked files render in the Unstaged list (all stageable together).
   const untrackedAsFiles = (): FileStatus[] =>
@@ -651,37 +627,6 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
             })}
             <div class="scroll-thin" style={{ flex: "1 1 auto", "min-height": "0", "overflow-y": "auto" }}>
               {fileList(wt()?.staged ?? [], true)}
-            </div>
-
-            {/* Stash controls + stack. */}
-            <div style={{ "flex-shrink": 0, padding: "10px 14px", "border-top": "1px solid var(--bd)", display: "flex", "flex-direction": "column", gap: "6px" }}>
-            <div style={{ display: "flex", gap: "6px" }}>
-              <input
-                style={{ ...composerField, padding: "5px 8px" }}
-                placeholder="stash note (optional)…"
-                value={stashMsg()}
-                onInput={(e) => setStashMsg(e.currentTarget.value)}
-              />
-              <button style={subBtn} disabled={aiBusy()} title="Generate a stash note with AI" onClick={generateStashNote}>{aiBusy() ? "…" : "✨"}</button>
-            </div>
-            <div style={{ display: "flex", "align-items": "center", gap: "8px" }}>
-              <button style={subBtn} onClick={stashSave}>Stash</button>
-              <label style={{ display: "flex", "align-items": "center", gap: "4px", "font-size": "11px", color: "var(--tx3)" }}>
-                <input type="checkbox" checked={stashUntracked()} onChange={(e) => setStashUntracked(e.currentTarget.checked)} />
-                include untracked
-              </label>
-            </div>
-            <For each={stashes()}>
-              {(s) => (
-                <div style={{ display: "flex", "align-items": "center", gap: "6px", "font-size": "11px", "font-family": "ui-monospace, monospace" }}>
-                  <span style={{ color: "var(--accent-2)" }}>{`stash@{${s.index}}`}</span>
-                  <span style={{ flex: "1", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }} title={s.message}>{s.message}</span>
-                  <button style={{ ...subBtn, padding: "2px 6px" }} onClick={() => stashOp("stash_apply", s.index)}>Apply</button>
-                  <button style={{ ...subBtn, padding: "2px 6px" }} onClick={() => stashOp("stash_pop", s.index)}>Pop</button>
-                  <button style={{ ...subBtn, padding: "2px 6px" }} onClick={() => confirm(`Drop stash@{${s.index}}?`) && stashOp("stash_drop", s.index)}>Drop</button>
-                </div>
-              )}
-            </For>
             </div>
           </div>
         </div>

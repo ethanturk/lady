@@ -198,10 +198,26 @@ const AiSettings: Component<{ repoId: RepoId | null }> = (props) => {
               List models
             </button>
           </div>
+          <div style={{ display: "flex", "align-items": "center", gap: "0.4rem", "margin-bottom": "0.5rem" }}>
+            <span style={{ width: "6rem", "font-size": "0.82rem" }}>Context window</span>
+            <input
+              type="number"
+              min="2048"
+              step="1024"
+              style={{ ...field, width: "8rem" }}
+              value={cfg()!.openai_context_window}
+              onChange={(e) => {
+                const n = parseInt(e.currentTarget.value, 10);
+                persist({ ...cfg()!, openai_context_window: Number.isFinite(n) && n >= 2048 ? n : 32768 });
+              }}
+            />
+            <span style={{ "font-size": "0.74rem", color: "var(--fg-muted)" }}>tokens — raise to fit larger diffs</span>
+          </div>
           <p style={{ "font-size": "0.74rem", color: "var(--fg-muted)", margin: "0 0 0.5rem" }}>
             Any OpenAI-compatible server (Ollama, LM Studio, vLLM, LocalAI, a gateway…).
             Include the version segment (e.g. <code>/v1</code>). The API key below is
-            optional — local servers ignore it.
+            optional — local servers ignore it. Set the context window to your model's
+            real size so diffs aren't truncated.
           </p>
           <Show when={models().length > 0}>
             <div style={{ "font-size": "0.78rem", "margin-bottom": "0.5rem" }}>
