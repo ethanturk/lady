@@ -2313,7 +2313,24 @@ exit 0\n";
 
     fn add_submodule(&self, repo: &RepoId, url: &str, path: &str) -> Result<()> {
         let wd = self.workdir(repo)?;
-        run_git(&wd, &["submodule", "add", url, path]).map(|_| ())
+        // `-c protocol.file.allow=always` re-enables the `file` transport for
+        // this one command's process tree (incl. the embedded clone). Git
+        // blocks it by default since CVE-2022-39253, which breaks adding a
+        // submodule from a local path — a legitimate, user-initiated action
+        // here (the URL is chosen by the user). Repo-local config does not
+        // propagate to the clone subprocess, so it must be passed via `-c`.
+        run_git(
+            &wd,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                url,
+                path,
+            ],
+        )
+        .map(|_| ())
     }
 
     fn init_submodules(&self, repo: &RepoId) -> Result<()> {
@@ -4633,8 +4650,8 @@ mod tests {
         let engine = GixEngine::new();
         let id = engine.open(p).expect("open");
 
-        // Local submodule transport must be explicitly allowed in modern git.
-        git(p, &["config", "protocol.file.allow", "always"]);
+        // Local submodule transport (the `file` protocol) is allowed by
+        // add_submodule itself via `-c protocol.file.allow=always`.
         let url = sp.to_str().expect("sub src path");
         engine
             .add_submodule(&id, url, "libs/sub")
