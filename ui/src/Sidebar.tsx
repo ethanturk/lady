@@ -102,6 +102,10 @@ const Sidebar: Component<SidebarProps> = (props) => {
   const remotes = createMemo(() => byKind("Remote"));
   const isCurrent = (r: RefInfo) => r.kind === "Branch" && r.name === headBranch();
 
+  // The ref row last clicked (shown in All Commits), highlighted so the user
+  // knows which branch they're viewing. Keyed `${kind}:${name}`.
+  const [selectedRef, setSelectedRef] = createSignal<string | null>(null);
+
   // Accordion: a single open panel at a time (Local open by default).
   const [openPanel, setOpenPanel] = createSignal<Panel | null>("local");
   const toggle = (p: Panel) => setOpenPanel((cur) => (cur === p ? null : p));
@@ -202,11 +206,17 @@ const Sidebar: Component<SidebarProps> = (props) => {
     );
   };
 
-  const branchRow = (r: RefInfo, kind: "Branch" | "Remote" | "Tag") => (
+  const branchRow = (r: RefInfo, kind: "Branch" | "Remote" | "Tag") => {
+    const rowKey = `${kind}:${r.name}`;
+    const isShown = () => selectedRef() === rowKey;
+    return (
     <div
       class="hov"
       tabindex={0}
-      onClick={() => props.onSelectRef?.(r)}
+      onClick={() => {
+        setSelectedRef(rowKey);
+        props.onSelectRef?.(r);
+      }}
       onContextMenu={(e) => {
         if (kind === "Branch") {
           e.preventDefault();
@@ -243,6 +253,8 @@ const Sidebar: Component<SidebarProps> = (props) => {
         "font-size": "13px",
         color: "var(--tx2)",
         "user-select": "none",
+        background: isShown() ? accentFill : "transparent",
+        "box-shadow": isShown() ? "inset 2px 0 0 var(--accent)" : "none",
       }}
     >
       <Show
@@ -303,7 +315,8 @@ const Sidebar: Component<SidebarProps> = (props) => {
         </button>
       </Show>
     </div>
-  );
+    );
+  };
 
   return (
     <div

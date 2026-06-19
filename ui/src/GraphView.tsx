@@ -217,6 +217,28 @@ const GraphView: Component<{
     if (st + viewportH() >= totalH() - LOAD_AHEAD_PX) loadMore();
   };
 
+  // Scroll the primary commit into view when it's set from outside the graph
+  // (e.g. clicking a sidebar branch). Re-runs as more history loads so a tip
+  // deep in the log is reached; never scrolls a row that's already visible, so
+  // ordinary in-graph clicks don't jump the viewport.
+  createEffect(() => {
+    const p = props.primary;
+    const all = rows();
+    if (!p || !listContainer) return;
+    const idx = all.findIndex((r) => r.oid === p);
+    if (idx === -1) {
+      // Not loaded yet — pull the next batch; this effect retries on update.
+      if (hasMore() && !loading()) void loadMore();
+      return;
+    }
+    const top = idx * ROW_H;
+    const vh = viewportH();
+    const cur = listContainer.scrollTop;
+    if (top < cur || top + ROW_H > cur + vh) {
+      listContainer.scrollTop = Math.max(0, top - vh / 2 + ROW_H / 2);
+    }
+  });
+
   const colDesc = { flex: "1 1 0", "min-width": "210px", overflow: "hidden" } as const;
   const colAuthor = { flex: "0 1 156px", "min-width": "90px" } as const;
   const colCommit = { flex: "0 0 74px" } as const;
