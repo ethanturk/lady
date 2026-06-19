@@ -13,12 +13,12 @@ repo; only the updater PUBLIC key is committed.
 - [x] PH6-002 Large-repo performance passes
 - [x] PH6-003 Accessibility pass
 - [x] PH6-004 Theming polish
-- [ ] PH6-005 Packaging — macOS (.dmg/.app, notarized)
-- [ ] PH6-006 Packaging — Windows (.msi/NSIS, Authenticode)
-- [ ] PH6-007 Packaging — Linux (AppImage + Flatpak)
-- [ ] PH6-008 Auto-update (Tauri updater + signed manifests)
-- [ ] PH6-009 Documentation + release notes
-- [ ] PH6-010 Release CI pipeline
+- [x] PH6-005 Packaging — macOS (.dmg/.app, notarized)
+- [x] PH6-006 Packaging — Windows (.msi/NSIS, Authenticode)
+- [x] PH6-007 Packaging — Linux (AppImage + Flatpak)
+- [x] PH6-008 Auto-update (Tauri updater + signed manifests)
+- [x] PH6-009 Documentation + release notes
+- [x] PH6-010 Release CI pipeline
 - [ ] PH6-011 Phase 6 GA exit gate (v1.3.0 ship)
 
 ## Notes (as stories land)
@@ -54,3 +54,27 @@ repo; only the updater PUBLIC key is committed.
   docs/ACCESSIBILITY.md documents the AA contrast table + manual VoiceOver/NVDA
   pass. npm build green; Rust untouched (UI-only). KEYBOARD.md ref lands in
   PH6-009.
+- PH6-005/006/007 (packaging): tauri.conf.json bundle.active=true, targets=all,
+  full icon set generated (icns/ico/png) via `cargo tauri icon`, category +
+  updater artifacts. macOS .app/.dmg (Developer ID sign+notarize via CI env),
+  Windows .msi/NSIS (Authenticode via CI cert/Azure Trusted Signing), Linux
+  AppImage + a Flatpak manifest (flatpak/dev.lady.client.yml + .desktop,
+  org.gnome.Platform→WebKitGTK). Signing all CI-secret-gated, skipped without
+  secrets. docs/PACKAGING.md.
+- PH6-008 (auto-update): tauri-plugin-updater wired (.plugin + updater:default
+  capability + plugins.updater config: committed PUBLIC key + GitHub-Releases
+  endpoint). src-tauri/src/updater.rs: check_for_updates/install_update commands
+  (explicit user action, Settings→Updates), no silent update. minisign keypair
+  generated; PRIVATE key kept in /tmp (gitignored *.key), PUBLIC key committed.
+  3 verify tests vs committed fixtures (latest.json + .sig): valid sig verifies,
+  tampered manifest rejected, config pubkey matches const. deny clean
+  (minisign-verify/tauri-plugin-updater).
+- PH6-010 (release CI): .github/workflows/release.yml — v* tag or dispatch
+  dry-run; gate job (fmt/clippy/test/deny+npm) → tauri-action matrix bundle/
+  sign/notarize/publish + signed latest.json → best-effort flatpak leg. Fork-
+  safe (no secrets→unsigned, no publish). PR ci.yml unchanged (+ added the
+  non-gating bench job in PH6-001).
+- PH6-009 (docs): docs/USER-GUIDE.md, KEYBOARD.md, AI-PRIVACY.md (BYOK/consent/
+  best-effort redaction/Ollama — ADR-0008/0009), MCP.md (lady-mcp 6 read-only
+  tools + config), and CHANGELOG.md (v1.0→1.3.0). All intra-doc links resolve;
+  no secrets in docs.

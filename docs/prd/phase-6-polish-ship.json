@@ -70,7 +70,7 @@
         "Signing/notarization is skipped gracefully when secrets are absent (PR builds still produce an unsigned bundle)"
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §8.8, §9. ADR-0001 Tauri bundler. Secrets in CI only. Notarization is the macOS Gatekeeper requirement; stapling the ticket to the .dmg."
     },
     {
@@ -83,7 +83,7 @@
         "The build step is green on the Windows runner; signing skipped gracefully without secrets; cargo fmt/clippy/test green"
       ],
       "priority": 6,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §8.8, §9. Mirror the macOS story for Windows. Keep signing optional on forks/PRs."
     },
     {
@@ -96,7 +96,7 @@
         "The build step is green on the Linux runner; cargo fmt/clippy/test green"
       ],
       "priority": 7,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §8.8, §9. Linux has no code-signing requirement; focus on portability + runtime deps (the gtk-rs advisories are already deny-ignored as not-runtime-reachable elsewhere, but Linux IS the runtime here — verify launch)."
     },
     {
@@ -110,7 +110,7 @@
         "Unit/integration coverage where feasible (manifest signature verify); cargo fmt/clippy/test green; cargo deny passes; npm run build green"
       ],
       "priority": 8,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §8.8 Auto-update, §9. ADR-0001 Tauri updater. Signature verification is trust-critical — only the public key is committed; the private key signs manifests in CI."
     },
     {
@@ -123,7 +123,7 @@
         "Docs build/lint clean (markdown); links resolve; no secrets in docs"
       ],
       "priority": 9,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §9 docs. Pull from CONTEXT.md, the ADRs, and progress notes. Keyboard-shortcuts doc complements the PH6-003 a11y work."
     },
     {
@@ -136,7 +136,7 @@
         "A dry-run (workflow_dispatch) produces artifacts without publishing; documented"
       ],
       "priority": 10,
-      "passes": false,
+      "passes": true,
       "notes": "PLAN.md §9, §10 cross-platform CI. Extends the existing .github/workflows/ci.yml (build+test+deny matrix from Phase 0) with a release.yml. Keep PR CI unchanged + fast."
     },
     {
