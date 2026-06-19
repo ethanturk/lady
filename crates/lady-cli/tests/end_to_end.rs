@@ -50,7 +50,7 @@ fn report_lists_refs_and_commit_summaries() {
         "report should list tag `v1`:\n{report}"
     );
     assert!(
-        report.contains("HEAD"),
+        report.contains("Head"),
         "report should list HEAD:\n{report}"
     );
 
