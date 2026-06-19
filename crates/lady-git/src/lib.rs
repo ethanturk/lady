@@ -298,6 +298,13 @@ pub trait GitEngine: Send + Sync {
     /// there is no upstream configured (nothing to compare against).
     fn ahead_behind(&self, repo: &RepoId) -> Result<Option<AheadBehind>>;
 
+    /// Ahead/behind counts for every local branch that has an upstream, keyed by
+    /// branch short name. Branches without an upstream are omitted.
+    fn branches_ahead_behind(
+        &self,
+        repo: &RepoId,
+    ) -> Result<std::collections::BTreeMap<String, AheadBehind>>;
+
     /// Stash the working-tree changes. With `message` the stash is labelled;
     /// `include_untracked` also stashes untracked files (`-u`).
     fn stash_save(
@@ -1506,6 +1513,44 @@ impl GitEngine for GixEngine {
         let behind = nums.next().and_then(|s| s.parse().ok()).unwrap_or(0);
         let ahead = nums.next().and_then(|s| s.parse().ok()).unwrap_or(0);
         Ok(Some(AheadBehind { ahead, behind }))
+    }
+
+    fn branches_ahead_behind(
+        &self,
+        repo: &RepoId,
+    ) -> Result<std::collections::BTreeMap<String, AheadBehind>> {
+        let wd = self.workdir(repo)?;
+        // One call lists each local branch with its upstream short name.
+        let out = run_git(
+            &wd,
+            &[
+                "for-each-ref",
+                "--format=%(refname:short)%00%(upstream:short)",
+                "refs/heads",
+            ],
+        )?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        let mut map = std::collections::BTreeMap::new();
+        for line in text.lines() {
+            let mut parts = line.split('\u{0}');
+            let (Some(name), Some(upstream)) = (parts.next(), parts.next()) else {
+                continue;
+            };
+            if upstream.is_empty() {
+                continue;
+            }
+            // "<behind>\t<ahead>" for upstream...branch (see `ahead_behind`).
+            let range = format!("{upstream}...{name}");
+            let Ok(counts) = run_git(&wd, &["rev-list", "--left-right", "--count", &range]) else {
+                continue;
+            };
+            let ctext = String::from_utf8_lossy(&counts.stdout);
+            let mut nums = ctext.split_whitespace();
+            let behind = nums.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+            let ahead = nums.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+            map.insert(name.to_string(), AheadBehind { ahead, behind });
+        }
+        Ok(map)
     }
 
     fn stash_save(
@@ -4982,6 +5027,50 @@ mod tests {
             .expect("rename");
         assert_eq!(git_out(p, &["branch", "--list", "old-name"]), "");
         assert!(git_out(p, &["branch", "--list", "new-name"]).contains("new-name"));
+    }
+
+    #[test]
+    fn branches_ahead_behind_maps_tracked_branches() {
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let root = tmp.path();
+        git(root, &["init", "-q", "--bare", "-b", "main", "remote.git"]);
+        let remote = root.join("remote.git");
+        let a = root.join("a");
+        git(
+            root,
+            &["clone", "-q", remote.to_str().unwrap(), a.to_str().unwrap()],
+        );
+        git(&a, &["config", "user.name", "Lady Test"]);
+        git(&a, &["config", "user.email", "test@example.com"]);
+        git(&a, &["config", "commit.gpgsign", "false"]);
+        std::fs::write(a.join("f.txt"), "v1\n").expect("write");
+        git(&a, &["add", "."]);
+        git(&a, &["commit", "-q", "-m", "first"]);
+
+        let engine = GixEngine::new();
+        let id = engine.open(&a).expect("open");
+        let mut sink = |_: &str| {};
+        engine
+            .push(&id, Some("origin"), Some("main"), true, false, &mut sink)
+            .expect("push");
+
+        // A local branch with no upstream is omitted from the map.
+        engine.create_branch(&id, "feature", None).expect("branch");
+
+        // One unpushed commit on main → ahead 1.
+        std::fs::write(a.join("f.txt"), "v2\n").expect("write");
+        git(&a, &["add", "."]);
+        git(&a, &["commit", "-q", "-m", "second"]);
+
+        let map = engine.branches_ahead_behind(&id).expect("ahead/behind");
+        assert_eq!(
+            map.get("main"),
+            Some(&AheadBehind {
+                ahead: 1,
+                behind: 0
+            })
+        );
+        assert!(!map.contains_key("feature"), "untracked branch omitted");
     }
 
     #[test]

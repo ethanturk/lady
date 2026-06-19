@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import type { Component, JSX } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
-import type { ForgeItem, RefInfo, RepoId, StashEntry } from "./commands";
+import type { AheadBehind, ForgeItem, RefInfo, RepoId, StashEntry } from "./commands";
 import { IconChanges, IconCheck, IconChevron, IconCommits, IconBranch, IconMore, IconSearch } from "./icons";
 import { sidebarWidth } from "./prefs";
 
@@ -27,10 +27,14 @@ interface SidebarProps {
   onBranchMenu: (branch: string, at: { x: number; y: number }) => void;
   /** Check out `branch` (double-click on a branch/remote row). */
   onCheckout: (branch: string) => void;
+  /** Single-click a ref row → show that branch/tag in All Commits (its tip). */
+  onSelectRef?: (ref: RefInfo) => void;
   /** A keyboard shortcut fired on a focused branch row (⇧⌘B / ⇧⌘G / ⌫). */
   onBranchKey?: (branch: string, action: "new-branch" | "new-tag" | "delete") => void;
   /** Open the full Stashes management view. */
   onOpenStashes?: () => void;
+  /** Fill the container width (used when hosted inside the mobile drawer). */
+  fullWidth?: boolean;
 }
 
 const accentFill = "color-mix(in srgb, var(--accent) 18%, transparent)";
@@ -101,6 +105,17 @@ const Sidebar: Component<SidebarProps> = (props) => {
   // Accordion: a single open panel at a time (Local open by default).
   const [openPanel, setOpenPanel] = createSignal<Panel | null>("local");
   const toggle = (p: Panel) => setOpenPanel((cur) => (cur === p ? null : p));
+
+  // Per-local-branch ahead/behind vs upstream (origin), keyed by branch name.
+  const [aheadBehind, setAheadBehind] = createSignal<Record<string, AheadBehind>>({});
+  createEffect(() => {
+    const repo = props.repoId;
+    void props.refreshNonce;
+    if (!repo) return setAheadBehind({});
+    invoke<Record<string, AheadBehind>>("branches_ahead_behind", { repo })
+      .then(setAheadBehind)
+      .catch(() => setAheadBehind({}));
+  });
 
   // Lazily-loaded panel data (fetched when a panel is open / repo changes).
   const [stashes, setStashes] = createSignal<StashEntry[]>([]);
@@ -191,6 +206,7 @@ const Sidebar: Component<SidebarProps> = (props) => {
     <div
       class="hov"
       tabindex={0}
+      onClick={() => props.onSelectRef?.(r)}
       onContextMenu={(e) => {
         if (kind === "Branch") {
           e.preventDefault();
@@ -248,10 +264,29 @@ const Sidebar: Component<SidebarProps> = (props) => {
       >
         {r.name}
       </span>
+      {/* Outgoing (↑ ahead) / incoming (↓ behind) vs upstream. */}
+      <Show when={kind === "Branch" && aheadBehind()[r.name]}>
+        {(() => {
+          const ab = () => aheadBehind()[r.name];
+          return (
+            <Show when={ab().ahead > 0 || ab().behind > 0}>
+              <span style={{ display: "flex", "align-items": "center", gap: "5px", "font-size": "11px", "font-family": "ui-monospace, monospace", color: "var(--tx3)", "flex-shrink": 0 }} title={`${ab().ahead} ahead, ${ab().behind} behind ${"origin"}`}>
+                <Show when={ab().ahead > 0}>
+                  <span style={{ color: "var(--badge-a)" }}>↑{ab().ahead}</span>
+                </Show>
+                <Show when={ab().behind > 0}>
+                  <span style={{ color: "var(--badge-r)" }}>↓{ab().behind}</span>
+                </Show>
+              </span>
+            </Show>
+          );
+        })()}
+      </Show>
       <Show when={kind === "Branch"}>
         <button
           aria-label={`Actions for ${r.name}`}
           onClick={(e) => {
+            e.stopPropagation();
             const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
             props.onBranchMenu(r.name, { x: box.left, y: box.bottom });
           }}
@@ -274,7 +309,7 @@ const Sidebar: Component<SidebarProps> = (props) => {
     <div
       class="scroll-thin"
       style={{
-        width: `${sidebarWidth()}px`,
+        width: props.fullWidth ? "100%" : `${sidebarWidth()}px`,
         "flex-shrink": 0,
         "overflow-y": "auto",
         background: "var(--panel)",

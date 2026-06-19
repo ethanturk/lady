@@ -16,7 +16,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import BranchMenu from "./BranchMenu";
 import type { BranchMenuState, PromptSpec } from "./BranchMenu";
 import { addWorktreeFor, checkoutBranch, createBranchAt, createTagAt, deleteBranch } from "./branchActions";
-import { setSettingsWidth, setSidebarWidth, settingsWidth, sidebarWidth } from "./prefs";
+import { hideResizers, isNarrow, setSettingsWidth, setSidebarWidth, settingsWidth, sidebarWidth } from "./prefs";
 import ConflictResolver from "./ConflictResolver";
 import InteractiveRebase from "./InteractiveRebase";
 import RecomposeView from "./RecomposeView";
@@ -100,6 +100,12 @@ const App: Component = () => {
   let repoPicker: (() => void) | null = null;
   // Bumped after any mutation so status/refs/graph views reload (PLAN §3.2).
   const [refreshNonce, setRefreshNonce] = createSignal(0);
+  // Off-canvas sidebar drawer (phone/narrow only). Auto-closes when the layout
+  // grows back to side-by-side, and on navigation (see goPrimary).
+  const [drawerOpen, setDrawerOpen] = createSignal(false);
+  createEffect(() => {
+    if (!isNarrow()) setDrawerOpen(false);
+  });
 
   const repoId = () => active()?.id ?? null;
   const repoName = () => (active() ? baseName(active()!.path) : null);
@@ -292,6 +298,14 @@ const App: Component = () => {
   const goPrimary = (v: PrimaryView) => {
     setOverlay(null);
     setView(v);
+    setDrawerOpen(false);
+  };
+
+  // Single-click a sidebar ref → show it in All Commits, tip commit selected.
+  const showRef = (ref: RefInfo) => {
+    setSelectedCommits([ref.target]);
+    setPrimaryCommit(ref.target);
+    goPrimary("commits");
   };
 
   // Advanced views in the toolbar "More" menu.
@@ -474,6 +488,7 @@ const App: Component = () => {
         overflowItems={overflowItems()}
         onOverflow={(k) => setOverlay(k as Overlay)}
         onQuickLaunch={() => setPaletteOpen(true)}
+        onToggleSidebar={() => setDrawerOpen((v) => !v)}
         onAddRepo={() => repoPicker?.()}
         onBranchMenu={(at) => {
           const b = currentBranchName();
@@ -526,27 +541,34 @@ const App: Component = () => {
           </div>
         }
       >
-        <div style={{ flex: "1", display: "flex", "min-height": "0", overflow: "hidden" }}>
-          <Sidebar
-            repoId={repoId()}
-            repoName={repoName()}
-            changeCount={changeCount()}
-            refreshNonce={refreshNonce()}
-            view={view()}
-            onView={goPrimary}
-            refs={refs()}
-            onBranchMenu={openBranchMenu}
-            onCheckout={checkoutByName}
-            onBranchKey={onBranchKey}
-            onOpenStashes={() => setOverlay("stashes")}
-          />
+        <div style={{ flex: "1", display: "flex", "flex-direction": isNarrow() ? "column" : "row", "min-height": "0", overflow: "hidden" }}>
+          {/* Side-by-side: the sidebar lives inline. On narrow it moves into the
+              off-canvas drawer below (hamburger in the toolbar opens it). */}
+          <Show when={!isNarrow()}>
+            <Sidebar
+              repoId={repoId()}
+              repoName={repoName()}
+              changeCount={changeCount()}
+              refreshNonce={refreshNonce()}
+              view={view()}
+              onView={goPrimary}
+              refs={refs()}
+              onBranchMenu={openBranchMenu}
+              onCheckout={checkoutByName}
+              onSelectRef={showRef}
+              onBranchKey={onBranchKey}
+              onOpenStashes={() => setOverlay("stashes")}
+            />
 
-          {/* Drag handle: resize the sidebar (col-resize). */}
-          <div
-            onPointerDown={startSidebarDrag}
-            title="Drag to resize the sidebar"
-            style={{ "flex-shrink": 0, width: "6px", cursor: "col-resize", "margin-left": "-3px", "z-index": 5, "touch-action": "none" }}
-          />
+            {/* Drag handle: resize the sidebar (col-resize). Hidden on touch. */}
+            <Show when={!hideResizers()}>
+              <div
+                onPointerDown={startSidebarDrag}
+                title="Drag to resize the sidebar"
+                style={{ "flex-shrink": 0, width: "6px", cursor: "col-resize", "margin-left": "-3px", "z-index": 5, "touch-action": "none" }}
+              />
+            </Show>
+          </Show>
 
           <div role="main" aria-label={overlay() ?? view()} style={{ flex: "1", "min-width": "0", overflow: "hidden", background: "var(--bg)" }}>
             {/* Overlay (advanced view) takes precedence over the primary view —
@@ -582,6 +604,48 @@ const App: Component = () => {
               </Show>
             </Show>
           </div>
+
+          {/* Off-canvas drawer (narrow only): a backdrop + sliding sidebar panel.
+              The toolbar hamburger toggles it; tapping the backdrop or navigating
+              closes it. */}
+          <Show when={isNarrow() && drawerOpen()}>
+            <div
+              onClick={() => setDrawerOpen(false)}
+              style={{ position: "fixed", inset: "0", background: "rgba(0,0,0,0.45)", "z-index": 900 }}
+            />
+            <div
+              class="scroll-thin"
+              style={{
+                position: "fixed",
+                top: "0",
+                bottom: "0",
+                left: "0",
+                "z-index": 901,
+                width: "min(84vw, 320px)",
+                "overflow-y": "auto",
+                background: "var(--panel)",
+                "border-right": "1px solid var(--bd)",
+                "padding-left": "env(safe-area-inset-left, 0px)",
+                animation: "drawerIn 0.22s ease",
+              }}
+            >
+              <Sidebar
+                fullWidth
+                repoId={repoId()}
+                repoName={repoName()}
+                changeCount={changeCount()}
+                refreshNonce={refreshNonce()}
+                view={view()}
+                onView={goPrimary}
+                refs={refs()}
+                onBranchMenu={openBranchMenu}
+                onCheckout={checkoutByName}
+                onSelectRef={showRef}
+                onBranchKey={onBranchKey}
+                onOpenStashes={() => { setDrawerOpen(false); setOverlay("stashes"); }}
+              />
+            </div>
+          </Show>
         </div>
       </Show>
 
@@ -761,7 +825,7 @@ const App: Component = () => {
           onClick={() => setOpNotice(null)}
           style={{
             position: "fixed",
-            bottom: "20px",
+            bottom: "calc(20px + env(safe-area-inset-bottom, 0px))",
             left: "50%",
             transform: "translateX(-50%)",
             "z-index": "1200",

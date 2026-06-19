@@ -6,7 +6,7 @@ import DiffView from "./DiffView";
 import ContextMenu from "./ContextMenu";
 import type { MenuEntry } from "./ContextMenu";
 import { cancelAi, isConsentError, runAiStream } from "./ai";
-import { changesColWidth, changesLayout, setChangesColWidth, setStagedHeight, stagedHeight } from "./prefs";
+import { changesColWidth, changesLayout, hideResizers, isNarrow, setChangesColWidth, setStagedHeight, stagedHeight } from "./prefs";
 import { effectiveSign, repoSettings } from "./repoSettings";
 import type { ActionResult } from "./branchActions";
 import { copyPath, discardChanges, ignore, openFile, revealFile, saveAsPatch, stashFiles } from "./fileActions";
@@ -571,15 +571,19 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
 
   return (
     <div style={{ height: "100%", display: "flex", "flex-direction": "column", overflow: "hidden" }}>
-      <div style={{ flex: "1", display: "flex", "min-height": "0", overflow: "hidden" }}>
-        {/* File lists column (308px): a fixed Unstaged header, the Unstaged list
-            (the only scrolling region), and a Staged pane pinned to the bottom
-            that floats over the list. */}
+      <div style={{ flex: "1", display: "flex", "flex-direction": isNarrow() ? "column" : "row", "min-height": "0", overflow: "hidden" }}>
+        {/* File lists column (308px wide; on narrow it stacks on top, capped at
+            45% height). Fixed Unstaged header, the Unstaged list (the only
+            scrolling region), and a Staged pane pinned to the bottom. */}
         <div
           ref={columnEl}
           tabindex={0}
           onKeyDown={onColumnKeyDown}
-          style={{ width: `${changesColWidth()}px`, "flex-shrink": 0, display: "flex", "flex-direction": "column", "min-height": "0", "border-right": "1px solid var(--bd)", background: "var(--panel)", outline: "none" }}
+          style={
+            isNarrow()
+              ? { width: "100%", "flex-shrink": 1, "max-height": "45%", display: "flex", "flex-direction": "column", "min-height": "0", "border-bottom": "1px solid var(--bd)", background: "var(--panel)", outline: "none" }
+              : { width: `${changesColWidth()}px`, "flex-shrink": 0, display: "flex", "flex-direction": "column", "min-height": "0", "border-right": "1px solid var(--bd)", background: "var(--panel)", outline: "none" }
+          }
         >
           <Show when={err()}>
             <p style={{ color: "var(--error)", "font-size": "12px", padding: "8px 14px", margin: 0, "flex-shrink": 0 }}>{err()}</p>
@@ -595,29 +599,35 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
             {fileList(unstagedAll(), false)}
           </div>
 
-          {/* Drag handle: resize the Staged pane (grab strip / row-resize). */}
-          <div
-            onPointerDown={startStagedDrag}
-            title="Drag to resize the Staged panel"
-            style={{
-              "flex-shrink": 0,
-              height: "7px",
-              cursor: "row-resize",
-              background: "var(--sub)",
-              "border-top": "1px solid var(--bd)",
-              "box-shadow": "0 -8px 18px rgba(0, 0, 0, 0.22)",
-              "touch-action": "none",
-            }}
-          />
+          {/* Drag handle: resize the Staged pane (grab strip / row-resize).
+              Hidden on touch/narrow, where the staged pane flexes instead. */}
+          <Show when={!hideResizers()}>
+            <div
+              onPointerDown={startStagedDrag}
+              title="Drag to resize the Staged panel"
+              style={{
+                "flex-shrink": 0,
+                height: "7px",
+                cursor: "row-resize",
+                background: "var(--sub)",
+                "border-top": "1px solid var(--bd)",
+                "box-shadow": "0 -8px 18px rgba(0, 0, 0, 0.22)",
+                "touch-action": "none",
+              }}
+            />
+          </Show>
 
-          {/* Staged pane: pinned to the bottom, height user-adjustable via drag. */}
+          {/* Staged pane: pinned to the bottom. On wide its height is drag-set;
+              on narrow it flexes to share the available column height. */}
           <div
             style={{
-              "flex-shrink": 0,
+              "flex-shrink": isNarrow() ? 1 : 0,
               display: "flex",
               "flex-direction": "column",
               "min-height": "0",
-              height: `${stagedHeight()}px`,
+              height: isNarrow() ? "auto" : `${stagedHeight()}px`,
+              flex: isNarrow() ? "1 1 0" : undefined,
+              "border-top": isNarrow() ? "1px solid var(--bd)" : undefined,
             }}
           >
             {subHeader("Staged", stagedCount(), {
@@ -631,15 +641,18 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
           </div>
         </div>
 
-        {/* Drag handle: resize the file-lists column (col-resize). */}
-        <div
-          onPointerDown={startColumnDrag}
-          title="Drag to resize the file list"
-          style={{ "flex-shrink": 0, width: "6px", cursor: "col-resize", "margin-left": "-3px", "z-index": 1, "touch-action": "none" }}
-        />
+        {/* Drag handle: resize the file-lists column (col-resize). Hidden on
+            touch/narrow, where the lists stack above the diff. */}
+        <Show when={!hideResizers()}>
+          <div
+            onPointerDown={startColumnDrag}
+            title="Drag to resize the file list"
+            style={{ "flex-shrink": 0, width: "6px", cursor: "col-resize", "margin-left": "-3px", "z-index": 1, "touch-action": "none" }}
+          />
+        </Show>
 
         {/* Diff viewer (fills) */}
-        <div style={{ flex: "1", "min-width": "0", overflow: "hidden" }}>
+        <div style={{ flex: "1", "min-width": "0", "min-height": "0", overflow: "hidden" }}>
           <Show
             when={selectedSpec()}
             fallback={
@@ -668,7 +681,7 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
       </div>
 
       {/* Commit composer (pinned bottom, full width) */}
-      <div style={{ "flex-shrink": 0, "border-top": "1px solid var(--bd)", background: "var(--panel)", padding: `${ps(14)} 16px`, display: "flex", "flex-direction": "column", gap: "8px" }}>
+      <div style={{ "flex-shrink": 0, "border-top": "1px solid var(--bd)", background: "var(--panel)", padding: `${ps(14)} 16px`, "padding-bottom": `calc(${ps(14)} + env(safe-area-inset-bottom, 0px))`, display: "flex", "flex-direction": "column", gap: "8px" }}>
         <input
           style={composerField}
           placeholder="Commit subject"

@@ -76,6 +76,13 @@ Produces a `.dmg`/`.app` (macOS), `.msi`/NSIS (Windows), or AppImage (Linux)
 under `target/release/bundle/`. Signing/notarization and the cross-platform
 release pipeline are described in [docs/PACKAGING.md](docs/PACKAGING.md).
 
+### Mobile (iOS / Android)
+
+Lady builds as an iOS and Android app with an adaptive UI (stacked on phones,
+side-by-side on tablets/foldables). Full Git functionality is desktop-only —
+phones get a degraded-but-usable layout. See [docs/MOBILE.md](docs/MOBILE.md)
+for prerequisites and the `cargo tauri ios/android init|dev|build` commands.
+
 ### Tests & benchmarks
 
 ```sh
@@ -92,6 +99,7 @@ npm --prefix ui run build                               # typecheck + build UI
 | [docs/KEYBOARD.md](docs/KEYBOARD.md) | Keyboard shortcuts |
 | [docs/AI-PRIVACY.md](docs/AI-PRIVACY.md) | BYOK, consent, redaction, local Ollama |
 | [docs/MCP.md](docs/MCP.md) | `lady-mcp` setup for external assistants |
+| [docs/MOBILE.md](docs/MOBILE.md) | iOS/Android build, adaptive UI, limitations |
 | [docs/ACCESSIBILITY.md](docs/ACCESSIBILITY.md) | Keyboard / screen-reader / contrast |
 | [docs/THEMING.md](docs/THEMING.md) | Theme token system |
 | [docs/PACKAGING.md](docs/PACKAGING.md) | Bundling, signing, auto-update |

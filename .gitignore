@@ -7,6 +7,11 @@ ui/node_modules/
 ui/dist/
 src-tauri/target/
 
+# --- Mobile: generated native projects + build artifacts (created by
+#     `tauri ios/android init`; those commands also write their own
+#     gen/*/.gitignore for the finer-grained build output) ---
+src-tauri/gen/
+
 # --- Updater / signing secrets (NEVER commit; only the updater PUBLIC key lives
 #     in tauri.conf.json — private keys / certs are CI secrets) ---
 *.key

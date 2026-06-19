@@ -380,6 +380,30 @@ select:focus-visible {
   to { opacity: 1; transform: translate(-50%, 0); }
 }
 
+/* Slide-in for the off-canvas sidebar drawer (App.tsx, narrow layout). The
+   global prefers-reduced-motion rule below collapses it for users who opt out. */
+@keyframes drawerIn {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+/* ── Touch / coarse-pointer affordances (mobile + tablets) ─────────────────── */
+/* On touch devices grow the scrollbar and the tap targets in menus and the
+   sidebar nav. Scoped to menu/nav controls so the tiny inline Stage/Unstage
+   buttons in the file lists keep their compact size. */
+@media (pointer: coarse) {
+  .scroll-thin::-webkit-scrollbar {
+    width: 14px;
+    height: 14px;
+  }
+  [role="menuitem"],
+  [role="menu"] button,
+  nav button,
+  [aria-expanded] {
+    min-height: 40px;
+  }
+}
+
 /* Respect the OS "reduce motion" setting: collapse animations/transitions so
    nothing moves for users who asked it not to (PH6-003 / PH6-004). */
 @media (prefers-reduced-motion: reduce) {
