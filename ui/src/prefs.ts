@@ -21,6 +21,22 @@ export function setChangesLayout(v: ChangesLayout): void {
   localStorage.setItem(CHANGES_KEY, v);
 }
 
+// ── Diff line wrapping ───────────────────────────────────────────────────────
+// Off by default: long lines stay on one line and the diff scrolls sideways.
+// When on, lines wrap to the viewport so nothing is clipped horizontally.
+const WRAP_KEY = "lady-diff-wrap";
+const [wrapDiff, setWrapDiffSignal] = createSignal<boolean>(
+  localStorage.getItem(WRAP_KEY) === "1",
+);
+
+export { wrapDiff };
+
+/** Toggle forced line-wrapping in diffs (persisted). */
+export function setWrapDiff(v: boolean): void {
+  setWrapDiffSignal(v);
+  localStorage.setItem(WRAP_KEY, v ? "1" : "0");
+}
+
 // ── Resizable Staged pane height (Local Changes) ─────────────────────────────
 const STAGED_H_KEY = "lady-staged-height";
 const storedH = Number(localStorage.getItem(STAGED_H_KEY));
