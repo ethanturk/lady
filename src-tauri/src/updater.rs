@@ -78,7 +78,7 @@ mod tests {
     /// the same key carried in `tauri.conf.json` (`plugins.updater.pubkey`),
     /// which stores the whole `.pub` file base64-encoded. Only the public key is
     /// ever committed — the private key signs manifests in CI.
-    const PUBKEY_B64: &str = "RWTQM20+Q2OlHRL3xsW8Gmd1qesgjJmDiuvS8mFToFbICoKqftNXUVvf";
+    const PUBKEY_B64: &str = "RWSAKwBMv3CZuwlGzUFspETqhY7qT89X0wl//ONflPJXL1BcZl+gp8Lo";
 
     fn fixture(name: &str) -> Vec<u8> {
         let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
