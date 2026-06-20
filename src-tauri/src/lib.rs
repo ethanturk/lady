@@ -1,8 +1,8 @@
-use lady_git::{CommitOpts, DiffSpec, GitEngine, GixEngine, GraphQuery, MergeOpts};
+use lady_git::{CommitOpts, DiffSpec, GitAuth, GitEngine, GixEngine, GraphQuery, MergeOpts};
 use lady_graph::layout_continuation;
 use lady_proto::{
-    ApplyOutcome, Blame, CommitMeta, FfMode, FileDiff, GitIdentity, MergeOutcome, Oid,
-    RebaseOutcome, RefInfo, RepoId, RepoSettings, WorkingTree,
+    ApplyOutcome, Blame, CommitMeta, FfMode, FileDiff, GitHubAccount, GitIdentity, MergeOutcome,
+    Oid, RebaseOutcome, RefInfo, RepoAuth, RepoId, RepoSettings, WorkingTree,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -13,6 +13,11 @@ mod ai;
 // implementation, so the whole module is gated off on iOS/Android.
 #[cfg(desktop)]
 mod updater;
+
+/// OS-keychain service name for all of Lady's hosting/transport tokens
+/// (single-account legacy keys and per-account `github-token:<id>` keys alike).
+/// The credential-helper subprocess uses the same service to read them back.
+const KEYCHAIN_SERVICE: &str = "Lady-Hosting";
 
 #[derive(Serialize)]
 pub struct AppInfo {
@@ -681,6 +686,7 @@ fn delete_tag(repo: RepoId, name: String, engine: State<GixEngine>) -> Result<()
 fn clone_repo(
     url: String,
     dest: String,
+    account: Option<String>,
     app: tauri::AppHandle,
     engine: State<GixEngine>,
 ) -> Result<RepoId, String> {
@@ -688,8 +694,29 @@ fn clone_repo(
     use std::process::{Command, Stdio};
     use tauri::Emitter;
 
-    let mut child = Command::new("git")
-        .args(["clone", "--progress", &url, &dest])
+    // When a GitHub account is chosen, clone with its credentials (the repo isn't
+    // open yet, so auth is selected explicitly rather than from a stored override).
+    let auth = account
+        .map(|id| {
+            let login = load_settings_inner()
+                .github_accounts
+                .into_iter()
+                .find(|a| a.id == id)
+                .map(|a| a.login)
+                .unwrap_or_else(|| id.clone());
+            https_account_git_auth(&id, &login)
+        })
+        .unwrap_or_else(GitAuth::none);
+
+    let mut cmd = Command::new("git");
+    for (k, v) in &auth.config {
+        cmd.arg("-c").arg(format!("{k}={v}"));
+    }
+    cmd.args(["clone", "--progress", &url, &dest]);
+    for (k, v) in &auth.env {
+        cmd.env(k, v);
+    }
+    let mut child = cmd
         .stderr(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -724,12 +751,17 @@ fn fetch(
     hosting: State<'_, Hosting>,
 ) -> Result<(), String> {
     use tauri::Emitter;
+    let mut auth = git_auth_for_repo(&repo, &engine);
+    if auth.is_empty() {
+        if let Some(token) = http_bearer_for_remote(&repo, remote.as_deref(), &engine, &hosting) {
+            auth = http_bearer_git_auth(token);
+        }
+    }
     let mut emit = |line: &str| {
         let _ = app.emit("fetch-progress", line.to_string());
     };
-    let bearer = http_bearer_for_remote(&repo, remote.as_deref(), &engine, &hosting);
     engine
-        .fetch(&repo, remote.as_deref(), bearer.as_deref(), &mut emit)
+        .fetch(&repo, remote.as_deref(), &auth, &mut emit)
         .map_err(|e| e.to_string())
 }
 
@@ -745,18 +777,17 @@ fn pull(
     hosting: State<'_, Hosting>,
 ) -> Result<(), String> {
     use tauri::Emitter;
+    let mut auth = git_auth_for_repo(&repo, &engine);
+    if auth.is_empty() {
+        if let Some(token) = http_bearer_for_remote(&repo, remote.as_deref(), &engine, &hosting) {
+            auth = http_bearer_git_auth(token);
+        }
+    }
     let mut emit = |line: &str| {
         let _ = app.emit("fetch-progress", line.to_string());
     };
-    let bearer = http_bearer_for_remote(&repo, remote.as_deref(), &engine, &hosting);
     engine
-        .pull(
-            &repo,
-            remote.as_deref(),
-            branch.as_deref(),
-            bearer.as_deref(),
-            &mut emit,
-        )
+        .pull(&repo, remote.as_deref(), branch.as_deref(), &auth, &mut emit)
         .map_err(|e| e.to_string())
 }
 
@@ -776,10 +807,15 @@ fn push(
     hosting: State<'_, Hosting>,
 ) -> Result<(), String> {
     use tauri::Emitter;
+    let mut auth = git_auth_for_repo(&repo, &engine);
+    if auth.is_empty() {
+        if let Some(token) = http_bearer_for_remote(&repo, remote.as_deref(), &engine, &hosting) {
+            auth = http_bearer_git_auth(token);
+        }
+    }
     let mut emit = |line: &str| {
         let _ = app.emit("push-progress", line.to_string());
     };
-    let bearer = http_bearer_for_remote(&repo, remote.as_deref(), &engine, &hosting);
     engine
         .push(
             &repo,
@@ -787,7 +823,7 @@ fn push(
             branch.as_deref(),
             set_upstream,
             force,
-            bearer.as_deref(),
+            &auth,
             &mut emit,
         )
         .map_err(|e| e.to_string())
@@ -1076,6 +1112,15 @@ pub struct Settings {
     /// left `None` inherits from `defaults`, then the built-in fallback.
     #[serde(default)]
     pub repo_overrides: BTreeMap<String, RepoSettings>,
+    /// Registered GitHub accounts (metadata only; PATs live in the keychain under
+    /// `github-token:<id>`). Drives the per-repo HTTPS auth override and the
+    /// confirm-once auto-suggest.
+    #[serde(default)]
+    pub github_accounts: Vec<GitHubAccount>,
+    /// Repo workdir paths where the user dismissed the account suggestion, so it
+    /// is never offered again for that repo.
+    #[serde(default)]
+    pub auth_suggest_dismissed: Vec<String>,
 }
 
 /// Path to `settings.toml` in the platform config dir (via `directories`).
@@ -1119,6 +1164,9 @@ fn save_settings(mut settings: Settings) -> Result<(), String> {
     // Owned by the repo_settings / set_*_override / set_global_defaults commands.
     settings.defaults = on_disk.defaults;
     settings.repo_overrides = on_disk.repo_overrides;
+    // Owned by the github account commands and the auth-suggest flow.
+    settings.github_accounts = on_disk.github_accounts;
+    settings.auth_suggest_dismissed = on_disk.auth_suggest_dismissed;
     write_settings(&settings)
 }
 
@@ -1162,6 +1210,9 @@ fn repo_settings(repo: RepoId, engine: State<GixEngine>) -> Result<ResolvedRepoS
         ff: pick(&over.ff, &global.ff),
         base_branch: pick(&over.base_branch, &global.base_branch),
         ai_model: pick(&over.ai_model, &global.ai_model),
+        // Auth is intentionally per-repo only — there is no sensible global
+        // default account, so it never inherits.
+        auth: over.auth.clone(),
     };
     Ok(ResolvedRepoSettings {
         effective,
@@ -1220,6 +1271,277 @@ fn repo_identity_set(
         .map_err(|e| e.to_string())
 }
 
+// ── Multiple GitHub accounts — per-repo transport auth ───────────────────────────
+
+/// Wrap `s` in single quotes for a POSIX shell (git runs `!`-helpers and
+/// `GIT_SSH_COMMAND` via the shell), escaping embedded single quotes.
+fn shell_single_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Build the per-invocation [`GitAuth`] for `repo` from its stored auth override.
+/// Returns [`GitAuth::none`] (today's behavior — system git / `gh`) when no
+/// override is set, so default repos are unaffected.
+fn git_auth_for_repo(repo: &RepoId, engine: &GixEngine) -> GitAuth {
+    let Ok(key) = repo_settings_key(repo, engine) else {
+        return GitAuth::none();
+    };
+    let settings = load_settings_inner();
+    let Some(over) = settings.repo_overrides.get(&key) else {
+        return GitAuth::none();
+    };
+    match &over.auth {
+        None => GitAuth::none(),
+        Some(RepoAuth::SshKey(path)) => GitAuth {
+            config: Vec::new(),
+            env: vec![(
+                "GIT_SSH_COMMAND".to_string(),
+                format!("ssh -i {} -o IdentitiesOnly=yes", shell_single_quote(path)),
+            )],
+        },
+        Some(RepoAuth::Account(id)) => {
+            let login = settings
+                .github_accounts
+                .iter()
+                .find(|a| &a.id == id)
+                .map(|a| a.login.clone())
+                .unwrap_or_else(|| id.clone());
+            https_account_git_auth(id, &login)
+        }
+    }
+}
+
+/// Transient `git -c` config that routes HTTPS auth through Lady's own
+/// credential helper for the given account — the token never appears in argv.
+fn https_account_git_auth(account_id: &str, login: &str) -> GitAuth {
+    let exe = std::env::current_exe()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "lady".to_string());
+    // A `!`-prefixed helper is run via the shell; quote the exe and account id.
+    let helper = format!(
+        "!{} git-credential --account {}",
+        shell_single_quote(&exe),
+        shell_single_quote(account_id),
+    );
+    GitAuth {
+        config: vec![
+            // Empty value resets any inherited helper list (e.g. gh) for this one
+            // invocation; the next entry then installs only ours.
+            ("credential.helper".to_string(), String::new()),
+            ("credential.helper".to_string(), helper),
+            // Hint the username so git's credential context targets this account.
+            (
+                "credential.https://github.com.username".to_string(),
+                login.to_string(),
+            ),
+        ],
+        env: Vec::new(),
+    }
+}
+
+/// List the registered GitHub accounts (metadata only — no tokens).
+#[tauri::command]
+fn list_github_accounts() -> Result<Vec<GitHubAccount>, String> {
+    Ok(load_settings_inner().github_accounts)
+}
+
+/// Register (or update) a GitHub account: validate the PAT, learn the login,
+/// store the token in the keychain under `github-token:<login>`, and persist the
+/// metadata. Re-adding the same login refreshes its token + details.
+#[tauri::command]
+async fn add_github_account(
+    name: String,
+    email: String,
+    known_owners: Vec<String>,
+    token: String,
+    hosting: State<'_, Hosting>,
+) -> Result<GitHubAccount, String> {
+    let login = lady_hosting::provider_by_kind(lady_hosting::ForgeKind::GitHub)
+        .get_login(&token)
+        .await
+        .map_err(|e| e.to_string())?;
+    let id = login.clone();
+    hosting
+        .store
+        .set(&lady_hosting::github_account_token_key(&id), &token)
+        .map_err(|e| e.to_string())?;
+    let account = GitHubAccount {
+        id: id.clone(),
+        login,
+        name,
+        email,
+        known_owners,
+    };
+    let mut s = load_settings_inner();
+    s.github_accounts.retain(|a| a.id != id);
+    s.github_accounts.push(account.clone());
+    write_settings(&s)?;
+    Ok(account)
+}
+
+/// Remove a GitHub account: delete its keychain token, drop its metadata, and
+/// revert any repos pinned to it back to the default credential helper.
+#[tauri::command]
+fn remove_github_account(id: String, hosting: State<Hosting>) -> Result<(), String> {
+    hosting
+        .store
+        .delete(&lady_hosting::github_account_token_key(&id))
+        .map_err(|e| e.to_string())?;
+    let mut s = load_settings_inner();
+    s.github_accounts.retain(|a| a.id != id);
+    for over in s.repo_overrides.values_mut() {
+        if matches!(&over.auth, Some(RepoAuth::Account(a)) if a == &id) {
+            over.auth = None;
+        }
+    }
+    write_settings(&s)
+}
+
+/// A suggested account for a repo plus a short human reason.
+#[derive(Serialize)]
+pub struct AccountSuggestion {
+    pub account: GitHubAccount,
+    pub reason: String,
+}
+
+/// Suggest a GitHub account for `repo` by matching the remote owner against each
+/// account's login / known owners. Returns `None` when the repo is already
+/// pinned, the suggestion was dismissed, the remote isn't GitHub, or nothing
+/// matches — so the UI only ever prompts once.
+#[tauri::command]
+fn suggest_repo_account(
+    repo: RepoId,
+    engine: State<GixEngine>,
+    hosting: State<Hosting>,
+) -> Result<Option<AccountSuggestion>, String> {
+    let key = repo_settings_key(&repo, &engine)?;
+    let s = load_settings_inner();
+    let already_pinned = s
+        .repo_overrides
+        .get(&key)
+        .and_then(|o| o.auth.as_ref())
+        .is_some();
+    if already_pinned || s.auth_suggest_dismissed.iter().any(|d| d == &key) {
+        return Ok(None);
+    }
+    let Some((provider, urls)) = provider_for_repo(&repo, &engine, &hosting)? else {
+        return Ok(None);
+    };
+    if provider.kind() != lady_hosting::ForgeKind::GitHub {
+        return Ok(None);
+    }
+    let Some(slug) = provider.detect_slug(&urls) else {
+        return Ok(None);
+    };
+    let owner = slug.owner.to_lowercase();
+    let matched = s.github_accounts.iter().find(|a| {
+        a.login.to_lowercase() == owner || a.known_owners.iter().any(|o| o.to_lowercase() == owner)
+    });
+    Ok(matched.map(|a| AccountSuggestion {
+        account: a.clone(),
+        reason: format!("Remote owner \u{201c}{}\u{201d} matches this account.", slug.owner),
+    }))
+}
+
+/// Pin `repo` to a GitHub account: set the HTTPS auth override and stamp the
+/// account's identity into `.git/config` so commits are authored correctly.
+#[tauri::command]
+fn assign_repo_account(
+    repo: RepoId,
+    account_id: String,
+    engine: State<GixEngine>,
+) -> Result<(), String> {
+    let key = repo_settings_key(&repo, &engine)?;
+    let mut s = load_settings_inner();
+    let account = s
+        .github_accounts
+        .iter()
+        .find(|a| a.id == account_id)
+        .cloned()
+        .ok_or_else(|| "Unknown GitHub account.".to_string())?;
+    s.repo_overrides.entry(key).or_default().auth = Some(RepoAuth::Account(account_id));
+    write_settings(&s)?;
+    if !account.name.is_empty() || !account.email.is_empty() {
+        engine
+            .repo_identity_set(&repo, &account.name, &account.email)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Record that the user dismissed the account suggestion for `repo`, so it is
+/// never offered again.
+#[tauri::command]
+fn dismiss_repo_account_suggestion(repo: RepoId, engine: State<GixEngine>) -> Result<(), String> {
+    let key = repo_settings_key(&repo, &engine)?;
+    let mut s = load_settings_inner();
+    if !s.auth_suggest_dismissed.iter().any(|d| d == &key) {
+        s.auth_suggest_dismissed.push(key);
+    }
+    write_settings(&s)
+}
+
+/// Parse a credential-helper argv tail (`--account <id> <op>`) into the account
+/// id and the git operation (`get` / `store` / `erase`).
+fn parse_credential_args(args: &[String]) -> (Option<String>, Option<String>) {
+    let mut account = None;
+    let mut op = None;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--account" => account = it.next().cloned(),
+            other => op = Some(other.to_string()),
+        }
+    }
+    (account, op)
+}
+
+/// Build the git credential-helper response for account `id`: the account's PAT
+/// (preferred) or the legacy single-account token, formatted as the credential
+/// protocol. Returns `None` when no token is stored. Pure over its inputs so it
+/// can be unit-tested with a mock [`TokenStore`].
+fn credential_response(
+    store: &dyn lady_hosting::TokenStore,
+    accounts: &[GitHubAccount],
+    id: &str,
+) -> Option<String> {
+    let token = store
+        .get(&lady_hosting::github_account_token_key(id))
+        .ok()
+        .flatten()
+        .or_else(|| {
+            store
+                .get(lady_hosting::ForgeKind::GitHub.token_key())
+                .ok()
+                .flatten()
+        })?;
+    let login = accounts
+        .iter()
+        .find(|a| a.id == id)
+        .map(|a| a.login.clone())
+        .unwrap_or_else(|| id.to_string());
+    // git reads username/password from stdout; a trailing blank line ends it.
+    Some(format!("username={login}\npassword={token}\n\n"))
+}
+
+/// Credential-helper mode: when git invokes `<exe> git-credential --account <id>
+/// <op>`, serve that account's PAT from the keychain on `get` (and no-op on
+/// `store`/`erase` — Lady owns the token, git must not overwrite it). Reads from
+/// the same keychain service as the app so the running UI and this subprocess
+/// agree. Prints the git credential protocol to stdout and returns.
+fn run_credential_helper(args: &[String]) {
+    let (account, op) = parse_credential_args(args);
+    if op.as_deref() != Some("get") {
+        return;
+    }
+    let Some(id) = account else { return };
+    let store = lady_hosting::KeyringStore::new(KEYCHAIN_SERVICE);
+    let accounts = load_settings_inner().github_accounts;
+    if let Some(out) = credential_response(&store, &accounts, &id) {
+        print!("{out}");
+    }
+}
+
 // ── Hosting (GitHub) — PH3-011 / PH3-012 ────────────────────────────────────────
 
 /// When the target remote is HTTPS and a hosting token is stored for that
@@ -1243,6 +1565,16 @@ fn http_bearer_for_remote(
         .ok()
         .flatten()
         .filter(|t| !t.is_empty())
+}
+
+fn http_bearer_git_auth(token: String) -> GitAuth {
+    GitAuth {
+        config: vec![("credential.helper".to_string(), String::new())],
+        env: vec![(
+            "GIT_HTTP_EXTRAHEADER".to_string(),
+            format!("Authorization: Bearer {token}"),
+        )],
+    }
 }
 
 /// Managed hosting state: the OS-keychain token store + any self-hosted forge
@@ -1281,6 +1613,37 @@ fn provider_for_repo(
     Ok(provider.map(|p| (p, urls)))
 }
 
+/// The API token for `repo`'s forge: the repo's pinned GitHub account token when
+/// one is assigned, otherwise the forge's legacy single-account token. Keeps the
+/// hosting API consistent with the per-repo transport account.
+fn repo_forge_token(
+    repo: &RepoId,
+    engine: &GixEngine,
+    provider: &dyn lady_hosting::HostingProvider,
+    hosting: &Hosting,
+) -> Result<Option<String>, String> {
+    if provider.kind() == lady_hosting::ForgeKind::GitHub {
+        if let Ok(key) = repo_settings_key(repo, engine) {
+            let s = load_settings_inner();
+            if let Some(RepoAuth::Account(id)) =
+                s.repo_overrides.get(&key).and_then(|o| o.auth.clone())
+            {
+                if let Some(tok) = hosting
+                    .store
+                    .get(&lady_hosting::github_account_token_key(&id))
+                    .map_err(|e| e.to_string())?
+                {
+                    return Ok(Some(tok));
+                }
+            }
+        }
+    }
+    hosting
+        .store
+        .get(provider.token_key())
+        .map_err(|e| e.to_string())
+}
+
 /// Connection status for the active repo's forge (PH4-001/002/003/004).
 #[tauri::command]
 async fn hosting_status(
@@ -1298,11 +1661,7 @@ async fn hosting_status(
     };
     let kind = provider.kind();
     let slug = provider.detect_slug(&urls);
-    let Some(token) = hosting
-        .store
-        .get(provider.token_key())
-        .map_err(|e| e.to_string())?
-    else {
+    let Some(token) = repo_forge_token(&repo, &engine, provider.as_ref(), &hosting)? else {
         return Ok(HostingInfo {
             kind: Some(kind),
             connected: false,
@@ -1471,16 +1830,12 @@ async fn github_create_pr(
             provider.kind().label()
         )
     })?;
-    let token = hosting
-        .store
-        .get(provider.token_key())
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| {
-            format!(
-                "Not connected to {} — connect in Settings first.",
-                provider.kind().label()
-            )
-        })?;
+    let token = repo_forge_token(&repo, &engine, provider.as_ref(), &hosting)?.ok_or_else(|| {
+        format!(
+            "Not connected to {} — connect in Settings first.",
+            provider.kind().label()
+        )
+    })?;
     let pr = lady_hosting::NewPullRequest {
         head,
         base,
@@ -1519,16 +1874,12 @@ fn resolve_forge(
             provider.kind().label()
         )
     })?;
-    let token = hosting
-        .store
-        .get(provider.token_key())
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| {
-            format!(
-                "Not connected to {} — connect in Settings first.",
-                provider.kind().label()
-            )
-        })?;
+    let token = repo_forge_token(repo, engine, provider.as_ref(), hosting)?.ok_or_else(|| {
+        format!(
+            "Not connected to {} — connect in Settings first.",
+            provider.kind().label()
+        )
+    })?;
     Ok((provider, slug, token))
 }
 
@@ -1809,6 +2160,14 @@ fn license_activate(key: String) -> Result<lady_license::LicenseStatus, String> 
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Credential-helper mode: git invokes us as `<exe> git-credential --account
+    // <id> <op>`. Serve the account's PAT and exit before any UI is created.
+    let argv: Vec<String> = std::env::args().collect();
+    if argv.get(1).map(String::as_str) == Some("git-credential") {
+        run_credential_helper(&argv[2..]);
+        return;
+    }
+
     let builder = tauri::Builder::default();
     // The auto-updater is desktop-only; mobile builds omit it entirely.
     #[cfg(desktop)]
@@ -1817,7 +2176,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(GixEngine::new())
         .manage(Hosting {
-            store: Box::new(lady_hosting::KeyringStore::new("Lady-Hosting")),
+            store: Box::new(lady_hosting::KeyringStore::new(KEYCHAIN_SERVICE)),
             self_hosted: Vec::new(),
         })
         .manage(ai::AiState::new())
@@ -1936,6 +2295,12 @@ pub fn run() {
             set_global_defaults,
             repo_identity_get,
             repo_identity_set,
+            list_github_accounts,
+            add_github_account,
+            remove_github_account,
+            suggest_repo_account,
+            assign_repo_account,
+            dismiss_repo_account_suggestion,
             ai::ai_get_config,
             ai::ai_set_config,
             ai::ai_set_key,
@@ -1970,8 +2335,75 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lady_hosting::TokenStore;
+    use std::collections::HashMap;
     use std::path::Path;
+    use std::sync::Mutex;
     use tempfile::TempDir;
+
+    /// In-memory [`TokenStore`] so credential-helper logic can be tested without
+    /// touching the OS keychain (unavailable on headless CI).
+    #[derive(Default)]
+    struct MockStore(Mutex<HashMap<String, String>>);
+    impl lady_hosting::TokenStore for MockStore {
+        fn get(&self, key: &str) -> lady_hosting::Result<Option<String>> {
+            Ok(self.0.lock().unwrap().get(key).cloned())
+        }
+        fn set(&self, key: &str, value: &str) -> lady_hosting::Result<()> {
+            self.0.lock().unwrap().insert(key.to_string(), value.to_string());
+            Ok(())
+        }
+        fn delete(&self, key: &str) -> lady_hosting::Result<()> {
+            self.0.lock().unwrap().remove(key);
+            Ok(())
+        }
+    }
+
+    fn account(id: &str, login: &str) -> GitHubAccount {
+        GitHubAccount {
+            id: id.to_string(),
+            login: login.to_string(),
+            name: String::new(),
+            email: String::new(),
+            known_owners: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn parse_credential_args_extracts_account_and_op() {
+        let args = ["--account".into(), "octocat".into(), "get".into()];
+        let (acct, op) = parse_credential_args(&args);
+        assert_eq!(acct.as_deref(), Some("octocat"));
+        assert_eq!(op.as_deref(), Some("get"));
+    }
+
+    #[test]
+    fn credential_response_returns_account_token() {
+        let store = MockStore::default();
+        store
+            .set(&lady_hosting::github_account_token_key("work"), "tok-work")
+            .unwrap();
+        let accounts = vec![account("work", "work-login")];
+        let out = credential_response(&store, &accounts, "work").expect("token present");
+        assert_eq!(out, "username=work-login\npassword=tok-work\n\n");
+    }
+
+    #[test]
+    fn credential_response_falls_back_to_legacy_token() {
+        let store = MockStore::default();
+        store
+            .set(lady_hosting::ForgeKind::GitHub.token_key(), "legacy-tok")
+            .unwrap();
+        // No per-account token, no metadata → falls back to legacy + id as login.
+        let out = credential_response(&store, &[], "octocat").expect("legacy token");
+        assert_eq!(out, "username=octocat\npassword=legacy-tok\n\n");
+    }
+
+    #[test]
+    fn credential_response_none_when_unknown() {
+        let store = MockStore::default();
+        assert!(credential_response(&store, &[], "nobody").is_none());
+    }
 
     fn git(dir: &Path, args: &[&str]) {
         let ok = std::process::Command::new("git")
@@ -2006,6 +2438,7 @@ mod tests {
                 ff: Some(FfMode::Only),
                 base_branch: None,
                 ai_model: Some("claude-opus-4-8".to_string()),
+                auth: None,
             },
             ..Default::default()
         };

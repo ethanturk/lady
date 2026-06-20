@@ -5,15 +5,23 @@ import { For } from "solid-js";
 import type {
   FfMode,
   ForgeKind,
+  GitHubAccount,
   GitIdentity,
   HostingInfo,
   LicenseStatus,
+  RepoAuth,
   RepoId,
   RepoInfo,
   RepoSettings,
   ResolvedRepoSettings,
 } from "./commands";
 import { FORGE_KINDS, FORGE_LABEL } from "./commands";
+import {
+  addGitHubAccount,
+  assignRepoAccount,
+  listGitHubAccounts,
+  removeGitHubAccount,
+} from "./accounts";
 import AiSettings from "./AiSettings";
 import {
   accent,
@@ -192,6 +200,50 @@ const SettingsView: Component<{ repoId: RepoId | null }> = (props) => {
       .catch(() => {});
   };
 
+  // GitHub accounts (work + personal) for multi-account transport. Metadata only;
+  // PATs live in the keychain. A repo can be pinned to one via the auth override.
+  const [accounts, setAccounts] = createSignal<GitHubAccount[]>([]);
+  const [acctName, setAcctName] = createSignal("");
+  const [acctEmail, setAcctEmail] = createSignal("");
+  const [acctOwners, setAcctOwners] = createSignal("");
+  const [acctToken, setAcctToken] = createSignal("");
+  const [acctErr, setAcctErr] = createSignal<string | null>(null);
+  const [acctBusy, setAcctBusy] = createSignal(false);
+
+  const loadAccounts = () => {
+    listGitHubAccounts().then(setAccounts).catch((e) => setAcctErr(String(e)));
+  };
+
+  const addAccount = () => {
+    if (!acctToken().trim()) return;
+    setAcctBusy(true);
+    setAcctErr(null);
+    const owners = acctOwners()
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    addGitHubAccount(acctName().trim(), acctEmail().trim(), owners, acctToken().trim())
+      .then(() => {
+        setAcctName("");
+        setAcctEmail("");
+        setAcctOwners("");
+        setAcctToken("");
+        loadAccounts();
+      })
+      .catch((e) => setAcctErr(String(e)))
+      .finally(() => setAcctBusy(false));
+  };
+
+  const removeAccount = (id: string) => {
+    if (!confirm(`Remove GitHub account “${id}”? Repos using it revert to the default credential helper.`)) return;
+    removeGitHubAccount(id)
+      .then(() => {
+        loadAccounts();
+        loadRepoSettings();
+      })
+      .catch((e) => setAcctErr(String(e)));
+  };
+
   const global = (): RepoSettings => resolved()?.global ?? globalOnly() ?? {};
   const override = (): RepoSettings => resolved()?.override ?? {};
   const overridden = (k: keyof RepoSettings) =>
@@ -233,7 +285,37 @@ const SettingsView: Component<{ repoId: RepoId | null }> = (props) => {
 
   onMount(() => {
     invoke<LicenseStatus>("license_status").then(setLicense).catch(() => {});
+    loadAccounts();
   });
+
+  // Per-repo transport auth override (default / pinned account / SSH key).
+  const authKind = (): "default" | "account" | "ssh" => {
+    const a = override().auth;
+    if (!a) return "default";
+    return a.kind === "Account" ? "account" : "ssh";
+  };
+  const currentAccountId = (): string => {
+    const a = override().auth;
+    return a && a.kind === "Account" ? a.value : "";
+  };
+  const currentSshKey = (): string => {
+    const a = override().auth;
+    return a && a.kind === "SshKey" ? a.value : "";
+  };
+  const assignAccount = (id: string) => {
+    const repo = props.repoId;
+    if (!repo || !id) return;
+    setRsErr(null);
+    assignRepoAccount(repo, id).then(loadRepoSettings).catch((e) => setRsErr(String(e)));
+  };
+  const setAuth = (auth: RepoAuth | null) => saveOverride({ auth });
+  const setAuthMode = (mode: "default" | "account" | "ssh") => {
+    if (mode === "default") return setAuth(null);
+    if (mode === "ssh") return setAuth({ kind: "SshKey", value: currentSshKey() });
+    const id = currentAccountId() || accounts()[0]?.id;
+    if (id) assignAccount(id);
+    else setAcctErr("Add a GitHub account first (below).");
+  };
   // Reload repo-dependent data whenever the active repo changes (the dialog can
   // stay mounted across repo switches, and opens with no repo at all).
   createEffect(() => {
@@ -465,6 +547,50 @@ const SettingsView: Component<{ repoId: RepoId | null }> = (props) => {
           </Show>
         </div>
 
+        {/* Transport auth override (multi-account: default / account / SSH key) */}
+        <div style={{ display: "flex", "flex-direction": "column", gap: "0.4rem", "font-size": "0.85rem" }}>
+          <label style={{ display: "flex", "align-items": "center", gap: "0.5rem" }}>
+            <span style={{ "min-width": "11rem" }}>Push/pull credentials</span>
+            <select
+              value={authKind()}
+              onChange={(e) => setAuthMode(e.currentTarget.value as "default" | "account" | "ssh")}
+              style={{ "font-size": "0.82rem" }}
+            >
+              <option value="default">Default (system git / gh)</option>
+              <option value="account">GitHub account (HTTPS)</option>
+              <option value="ssh">SSH key</option>
+            </select>
+          </label>
+          <Show when={authKind() === "account"}>
+            <label style={{ display: "flex", "align-items": "center", gap: "0.5rem" }}>
+              <span style={{ "min-width": "11rem" }}>Account</span>
+              <Show
+                when={accounts().length > 0}
+                fallback={<span style={{ color: "var(--fg-muted)" }}>No accounts yet — add one below.</span>}
+              >
+                <select
+                  value={currentAccountId()}
+                  onChange={(e) => assignAccount(e.currentTarget.value)}
+                  style={{ "font-size": "0.82rem" }}
+                >
+                  <For each={accounts()}>{(a) => <option value={a.id}>{a.login}</option>}</For>
+                </select>
+              </Show>
+            </label>
+          </Show>
+          <Show when={authKind() === "ssh"}>
+            <label style={{ display: "flex", "align-items": "center", gap: "0.5rem" }}>
+              <span style={{ "min-width": "11rem" }}>SSH private key path</span>
+              <input
+                style={{ flex: "1", padding: "0.3rem 0.5rem", "font-size": "0.85rem" }}
+                placeholder="/home/you/.ssh/id_work"
+                value={currentSshKey()}
+                onChange={(e) => setAuth({ kind: "SshKey", value: e.currentTarget.value.trim() })}
+              />
+            </label>
+          </Show>
+        </div>
+
         {/* Git identity (writes .git/config --local) */}
         <div style={{ "border-top": "1px solid var(--border)", "padding-top": "0.6rem", "margin-top": "0.2rem" }}>
           <div style={{ "font-size": "0.85rem", margin: "0 0 0.4rem" }}>
@@ -490,6 +616,46 @@ const SettingsView: Component<{ repoId: RepoId | null }> = (props) => {
         </div>
       </div>
       </Show>
+
+      <h3 style={{ margin: "1.2rem 0 0.4rem", "font-size": "0.95rem" }}>GitHub accounts</h3>
+      <p style={{ "font-size": "0.8rem", color: "var(--fg-muted)", margin: "0 0 0.5rem" }}>
+        Add your work and personal accounts here, then pin a repo to one under
+        “This repository” so pushes use the right credentials automatically. Tokens
+        are stored in your OS keychain — never on disk or in logs.
+      </p>
+      <Show when={acctErr()}>
+        <p role="alert" style={{ color: "var(--error)", "font-size": "0.82rem" }}>{acctErr()}</p>
+      </Show>
+      <div style={{ display: "flex", "flex-direction": "column", gap: "0.3rem", "max-width": "30rem" }}>
+        <For each={accounts()}>
+          {(a) => (
+            <div style={{ display: "flex", "align-items": "center", gap: "0.5rem", "font-size": "0.85rem" }}>
+              <span style={{ flex: "1" }}>
+                <strong>{a.login}</strong>
+                <Show when={a.email}>
+                  <span style={{ color: "var(--fg-muted)" }}> · {a.email}</span>
+                </Show>
+                <Show when={a.known_owners.length > 0}>
+                  <span style={{ color: "var(--fg-muted)" }}> · owners: {a.known_owners.join(", ")}</span>
+                </Show>
+              </span>
+              <button onClick={() => removeAccount(a.id)} style={{ padding: "0.2rem 0.7rem" }}>Remove</button>
+            </div>
+          )}
+        </For>
+        <Show when={accounts().length === 0}>
+          <p style={{ color: "var(--fg-muted)", "font-size": "0.82rem", margin: "0" }}>No accounts yet.</p>
+        </Show>
+      </div>
+      <div style={{ display: "flex", "flex-direction": "column", gap: "0.4rem", "max-width": "30rem", "margin-top": "0.5rem" }}>
+        <input style={{ padding: "0.3rem 0.5rem", "font-size": "0.85rem" }} placeholder="commit name (user.name)" value={acctName()} onInput={(e) => setAcctName(e.currentTarget.value)} />
+        <input style={{ padding: "0.3rem 0.5rem", "font-size": "0.85rem" }} placeholder="commit email (user.email)" value={acctEmail()} onInput={(e) => setAcctEmail(e.currentTarget.value)} />
+        <input style={{ padding: "0.3rem 0.5rem", "font-size": "0.85rem" }} placeholder="match owners/orgs (comma-separated, optional)" value={acctOwners()} onInput={(e) => setAcctOwners(e.currentTarget.value)} />
+        <input type="password" style={{ padding: "0.3rem 0.5rem", "font-size": "0.85rem" }} placeholder="personal access token" value={acctToken()} onInput={(e) => setAcctToken(e.currentTarget.value)} onKeyDown={(e) => e.key === "Enter" && addAccount()} />
+        <button onClick={addAccount} disabled={acctBusy()} style={{ "align-self": "flex-start", padding: "0.3rem 0.9rem" }}>
+          {acctBusy() ? "Validating…" : "Add account"}
+        </button>
+      </div>
 
       <h3 style={{ margin: "1.2rem 0 0.4rem", "font-size": "0.95rem" }}>Updates</h3>
       <div style={{ display: "flex", gap: "0.4rem", "align-items": "center" }}>

@@ -149,8 +149,11 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
   };
 
   const wtSignature = (wt: WorkingTree) =>
-    [...wt.staged, ...wt.unstaged, ...wt.untracked]
-      .map((f) => `${f.path}\0${f.kind}`)
+    [
+      ...wt.staged.map((f) => `${f.path}\0${f.kind}`),
+      ...wt.unstaged.map((f) => `${f.path}\0${f.kind}`),
+      ...wt.untracked.map((path) => `${path}\0Untracked`),
+    ]
       .sort()
       .join("\n");
 
@@ -218,26 +221,26 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
 
   const stage = (paths: string[]) => {
     if (paths.length === 0) return;
-    invoke("stage_paths", { repo: props.repoId, paths }).then(afterMutation).catch((e) => setErr(String(e)));
+    invoke("stage_paths", { repo: props.repoId, paths }).then(() => afterMutation()).catch((e) => setErr(String(e)));
   };
   const unstage = (paths: string[]) => {
     if (paths.length === 0) return;
-    invoke("unstage_paths", { repo: props.repoId, paths }).then(afterMutation).catch((e) => setErr(String(e)));
+    invoke("unstage_paths", { repo: props.repoId, paths }).then(() => afterMutation()).catch((e) => setErr(String(e)));
   };
   const stageHunk = (path: string, hunk: number) => {
-    invoke("stage_hunks", { repo: props.repoId, path, hunks: [hunk] }).then(afterMutation).catch((e) => setErr(String(e)));
+    invoke("stage_hunks", { repo: props.repoId, path, hunks: [hunk] }).then(() => afterMutation()).catch((e) => setErr(String(e)));
   };
   const unstageHunk = (path: string, hunk: number) => {
-    invoke("unstage_hunks", { repo: props.repoId, path, hunks: [hunk] }).then(afterMutation).catch((e) => setErr(String(e)));
+    invoke("unstage_hunks", { repo: props.repoId, path, hunks: [hunk] }).then(() => afterMutation()).catch((e) => setErr(String(e)));
   };
   const stageLines = (path: string, hunk: number, lines: number[]) => {
-    invoke("stage_lines", { repo: props.repoId, path, hunk, lines }).then(afterMutation).catch((e) => setErr(String(e)));
+    invoke("stage_lines", { repo: props.repoId, path, hunk, lines }).then(() => afterMutation()).catch((e) => setErr(String(e)));
   };
   const discardLines = (path: string, hunk: number, lines: number[]) => {
-    invoke("discard_lines", { repo: props.repoId, path, hunk, lines }).then(afterMutation).catch((e) => setErr(String(e)));
+    invoke("discard_lines", { repo: props.repoId, path, hunk, lines }).then(() => afterMutation()).catch((e) => setErr(String(e)));
   };
   const discardHunk = (path: string, hunk: number) => {
-    invoke("discard_hunks", { repo: props.repoId, path, hunks: [hunk] }).then(afterMutation).catch((e) => setErr(String(e)));
+    invoke("discard_hunks", { repo: props.repoId, path, hunks: [hunk] }).then(() => afterMutation()).catch((e) => setErr(String(e)));
   };
 
   // ── File / folder context menu ────────────────────────────────────────────

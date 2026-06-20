@@ -104,6 +104,32 @@ pub struct MergeOpts {
     pub commit_message: Option<String>,
 }
 
+/// Per-invocation authentication overrides for a single network git call.
+///
+/// `config` pairs are passed as leading `-c <k>=<v>` flags and `env` as process
+/// environment, so they apply only to that one child process — never the user's
+/// global git config (ADR-0006). The default ([`GitAuth::none`]) leaves the
+/// invocation byte-for-byte identical to relying on system git's own helpers.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GitAuth {
+    /// `git -c <key>=<value>` pairs prepended before the subcommand.
+    pub config: Vec<(String, String)>,
+    /// Environment variables set on the git child (e.g. `GIT_SSH_COMMAND`).
+    pub env: Vec<(String, String)>,
+}
+
+impl GitAuth {
+    /// No overrides — use system git's configured credential helpers / ssh-agent.
+    pub fn none() -> Self {
+        Self::default()
+    }
+
+    /// True when there is nothing to apply (the default path).
+    pub fn is_empty(&self) -> bool {
+        self.config.is_empty() && self.env.is_empty()
+    }
+}
+
 /// A read backend over a git repository.
 ///
 /// Implementations open a repo to a [`RepoId`] handle, then serve refs and
@@ -259,15 +285,14 @@ pub trait GitEngine: Send + Sync {
     fn delete_tag(&self, repo: &RepoId, name: &str) -> Result<()>;
 
     /// Fetch from `remote` (or the default remote when `None`), streaming
-    /// git's `--progress` output to `on_progress`. When `http_bearer` is set
-    /// (a hosting PAT), it is used for HTTPS instead of system credential
-    /// helpers. SSH remotes ignore it (ssh-agent). Failures return git's
-    /// message verbatim.
+    /// git's `--progress` output to `on_progress`. Credentials and transport
+    /// are supplied by the per-invocation `auth` overrides, or entirely by
+    /// system git when `auth` is empty. A failure returns git's message verbatim.
     fn fetch(
         &self,
         repo: &RepoId,
         remote: Option<&str>,
-        http_bearer: Option<&str>,
+        auth: &GitAuth,
         on_progress: &mut dyn FnMut(&str),
     ) -> Result<()>;
 
@@ -278,7 +303,7 @@ pub trait GitEngine: Send + Sync {
         repo: &RepoId,
         remote: Option<&str>,
         branch: Option<&str>,
-        http_bearer: Option<&str>,
+        auth: &GitAuth,
         on_progress: &mut dyn FnMut(&str),
     ) -> Result<()>;
 
@@ -286,10 +311,8 @@ pub trait GitEngine: Send + Sync {
     /// the branch has no upstream (or `set_upstream` is true), both are inferred
     /// from the current branch and configured remotes (`origin` as fallback).
     /// `set_upstream` records the tracking ref (`-u`); `force` allows a
-    /// non-fast-forward update (`--force`). When `http_bearer` is set (a
-    /// hosting PAT), it is used for HTTPS instead of system credential
-    /// helpers. Progress streams to `on_progress`; rejections surface git's
-    /// message verbatim.
+    /// non-fast-forward update (`--force`). Progress streams to `on_progress`;
+    /// rejections surface git's message verbatim.
     #[allow(clippy::too_many_arguments)]
     fn push(
         &self,
@@ -298,7 +321,7 @@ pub trait GitEngine: Send + Sync {
         branch: Option<&str>,
         set_upstream: bool,
         force: bool,
-        http_bearer: Option<&str>,
+        auth: &GitAuth,
         on_progress: &mut dyn FnMut(&str),
     ) -> Result<()>;
 
@@ -828,15 +851,10 @@ pub(crate) fn run_git_stdin(workdir: &Path, args: &[&str], input: &[u8]) -> Resu
 /// lines are collected so a non-zero exit returns [`Error::Git`] carrying
 /// git's own message verbatim — auth failures, non-fast-forward rejections,
 /// etc. surface unchanged while progress still streams live (ADR-0003).
-///
-/// When `http_bearer` is set (a hosting PAT), it is sent as an HTTP
-/// `Authorization: Bearer` header and the system credential helper is
-/// disabled for this invocation so stale keychain/`gh` credentials cannot
-/// override the token the user connected in Settings.
 pub(crate) fn run_git_streaming(
     workdir: &Path,
     args: &[&str],
-    http_bearer: Option<&str>,
+    auth: &GitAuth,
     on_line: &mut dyn FnMut(&str),
 ) -> Result<()> {
     use std::io::{BufRead, BufReader};
@@ -844,18 +862,18 @@ pub(crate) fn run_git_streaming(
 
     let mut cmd = Command::new("git");
     cmd.current_dir(workdir);
-    if http_bearer.is_some() {
-        cmd.arg("-c").arg("credential.helper=");
+    // Per-invocation auth overrides as leading `-c k=v` flags before the
+    // subcommand (no-op when `auth` is empty — the default path).
+    for (k, v) in &auth.config {
+        cmd.arg("-c").arg(format!("{k}={v}"));
     }
     cmd.args(args);
-    if let Some(token) = http_bearer {
-        cmd.env(
-            "GIT_HTTP_EXTRAHEADER",
-            format!("Authorization: Bearer {token}"),
-        );
+    for (k, v) in &auth.env {
+        cmd.env(k, v);
     }
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| Error::Git(format!("failed to run git: {e}")))?;
 
@@ -1509,7 +1527,7 @@ impl GitEngine for GixEngine {
         &self,
         repo: &RepoId,
         remote: Option<&str>,
-        http_bearer: Option<&str>,
+        auth: &GitAuth,
         on_progress: &mut dyn FnMut(&str),
     ) -> Result<()> {
         let wd = self.workdir(repo)?;
@@ -1517,7 +1535,7 @@ impl GitEngine for GixEngine {
         if let Some(r) = remote {
             args.push(r);
         }
-        run_git_streaming(&wd, &args, http_bearer, on_progress)
+        run_git_streaming(&wd, &args, auth, on_progress)
     }
 
     fn pull(
@@ -1525,7 +1543,7 @@ impl GitEngine for GixEngine {
         repo: &RepoId,
         remote: Option<&str>,
         branch: Option<&str>,
-        http_bearer: Option<&str>,
+        auth: &GitAuth,
         on_progress: &mut dyn FnMut(&str),
     ) -> Result<()> {
         let wd = self.workdir(repo)?;
@@ -1537,7 +1555,7 @@ impl GitEngine for GixEngine {
                 args.push(b);
             }
         }
-        run_git_streaming(&wd, &args, http_bearer, on_progress)
+        run_git_streaming(&wd, &args, auth, on_progress)
     }
 
     fn push(
@@ -1547,7 +1565,7 @@ impl GitEngine for GixEngine {
         branch: Option<&str>,
         set_upstream: bool,
         force: bool,
-        http_bearer: Option<&str>,
+        auth: &GitAuth,
         on_progress: &mut dyn FnMut(&str),
     ) -> Result<()> {
         let wd = self.workdir(repo)?;
@@ -1585,7 +1603,7 @@ impl GitEngine for GixEngine {
                 args.push(b);
             }
         }
-        run_git_streaming(&wd, &args, http_bearer, on_progress)
+        run_git_streaming(&wd, &args, auth, on_progress)
     }
 
     fn ahead_behind(&self, repo: &RepoId) -> Result<Option<AheadBehind>> {
@@ -3030,6 +3048,54 @@ mod tests {
     }
 
     #[test]
+    fn git_auth_none_leaves_invocation_unchanged() {
+        // The default path must not perturb the command: an empty GitAuth adds no
+        // `-c` flags and no env, so a plain `status` still succeeds.
+        let dir = fixture_repo();
+        let mut sink = |_: &str| {};
+        run_git_streaming(dir.path(), &["status", "--porcelain"], &GitAuth::none(), &mut sink)
+            .expect("status with no auth overrides");
+    }
+
+    #[test]
+    fn git_auth_applies_config_flags() {
+        // Inject a config value git will reject, proving the `-c key=value` flag
+        // actually reached the child process. git's verbatim error is captured.
+        let dir = fixture_repo();
+        let auth = GitAuth {
+            config: vec![("core.bare".to_string(), "notabool".to_string())],
+            env: Vec::new(),
+        };
+        let mut sink = |_: &str| {};
+        let err = run_git_streaming(dir.path(), &["status"], &auth, &mut sink)
+            .expect_err("a bad injected -c value must fail");
+        assert!(
+            format!("{err}").contains("notabool"),
+            "git should reject the injected config, proving it was applied: {err}"
+        );
+    }
+
+    #[test]
+    fn git_auth_applies_env() {
+        // Point GIT_TRACE at a file via the env channel; git writing to it proves
+        // the env var reached the child (the same channel SSH-key overrides use).
+        let dir = fixture_repo();
+        let trace = dir.path().join("trace.log");
+        let auth = GitAuth {
+            config: Vec::new(),
+            env: vec![(
+                "GIT_TRACE".to_string(),
+                trace.to_string_lossy().into_owned(),
+            )],
+        };
+        let mut sink = |_: &str| {};
+        run_git_streaming(dir.path(), &["status", "--porcelain"], &auth, &mut sink)
+            .expect("status with GIT_TRACE env");
+        let logged = std::fs::read_to_string(&trace).unwrap_or_default();
+        assert!(!logged.is_empty(), "GIT_TRACE env should have been applied");
+    }
+
+    #[test]
     fn repo_identity_round_trips_local_config() {
         let dir = fixture_repo();
         let engine = GixEngine::new();
@@ -3977,7 +4043,7 @@ mod tests {
                 Some("main"),
                 true,
                 false,
-                None,
+                &GitAuth::none(),
                 &mut sink,
             )
             .expect("push main");
@@ -4003,7 +4069,7 @@ mod tests {
             "one unpushed local commit"
         );
         engine
-            .push(&id_a, None, None, false, false, None, &mut sink)
+            .push(&id_a, None, None, false, false, &GitAuth::none(), &mut sink)
             .expect("push second");
 
         // Clone B pushes a third commit; A fetches it → A is now behind by one.
@@ -4021,11 +4087,11 @@ mod tests {
         let engine_b = GixEngine::new();
         let id_b = engine_b.open(&b).expect("open clone b");
         engine_b
-            .push(&id_b, None, None, false, false, None, &mut sink)
+            .push(&id_b, None, None, false, false, &GitAuth::none(), &mut sink)
             .expect("push third from b");
 
         engine
-            .fetch(&id_a, Some("origin"), None, &mut sink)
+            .fetch(&id_a, Some("origin"), &GitAuth::none(), &mut sink)
             .expect("fetch into a");
         assert_eq!(
             engine.ahead_behind(&id_a).expect("ahead_behind"),
@@ -4087,7 +4153,7 @@ mod tests {
             "feature has no upstream yet"
         );
         engine
-            .push(&id, None, None, true, false, None, &mut sink)
+            .push(&id, None, None, true, false, &GitAuth::none(), &mut sink)
             .expect("push new branch with set_upstream");
         assert_eq!(
             engine.ahead_behind(&id).expect("ahead_behind"),
@@ -5244,7 +5310,7 @@ mod tests {
                 Some("main"),
                 true,
                 false,
-                None,
+                &GitAuth::none(),
                 &mut sink,
             )
             .expect("push");

@@ -282,6 +282,45 @@ pub struct RepoSettings {
     /// Default AI model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ai_model: Option<String>,
+    /// Per-repo git authentication override. `None` inherits the system git /
+    /// `gh auth` credential helper (the default). Set to pin a repo to a specific
+    /// GitHub account (HTTPS) or SSH key so pushes use the right credentials
+    /// without per-repo `gh` configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth: Option<RepoAuth>,
+}
+
+/// How a repo should authenticate for git transport, overriding the default
+/// system credential helper. Resolved server-side into transient `git -c` /
+/// env settings applied to a single network invocation (never global config).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value")]
+pub enum RepoAuth {
+    /// Use a registered GitHub account's PAT over HTTPS. Carries the account id
+    /// (see [`GitHubAccount::id`]); the token itself lives in the OS keychain.
+    Account(String),
+    /// Use a specific SSH private key (an absolute path) for transport.
+    SshKey(String),
+}
+
+/// A registered GitHub account (no secret). The PAT lives in the OS keychain
+/// under `github-token:<id>`; only this metadata is persisted in settings.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitHubAccount {
+    /// Stable key for keychain + repo overrides (the login at registration time).
+    pub id: String,
+    /// The GitHub login/handle, as reported by the API.
+    pub login: String,
+    /// `user.name` to stamp on commits in repos pinned to this account.
+    #[serde(default)]
+    pub name: String,
+    /// `user.email` to stamp on commits in repos pinned to this account.
+    #[serde(default)]
+    pub email: String,
+    /// Owners/orgs this account should match for auto-suggest (in addition to
+    /// `login`). E.g. the work account's company orgs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub known_owners: Vec<String>,
 }
 
 /// A repository's git identity (`user.name` / `user.email`), read from local
