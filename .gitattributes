@@ -1,0 +1,3 @@
+# Updater fixtures are verified byte-for-byte against a minisign signature.
+# Treat them as binary so Git never rewrites line endings on Windows.
+/src-tauri/tests/fixtures/** -text
