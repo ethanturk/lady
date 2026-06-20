@@ -177,6 +177,31 @@ export interface RepoSettings {
   ff?: FfMode | null;
   base_branch?: string | null;
   ai_model?: string | null;
+  auth?: RepoAuth | null;
+}
+
+/**
+ * Mirrors lady_proto::RepoAuth — a per-repo git transport override. `Account`
+ * carries a GitHub account id (HTTPS PAT in the keychain); `SshKey` an absolute
+ * private-key path. Absent = inherit the default system credential helper.
+ */
+export type RepoAuth =
+  | { kind: "Account"; value: string }
+  | { kind: "SshKey"; value: string };
+
+/** Mirrors lady_proto::GitHubAccount (metadata only — the PAT lives in keychain). */
+export interface GitHubAccount {
+  id: string;
+  login: string;
+  name: string;
+  email: string;
+  known_owners: string[];
+}
+
+/** Mirrors the backend `AccountSuggestion`. */
+export interface AccountSuggestion {
+  account: GitHubAccount;
+  reason: string;
 }
 
 /** Mirrors the backend `ResolvedRepoSettings` (the three layers in one call). */
