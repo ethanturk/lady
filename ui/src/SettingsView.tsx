@@ -554,7 +554,7 @@ const SettingsView: Component<{ repoId: RepoId | null }> = (props) => {
             <div>
               <p style={{ "font-size": "0.85rem", color: "var(--fg)" }}>
                 Connect to {forgeName()} with a personal access token (stored in your OS keychain —
-                never on disk or in logs).
+                never on disk or in logs). Used for PRs, notifications, and HTTPS fetch/push/pull.
               </p>
               <div style={{ display: "flex", gap: "0.4rem", "align-items": "center" }}>
                 <input

@@ -713,20 +713,23 @@ fn clone_repo(
 }
 
 /// Fetch from `remote` (default when `None`), streaming git progress to the
-/// frontend as `fetch-progress` events. Auth is the system git's (ADR-0006).
+/// frontend as `fetch-progress` events. Uses the hosting PAT for HTTPS when
+/// connected in Settings; otherwise falls back to system git credentials.
 #[tauri::command]
 fn fetch(
     repo: RepoId,
     remote: Option<String>,
     app: tauri::AppHandle,
     engine: State<GixEngine>,
+    hosting: State<'_, Hosting>,
 ) -> Result<(), String> {
     use tauri::Emitter;
     let mut emit = |line: &str| {
         let _ = app.emit("fetch-progress", line.to_string());
     };
+    let bearer = http_bearer_for_remote(&repo, remote.as_deref(), &engine, &hosting);
     engine
-        .fetch(&repo, remote.as_deref(), &mut emit)
+        .fetch(&repo, remote.as_deref(), bearer.as_deref(), &mut emit)
         .map_err(|e| e.to_string())
 }
 
@@ -739,13 +742,21 @@ fn pull(
     branch: Option<String>,
     app: tauri::AppHandle,
     engine: State<GixEngine>,
+    hosting: State<'_, Hosting>,
 ) -> Result<(), String> {
     use tauri::Emitter;
     let mut emit = |line: &str| {
         let _ = app.emit("fetch-progress", line.to_string());
     };
+    let bearer = http_bearer_for_remote(&repo, remote.as_deref(), &engine, &hosting);
     engine
-        .pull(&repo, remote.as_deref(), branch.as_deref(), &mut emit)
+        .pull(
+            &repo,
+            remote.as_deref(),
+            branch.as_deref(),
+            bearer.as_deref(),
+            &mut emit,
+        )
         .map_err(|e| e.to_string())
 }
 
@@ -753,6 +764,7 @@ fn pull(
 /// tracking ref; `force` allows a non-fast-forward update. Progress streams as
 /// `push-progress` events; rejections surface git's message verbatim.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 fn push(
     repo: RepoId,
     remote: Option<String>,
@@ -761,11 +773,13 @@ fn push(
     force: bool,
     app: tauri::AppHandle,
     engine: State<GixEngine>,
+    hosting: State<'_, Hosting>,
 ) -> Result<(), String> {
     use tauri::Emitter;
     let mut emit = |line: &str| {
         let _ = app.emit("push-progress", line.to_string());
     };
+    let bearer = http_bearer_for_remote(&repo, remote.as_deref(), &engine, &hosting);
     engine
         .push(
             &repo,
@@ -773,6 +787,7 @@ fn push(
             branch.as_deref(),
             set_upstream,
             force,
+            bearer.as_deref(),
             &mut emit,
         )
         .map_err(|e| e.to_string())
@@ -1206,6 +1221,29 @@ fn repo_identity_set(
 }
 
 // ── Hosting (GitHub) — PH3-011 / PH3-012 ────────────────────────────────────────
+
+/// When the target remote is HTTPS and a hosting token is stored for that
+/// forge, return it so fetch/pull/push can authenticate as the connected user
+/// instead of stale system credential-helper entries.
+fn http_bearer_for_remote(
+    repo: &RepoId,
+    remote: Option<&str>,
+    engine: &GixEngine,
+    hosting: &Hosting,
+) -> Option<String> {
+    let remote_name = remote.unwrap_or("origin");
+    let url = engine.remote_url(repo, remote_name).ok()?;
+    if !url.starts_with("https://") {
+        return None;
+    }
+    let provider = lady_hosting::provider_for(&url, &hosting.self_hosted)?;
+    hosting
+        .store
+        .get(provider.token_key())
+        .ok()
+        .flatten()
+        .filter(|t| !t.is_empty())
+}
 
 /// Managed hosting state: the OS-keychain token store + any self-hosted forge
 /// configs for resolution.

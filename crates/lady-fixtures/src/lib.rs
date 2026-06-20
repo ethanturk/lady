@@ -187,10 +187,18 @@ pub fn build_synthetic_repo(commits: usize, seed: u64) -> Option<SyntheticRepo> 
         std::fs::write(&fpath, line).ok()?;
         git(&["add", "-A"])?;
         git(&["commit", "-q", "-m", &format!("synthetic commit {i}")])?;
-        // Make a side branch partway through to add a little topology.
-        if i == commits / 2 {
-            git(&["branch", "side"])?;
-        }
+    }
+
+    // Verify the full history landed — partial builds must not reach benches.
+    let count = Command::new("git")
+        .args(["rev-list", "--count", "HEAD"])
+        .current_dir(&path)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    if count.as_deref() != Some(&commits.to_string()) {
+        return None;
     }
 
     // Leave the tree dirty for the status bench: one modified tracked file and

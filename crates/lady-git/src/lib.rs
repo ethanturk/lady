@@ -259,13 +259,15 @@ pub trait GitEngine: Send + Sync {
     fn delete_tag(&self, repo: &RepoId, name: &str) -> Result<()>;
 
     /// Fetch from `remote` (or the default remote when `None`), streaming
-    /// git's `--progress` output to `on_progress`. Credentials and transport
-    /// are entirely the system git's (ADR-0006): existing helpers / ssh-agent
-    /// are reused untouched. A failure returns git's message verbatim.
+    /// git's `--progress` output to `on_progress`. When `http_bearer` is set
+    /// (a hosting PAT), it is used for HTTPS instead of system credential
+    /// helpers. SSH remotes ignore it (ssh-agent). Failures return git's
+    /// message verbatim.
     fn fetch(
         &self,
         repo: &RepoId,
         remote: Option<&str>,
+        http_bearer: Option<&str>,
         on_progress: &mut dyn FnMut(&str),
     ) -> Result<()>;
 
@@ -276,6 +278,7 @@ pub trait GitEngine: Send + Sync {
         repo: &RepoId,
         remote: Option<&str>,
         branch: Option<&str>,
+        http_bearer: Option<&str>,
         on_progress: &mut dyn FnMut(&str),
     ) -> Result<()>;
 
@@ -283,8 +286,10 @@ pub trait GitEngine: Send + Sync {
     /// the branch has no upstream (or `set_upstream` is true), both are inferred
     /// from the current branch and configured remotes (`origin` as fallback).
     /// `set_upstream` records the tracking ref (`-u`); `force` allows a
-    /// non-fast-forward update (`--force`). Progress streams to `on_progress`;
-    /// rejections surface git's message verbatim.
+    /// non-fast-forward update (`--force`). When `http_bearer` is set (a
+    /// hosting PAT), it is used for HTTPS instead of system credential
+    /// helpers. Progress streams to `on_progress`; rejections surface git's
+    /// message verbatim.
     #[allow(clippy::too_many_arguments)]
     fn push(
         &self,
@@ -293,6 +298,7 @@ pub trait GitEngine: Send + Sync {
         branch: Option<&str>,
         set_upstream: bool,
         force: bool,
+        http_bearer: Option<&str>,
         on_progress: &mut dyn FnMut(&str),
     ) -> Result<()>;
 
@@ -587,6 +593,13 @@ impl GixEngine {
         self.workdir(id)
     }
 
+    /// Fetch URL for remote `name` (`git remote get-url`).
+    pub fn remote_url(&self, id: &RepoId, name: &str) -> Result<String> {
+        let wd = self.workdir(id)?;
+        let out = run_git(&wd, &["remote", "get-url", name])?;
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
     /// Read a file's contents at a revision (`<rev>:<path>`), as lossy UTF-8.
     /// `None` when the path does not exist at that rev (PH5-011 get_file_at).
     pub fn file_at(&self, id: &RepoId, rev: &str, path: &str) -> Result<Option<String>> {
@@ -815,19 +828,34 @@ pub(crate) fn run_git_stdin(workdir: &Path, args: &[&str], input: &[u8]) -> Resu
 /// lines are collected so a non-zero exit returns [`Error::Git`] carrying
 /// git's own message verbatim — auth failures, non-fast-forward rejections,
 /// etc. surface unchanged while progress still streams live (ADR-0003).
+///
+/// When `http_bearer` is set (a hosting PAT), it is sent as an HTTP
+/// `Authorization: Bearer` header and the system credential helper is
+/// disabled for this invocation so stale keychain/`gh` credentials cannot
+/// override the token the user connected in Settings.
 pub(crate) fn run_git_streaming(
     workdir: &Path,
     args: &[&str],
+    http_bearer: Option<&str>,
     on_line: &mut dyn FnMut(&str),
 ) -> Result<()> {
     use std::io::{BufRead, BufReader};
     use std::process::Stdio;
 
-    let mut child = Command::new("git")
-        .current_dir(workdir)
-        .args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+    let mut cmd = Command::new("git");
+    cmd.current_dir(workdir);
+    if http_bearer.is_some() {
+        cmd.arg("-c").arg("credential.helper=");
+    }
+    cmd.args(args);
+    if let Some(token) = http_bearer {
+        cmd.env(
+            "GIT_HTTP_EXTRAHEADER",
+            format!("Authorization: Bearer {token}"),
+        );
+    }
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd
         .spawn()
         .map_err(|e| Error::Git(format!("failed to run git: {e}")))?;
 
@@ -1481,6 +1509,7 @@ impl GitEngine for GixEngine {
         &self,
         repo: &RepoId,
         remote: Option<&str>,
+        http_bearer: Option<&str>,
         on_progress: &mut dyn FnMut(&str),
     ) -> Result<()> {
         let wd = self.workdir(repo)?;
@@ -1488,7 +1517,7 @@ impl GitEngine for GixEngine {
         if let Some(r) = remote {
             args.push(r);
         }
-        run_git_streaming(&wd, &args, on_progress)
+        run_git_streaming(&wd, &args, http_bearer, on_progress)
     }
 
     fn pull(
@@ -1496,6 +1525,7 @@ impl GitEngine for GixEngine {
         repo: &RepoId,
         remote: Option<&str>,
         branch: Option<&str>,
+        http_bearer: Option<&str>,
         on_progress: &mut dyn FnMut(&str),
     ) -> Result<()> {
         let wd = self.workdir(repo)?;
@@ -1507,7 +1537,7 @@ impl GitEngine for GixEngine {
                 args.push(b);
             }
         }
-        run_git_streaming(&wd, &args, on_progress)
+        run_git_streaming(&wd, &args, http_bearer, on_progress)
     }
 
     fn push(
@@ -1517,6 +1547,7 @@ impl GitEngine for GixEngine {
         branch: Option<&str>,
         set_upstream: bool,
         force: bool,
+        http_bearer: Option<&str>,
         on_progress: &mut dyn FnMut(&str),
     ) -> Result<()> {
         let wd = self.workdir(repo)?;
@@ -1554,7 +1585,7 @@ impl GitEngine for GixEngine {
                 args.push(b);
             }
         }
-        run_git_streaming(&wd, &args, on_progress)
+        run_git_streaming(&wd, &args, http_bearer, on_progress)
     }
 
     fn ahead_behind(&self, repo: &RepoId) -> Result<Option<AheadBehind>> {
@@ -3173,6 +3204,27 @@ mod tests {
         assert_eq!(two[0].summary, "commit 3");
     }
 
+    /// Same shape as the `repo_ops` bench: a 512-commit synthetic repo must walk
+    /// cleanly via gix (guards against CI bench flakes).
+    #[test]
+    fn walk_log_synthetic_512_commit_repo() {
+        let Some(repo) = lady_fixtures::build_synthetic_repo(512, 0xC0FFEE) else {
+            return; // no system git in this environment
+        };
+        let engine = GixEngine::new();
+        let id = engine.open(repo.path()).expect("open synthetic repo");
+        let commits = engine
+            .walk_log(
+                &id,
+                GraphQuery {
+                    start: None,
+                    limit: 512,
+                },
+            )
+            .expect("walk_log on 512-commit synthetic repo");
+        assert_eq!(commits.len(), 512);
+    }
+
     #[test]
     fn walk_log_errors_on_unknown_repo() {
         let engine = GixEngine::new();
@@ -3919,7 +3971,15 @@ mod tests {
 
         // First push sets upstream so ahead/behind has something to compare to.
         engine
-            .push(&id_a, Some("origin"), Some("main"), true, false, &mut sink)
+            .push(
+                &id_a,
+                Some("origin"),
+                Some("main"),
+                true,
+                false,
+                None,
+                &mut sink,
+            )
             .expect("push main");
         assert_eq!(
             engine.ahead_behind(&id_a).expect("ahead_behind"),
@@ -3943,7 +4003,7 @@ mod tests {
             "one unpushed local commit"
         );
         engine
-            .push(&id_a, None, None, false, false, &mut sink)
+            .push(&id_a, None, None, false, false, None, &mut sink)
             .expect("push second");
 
         // Clone B pushes a third commit; A fetches it → A is now behind by one.
@@ -3961,11 +4021,11 @@ mod tests {
         let engine_b = GixEngine::new();
         let id_b = engine_b.open(&b).expect("open clone b");
         engine_b
-            .push(&id_b, None, None, false, false, &mut sink)
+            .push(&id_b, None, None, false, false, None, &mut sink)
             .expect("push third from b");
 
         engine
-            .fetch(&id_a, Some("origin"), &mut sink)
+            .fetch(&id_a, Some("origin"), None, &mut sink)
             .expect("fetch into a");
         assert_eq!(
             engine.ahead_behind(&id_a).expect("ahead_behind"),
@@ -4027,7 +4087,7 @@ mod tests {
             "feature has no upstream yet"
         );
         engine
-            .push(&id, None, None, true, false, &mut sink)
+            .push(&id, None, None, true, false, None, &mut sink)
             .expect("push new branch with set_upstream");
         assert_eq!(
             engine.ahead_behind(&id).expect("ahead_behind"),
@@ -5178,7 +5238,15 @@ mod tests {
         let id = engine.open(&a).expect("open");
         let mut sink = |_: &str| {};
         engine
-            .push(&id, Some("origin"), Some("main"), true, false, &mut sink)
+            .push(
+                &id,
+                Some("origin"),
+                Some("main"),
+                true,
+                false,
+                None,
+                &mut sink,
+            )
             .expect("push");
 
         // A local branch with no upstream is omitted from the map.
