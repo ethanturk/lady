@@ -1526,10 +1526,8 @@ impl GitEngine for GixEngine {
         // `git push -u` (and the first push of a branch with no upstream) needs
         // an explicit `remote branch` refspec — git won't infer one from `-u` alone.
         let upstream = has_upstream(&wd);
-        let need_target = set_upstream
-            || !upstream
-            || remote_owned.is_some()
-            || branch_owned.is_some();
+        let need_target =
+            set_upstream || !upstream || remote_owned.is_some() || branch_owned.is_some();
         if need_target && (remote_owned.is_none() || branch_owned.is_none()) {
             let branch_name = match branch_owned.clone() {
                 Some(b) => b,

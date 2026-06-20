@@ -1,7 +1,7 @@
 import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import type { Component, JSX } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
-import type { ChangeKind, DiffSpec, FileStatus, RepoId, WorkingTree } from "./commands";
+import type { AheadBehind, ChangeKind, DiffSpec, FileStatus, RepoId, WorkingTree } from "./commands";
 import DiffView from "./DiffView";
 import ContextMenu from "./ContextMenu";
 import type { MenuEntry } from "./ContextMenu";
@@ -154,8 +154,8 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
       .sort()
       .join("\n");
 
-  const reload = () => {
-    setErr(null);
+  const reload = (clearErr = false) => {
+    if (clearErr) setErr(null);
     invoke<WorkingTree>("status", { repo: props.repoId })
       .then((newWt) => {
         const prev = wt();
@@ -190,8 +190,8 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
       .catch(() => {});
   });
 
-  const afterMutation = () => {
-    reload();
+  const afterMutation = (clearErr = true) => {
+    reload(clearErr);
     // The selected file's spec is unchanged, so bump a nonce to force the diff
     // pane to refetch (a staged/discarded hunk then disappears from it).
     setDiffNonce((n) => n + 1);
@@ -428,19 +428,30 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
 
   const doCommit = async (push: boolean) => {
     if (!canCommit()) return;
+    setErr(null);
     try {
       await invoke<string>("commit", { repo: props.repoId, message: message(), amend: amend(), sign: sign() });
       setSubject("");
       setBody("");
       setAmend(false);
       if (push) {
+        const ab = await invoke<AheadBehind | null>("ahead_behind", { repo: props.repoId }).catch(() => null);
         try {
-          await invoke("push", { repo: props.repoId, remote: null, branch: null, setUpstream: false, force: false });
-        } catch {
-          // No upstream yet → push and set it.
-          await invoke("push", { repo: props.repoId, remote: null, branch: null, setUpstream: true, force: false });
+          await invoke("push", {
+            repo: props.repoId,
+            remote: null,
+            branch: null,
+            setUpstream: ab === null,
+            force: false,
+          });
+          props.onResult?.({ ok: true, message: "Committed and pushed." });
+        } catch (e) {
+          const msg = String(e);
+          setErr(`Push failed: ${msg}`);
+          props.onResult?.({ ok: false, message: `Committed, but push failed: ${msg}` });
+          afterMutation(false);
+          return;
         }
-        props.onResult?.({ ok: true, message: "Committed and pushed." });
       }
       afterMutation();
     } catch (e) {
