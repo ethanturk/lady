@@ -3053,8 +3053,13 @@ mod tests {
         // `-c` flags and no env, so a plain `status` still succeeds.
         let dir = fixture_repo();
         let mut sink = |_: &str| {};
-        run_git_streaming(dir.path(), &["status", "--porcelain"], &GitAuth::none(), &mut sink)
-            .expect("status with no auth overrides");
+        run_git_streaming(
+            dir.path(),
+            &["status", "--porcelain"],
+            &GitAuth::none(),
+            &mut sink,
+        )
+        .expect("status with no auth overrides");
     }
 
     #[test]

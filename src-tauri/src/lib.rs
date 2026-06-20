@@ -787,7 +787,13 @@ fn pull(
         let _ = app.emit("fetch-progress", line.to_string());
     };
     engine
-        .pull(&repo, remote.as_deref(), branch.as_deref(), &auth, &mut emit)
+        .pull(
+            &repo,
+            remote.as_deref(),
+            branch.as_deref(),
+            &auth,
+            &mut emit,
+        )
         .map_err(|e| e.to_string())
 }
 
@@ -1439,7 +1445,10 @@ fn suggest_repo_account(
     });
     Ok(matched.map(|a| AccountSuggestion {
         account: a.clone(),
-        reason: format!("Remote owner \u{201c}{}\u{201d} matches this account.", slug.owner),
+        reason: format!(
+            "Remote owner \u{201c}{}\u{201d} matches this account.",
+            slug.owner
+        ),
     }))
 }
 
@@ -1830,12 +1839,13 @@ async fn github_create_pr(
             provider.kind().label()
         )
     })?;
-    let token = repo_forge_token(&repo, &engine, provider.as_ref(), &hosting)?.ok_or_else(|| {
-        format!(
-            "Not connected to {} — connect in Settings first.",
-            provider.kind().label()
-        )
-    })?;
+    let token =
+        repo_forge_token(&repo, &engine, provider.as_ref(), &hosting)?.ok_or_else(|| {
+            format!(
+                "Not connected to {} — connect in Settings first.",
+                provider.kind().label()
+            )
+        })?;
     let pr = lady_hosting::NewPullRequest {
         head,
         base,
@@ -2350,7 +2360,10 @@ mod tests {
             Ok(self.0.lock().unwrap().get(key).cloned())
         }
         fn set(&self, key: &str, value: &str) -> lady_hosting::Result<()> {
-            self.0.lock().unwrap().insert(key.to_string(), value.to_string());
+            self.0
+                .lock()
+                .unwrap()
+                .insert(key.to_string(), value.to_string());
             Ok(())
         }
         fn delete(&self, key: &str) -> lady_hosting::Result<()> {
