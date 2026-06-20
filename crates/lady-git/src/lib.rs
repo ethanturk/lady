@@ -279,10 +279,12 @@ pub trait GitEngine: Send + Sync {
         on_progress: &mut dyn FnMut(&str),
     ) -> Result<()>;
 
-    /// Push the current branch to `remote`/`branch` (defaults to the configured
-    /// upstream when `None`). `set_upstream` records the tracking ref (`-u`);
-    /// `force` allows a non-fast-forward update (`--force`). Progress streams to
-    /// `on_progress`; rejections surface git's message verbatim.
+    /// Push the current branch to `remote`/`branch`. When either is omitted and
+    /// the branch has no upstream (or `set_upstream` is true), both are inferred
+    /// from the current branch and configured remotes (`origin` as fallback).
+    /// `set_upstream` records the tracking ref (`-u`); `force` allows a
+    /// non-fast-forward update (`--force`). Progress streams to `on_progress`;
+    /// rejections surface git's message verbatim.
     #[allow(clippy::too_many_arguments)]
     fn push(
         &self,
@@ -855,6 +857,44 @@ pub(crate) fn run_git_streaming(
         }));
     }
     Ok(())
+}
+
+/// Short name of the checked-out branch (`HEAD` when detached).
+fn current_branch_name(workdir: &Path) -> Result<String> {
+    let out = run_git(workdir, &["rev-parse", "--abbrev-ref", "HEAD"])?;
+    let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if name == "HEAD" {
+        return Err(Error::Git("cannot push: HEAD is detached".into()));
+    }
+    Ok(name)
+}
+
+/// Whether the current branch has an upstream configured.
+fn has_upstream(workdir: &Path) -> bool {
+    run_git(workdir, &["rev-parse", "--abbrev-ref", "@{upstream}"]).is_ok()
+}
+
+/// Remote to push `branch` to: per-branch remote, `remote.pushDefault`, then `origin`.
+fn default_push_remote(workdir: &Path, branch: &str) -> Result<String> {
+    let branch_remote_key = format!("branch.{branch}.remote");
+    if let Ok(out) = run_git(workdir, &["config", "--get", &branch_remote_key]) {
+        let r = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !r.is_empty() {
+            return Ok(r);
+        }
+    }
+    if let Ok(out) = run_git(workdir, &["config", "--get", "remote.pushDefault"]) {
+        let r = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !r.is_empty() {
+            return Ok(r);
+        }
+    }
+    if run_git(workdir, &["remote", "get-url", "origin"]).is_ok() {
+        return Ok("origin".into());
+    }
+    Err(Error::Git(format!(
+        "no remote configured to push branch '{branch}'"
+    )))
 }
 
 impl Default for GixEngine {
@@ -1480,6 +1520,29 @@ impl GitEngine for GixEngine {
         on_progress: &mut dyn FnMut(&str),
     ) -> Result<()> {
         let wd = self.workdir(repo)?;
+        let mut remote_owned = remote.map(str::to_string);
+        let mut branch_owned = branch.map(str::to_string);
+
+        // `git push -u` (and the first push of a branch with no upstream) needs
+        // an explicit `remote branch` refspec — git won't infer one from `-u` alone.
+        let upstream = has_upstream(&wd);
+        let need_target = set_upstream
+            || !upstream
+            || remote_owned.is_some()
+            || branch_owned.is_some();
+        if need_target && (remote_owned.is_none() || branch_owned.is_none()) {
+            let branch_name = match branch_owned.clone() {
+                Some(b) => b,
+                None => current_branch_name(&wd)?,
+            };
+            if branch_owned.is_none() {
+                branch_owned = Some(branch_name.clone());
+            }
+            if remote_owned.is_none() {
+                remote_owned = Some(default_push_remote(&wd, &branch_name)?);
+            }
+        }
+
         let mut args: Vec<&str> = vec!["push", "--progress"];
         if set_upstream {
             args.push("-u");
@@ -1487,9 +1550,9 @@ impl GitEngine for GixEngine {
         if force {
             args.push("--force");
         }
-        if let Some(r) = remote {
+        if let Some(r) = remote_owned.as_deref() {
             args.push(r);
-            if let Some(b) = branch {
+            if let Some(b) = branch_owned.as_deref() {
                 args.push(b);
             }
         }
@@ -3926,6 +3989,55 @@ mod tests {
             engine.ahead_behind(&id).expect("ahead_behind"),
             None,
             "fixture's main tracks no upstream"
+        );
+    }
+
+    /// First push of a branch with no upstream must pass `origin <branch>` —
+    /// `git push -u` alone fails with "no upstream branch".
+    #[test]
+    fn push_new_branch_sets_upstream_on_remote() {
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let root = tmp.path();
+        let remote = root.join("remote.git");
+        git(root, &["init", "-q", "--bare", "-b", "main", "remote.git"]);
+
+        let a = root.join("a");
+        git(
+            root,
+            &["clone", "-q", remote.to_str().unwrap(), a.to_str().unwrap()],
+        );
+        git(&a, &["config", "user.name", "Lady Test"]);
+        git(&a, &["config", "user.email", "test@example.com"]);
+        git(&a, &["config", "commit.gpgsign", "false"]);
+        std::fs::write(a.join("file.txt"), "v1\n").expect("write");
+        git(&a, &["add", "."]);
+        git(&a, &["commit", "-q", "-m", "first"]);
+        git(&a, &["push", "-u", "origin", "main"]);
+
+        git(&a, &["checkout", "-q", "-b", "feature"]);
+        std::fs::write(a.join("file.txt"), "v2\n").expect("write");
+        git(&a, &["add", "."]);
+        git(&a, &["commit", "-q", "-m", "on feature"]);
+
+        let engine = GixEngine::new();
+        let id = engine.open(&a).expect("open clone a");
+        let mut sink = |_: &str| {};
+
+        assert_eq!(
+            engine.ahead_behind(&id).expect("ahead_behind"),
+            None,
+            "feature has no upstream yet"
+        );
+        engine
+            .push(&id, None, None, true, false, &mut sink)
+            .expect("push new branch with set_upstream");
+        assert_eq!(
+            engine.ahead_behind(&id).expect("ahead_behind"),
+            Some(AheadBehind {
+                ahead: 0,
+                behind: 0
+            }),
+            "upstream recorded after first push"
         );
     }
 

@@ -84,7 +84,17 @@ mod tests {
         let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures")
             .join(name);
-        std::fs::read(p).expect("read fixture")
+        let bytes = std::fs::read(p).expect("read fixture");
+        // Manifests are signed with LF newlines. Windows checkouts may still carry
+        // CRLF when core.autocrlf is on and .gitattributes has not been applied
+        // yet — normalize so verification matches what minisign signed.
+        if name.ends_with(".json") && bytes.contains(&b'\r') {
+            return String::from_utf8(bytes)
+                .expect("fixture utf-8")
+                .replace("\r\n", "\n")
+                .into_bytes();
+        }
+        bytes
     }
 
     /// Decode a Tauri `.sig` (base64 of a minisign signature file) into a
