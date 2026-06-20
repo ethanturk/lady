@@ -1,7 +1,8 @@
 import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
 import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
-import type { ApplyOutcome, ConflictState, OpenRepo, RebaseOutcome, RecentRepo, RefInfo, WorkingTree } from "./commands";
+import type { AccountSuggestion, ApplyOutcome, ConflictState, OpenRepo, RebaseOutcome, RecentRepo, RefInfo, WorkingTree } from "./commands";
+import { assignRepoAccount, dismissRepoAccountSuggestion, suggestRepoAccount } from "./accounts";
 import AllCommitsView from "./AllCommitsView";
 import BlameView from "./BlameView";
 import FileHistory from "./FileHistory";
@@ -109,6 +110,30 @@ const App: Component = () => {
 
   const repoId = () => active()?.id ?? null;
   const repoName = () => (active() ? baseName(active()!.path) : null);
+
+  // Confirm-once GitHub account suggestion: when a repo with no auth override is
+  // opened and its remote owner matches a known account, offer to pin it.
+  const [acctSuggestion, setAcctSuggestion] = createSignal<AccountSuggestion | null>(null);
+  createEffect(() => {
+    const repo = repoId();
+    setAcctSuggestion(null);
+    if (!repo) return;
+    suggestRepoAccount(repo).then(setAcctSuggestion).catch(() => {});
+  });
+  const acceptSuggestion = () => {
+    const repo = repoId();
+    const s = acctSuggestion();
+    if (!repo || !s) return;
+    assignRepoAccount(repo, s.account.id)
+      .then(() => setAcctSuggestion(null))
+      .catch((e) => setErr(String(e)));
+  };
+  const dismissSuggestion = () => {
+    const repo = repoId();
+    if (!repo) return;
+    dismissRepoAccountSuggestion(repo).catch(() => {});
+    setAcctSuggestion(null);
+  };
   // The Head ref's name is the checked-out branch ("HEAD" when detached).
   const currentBranchName = () => {
     const h = refs().find((r) => r.kind === "Head")?.name;
@@ -548,6 +573,16 @@ const App: Component = () => {
           <span>{opConflicts().join(", ")}</span>
           <button style={{ "margin-left": "0.5rem" }} onClick={() => setOverlay("conflicts")}>Resolve</button>
           <button style={{ "margin-left": "0.5rem" }} onClick={abortSequencer}>Abort</button>
+        </div>
+      </Show>
+      <Show when={acctSuggestion()}>
+        <div role="status" style={{ ...bar, border: "1px solid var(--border)", background: "var(--surface-2)" }}>
+          <span>
+            Use your <strong>{acctSuggestion()!.account.login}</strong> GitHub account for this repo?{" "}
+            <span style={{ color: "var(--tx3)" }}>{acctSuggestion()!.reason}</span>
+          </span>
+          <button style={{ "margin-left": "0.5rem" }} onClick={acceptSuggestion}>Use it</button>
+          <button style={{ "margin-left": "0.5rem" }} onClick={dismissSuggestion}>Not now</button>
         </div>
       </Show>
 

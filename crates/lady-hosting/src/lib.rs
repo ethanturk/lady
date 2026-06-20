@@ -83,6 +83,13 @@ impl ForgeKind {
     }
 }
 
+/// Keychain key for a specific GitHub account's PAT (multi-account, GitHub only).
+/// The legacy single-account key remains [`ForgeKind::GitHub`]'s `token_key`
+/// (`"github-token"`); per-account tokens are namespaced under it by id.
+pub fn github_account_token_key(id: &str) -> String {
+    format!("github-token:{id}")
+}
+
 /// A repository identifier on a forge. `owner`/`repo` for GitHub/GitLab/
 /// Bitbucket; Azure DevOps additionally carries `project` (the slug is
 /// org=`owner` / project / repo).
