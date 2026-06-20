@@ -42,6 +42,8 @@ import {
   uiPadding,
   wrapDiff,
   setWrapDiff,
+  autoUpdateCheck,
+  setAutoUpdateCheck,
 } from "./prefs";
 import type { Accent, SizeStep, ThemeMode } from "./prefs";
 import {
@@ -658,6 +660,10 @@ const SettingsView: Component<{ repoId: RepoId | null }> = (props) => {
       </div>
 
       <h3 style={{ margin: "1.2rem 0 0.4rem", "font-size": "0.95rem" }}>Updates</h3>
+      <label style={{ display: "flex", gap: "0.45rem", "align-items": "center", "font-size": "0.85rem", margin: "0 0 0.5rem" }}>
+        <input type="checkbox" checked={autoUpdateCheck()} onChange={(e) => setAutoUpdateCheck(e.currentTarget.checked)} />
+        Check for latest updates automatically
+      </label>
       <div style={{ display: "flex", gap: "0.4rem", "align-items": "center" }}>
         <button onClick={checkUpdates} disabled={updBusy()} style={{ padding: "0.3rem 0.9rem" }}>
           {updBusy() ? "Working…" : "Check for updates"}

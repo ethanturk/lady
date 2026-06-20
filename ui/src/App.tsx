@@ -17,7 +17,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import BranchMenu from "./BranchMenu";
 import type { BranchMenuState, PromptSpec } from "./BranchMenu";
 import { addWorktreeFor, checkoutBranch, createBranchAt, createTagAt, deleteBranch } from "./branchActions";
-import { hideResizers, isNarrow, setSettingsWidth, setSidebarWidth, settingsWidth, sidebarWidth } from "./prefs";
+import { autoUpdateCheck, hideResizers, isNarrow, setSettingsWidth, setSidebarWidth, settingsWidth, sidebarWidth } from "./prefs";
 import ConflictResolver from "./ConflictResolver";
 import InteractiveRebase from "./InteractiveRebase";
 import RecomposeView from "./RecomposeView";
@@ -114,6 +114,21 @@ const App: Component = () => {
   // Confirm-once GitHub account suggestion: when a repo with no auth override is
   // opened and its remote owner matches a known account, offer to pin it.
   const [acctSuggestion, setAcctSuggestion] = createSignal<AccountSuggestion | null>(null);
+
+  // Launch-time update prompt (PH6-008). The check runs on mount when enabled;
+  // installing stays an explicit click (banner button), never silent.
+  type UpdateInfo = { available: boolean; version: string | null; notes: string | null; current: string };
+  const [updateAvail, setUpdateAvail] = createSignal<UpdateInfo | null>(null);
+  const [updateBusy, setUpdateBusy] = createSignal(false);
+  const installLaunchUpdate = () => {
+    if (!confirm("Download and install the update now? Lady will restart.")) return;
+    setUpdateBusy(true);
+    // On success the app restarts mid-call; we mainly surface failures.
+    invoke("install_update").catch((e) => {
+      setErr(String(e));
+      setUpdateBusy(false);
+    });
+  };
   createEffect(() => {
     const repo = repoId();
     setAcctSuggestion(null);
@@ -285,6 +300,15 @@ const App: Component = () => {
         .catch(() => {});
     pollUnread();
     setInterval(pollUnread, 60_000);
+    // Launch-time update check (opt-out via Settings). Read-only — only flips
+    // the banner; the user installs explicitly. Failures stay silent.
+    if (autoUpdateCheck()) {
+      invoke<UpdateInfo>("check_for_updates")
+        .then((info) => {
+          if (info.available) setUpdateAvail(info);
+        })
+        .catch(() => {});
+    }
   });
 
   // Reload refs + file list whenever the active repo changes; reset navigation.
@@ -583,6 +607,18 @@ const App: Component = () => {
           </span>
           <button style={{ "margin-left": "0.5rem" }} onClick={acceptSuggestion}>Use it</button>
           <button style={{ "margin-left": "0.5rem" }} onClick={dismissSuggestion}>Not now</button>
+        </div>
+      </Show>
+
+      <Show when={updateAvail()}>
+        <div role="status" style={{ ...bar, border: "1px solid var(--border)", background: "var(--surface-2)" }}>
+          <span>
+            Update available: <strong>v{updateAvail()!.version}</strong> (you have v{updateAvail()!.current})
+          </span>
+          <button style={{ "margin-left": "0.5rem" }} onClick={installLaunchUpdate} disabled={updateBusy()}>
+            {updateBusy() ? "Installing…" : "Update & restart"}
+          </button>
+          <button style={{ "margin-left": "0.5rem" }} onClick={() => setUpdateAvail(null)} disabled={updateBusy()}>Later</button>
         </div>
       </Show>
 

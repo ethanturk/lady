@@ -37,6 +37,23 @@ export function setWrapDiff(v: boolean): void {
   localStorage.setItem(WRAP_KEY, v ? "1" : "0");
 }
 
+// ── Auto-update check on launch ──────────────────────────────────────────────
+// On by default: at launch Lady checks the signed update endpoint and, if a
+// newer version exists, shows a non-blocking banner. Installing stays an
+// explicit user click — the check is the only thing automated here.
+const AUTO_UPDATE_KEY = "lady-auto-update-check";
+const [autoUpdateCheck, setAutoUpdateCheckSignal] = createSignal<boolean>(
+  localStorage.getItem(AUTO_UPDATE_KEY) !== "0",
+);
+
+export { autoUpdateCheck };
+
+/** Toggle the launch-time check for new releases (persisted). */
+export function setAutoUpdateCheck(v: boolean): void {
+  setAutoUpdateCheckSignal(v);
+  localStorage.setItem(AUTO_UPDATE_KEY, v ? "1" : "0");
+}
+
 // ── Resizable Staged pane height (Local Changes) ─────────────────────────────
 const STAGED_H_KEY = "lady-staged-height";
 const storedH = Number(localStorage.getItem(STAGED_H_KEY));
