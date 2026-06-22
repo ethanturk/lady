@@ -61,13 +61,18 @@ pub fn ai_get_config() -> Result<AiConfig, String> {
 
 /// Persist the AI config (provider, models, endpoints). Consent is managed by
 /// [`ai_grant_consent`]; it is preserved here so a config save cannot silently
-/// grant or revoke it.
+/// grant or revoke it. The per-repo AI toggle and overrides are also preserved
+/// so saving provider/model settings never disables AI for a repo.
 #[tauri::command]
 pub fn ai_set_config(config: AiConfig) -> Result<(), String> {
     let mut settings = load_settings_inner();
     let consented = settings.ai.consented.clone();
+    let ai_repos = settings.ai_repos.clone();
+    let repo_overrides = settings.repo_overrides.clone();
     settings.ai = config;
     settings.ai.consented = consented;
+    settings.ai_repos = ai_repos;
+    settings.repo_overrides = repo_overrides;
     write_settings(&settings)
 }
 
@@ -266,6 +271,7 @@ fn active_budget() -> Budget {
         .map(|k| match k {
             // User-configurable — local models range from 8k to 128k+.
             ProviderKind::OpenAiCompatible => cfg.openai_context_window.max(2048),
+            ProviderKind::AnthropicCompatible => cfg.anthropic_context_window.max(2048),
             ProviderKind::Mistral => 32_000,
             ProviderKind::Anthropic => 200_000,
             ProviderKind::Gemini => 1_000_000,

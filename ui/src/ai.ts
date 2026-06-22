@@ -8,6 +8,7 @@ export type ProviderKind =
   | "OpenAiCompatible"
   | "OpenAi"
   | "Anthropic"
+  | "AnthropicCompatible"
   | "Gemini"
   | "AzureOpenAi"
   | "Mistral";
@@ -16,6 +17,7 @@ export const PROVIDERS: ProviderKind[] = [
   "OpenAiCompatible",
   "OpenAi",
   "Anthropic",
+  "AnthropicCompatible",
   "Gemini",
   "AzureOpenAi",
   "Mistral",
@@ -25,14 +27,16 @@ export const PROVIDER_LABEL: Record<ProviderKind, string> = {
   OpenAiCompatible: "OpenAI Compatible",
   OpenAi: "OpenAI",
   Anthropic: "Anthropic Claude",
+  AnthropicCompatible: "Anthropic Compatible",
   Gemini: "Google Gemini",
   AzureOpenAi: "Azure OpenAI",
   Mistral: "Mistral",
 };
 
-// The OpenAI-compatible endpoint is the consent-free, local-first path (point it
-// only at servers you trust); every other provider sends data off-machine.
-export const isRemote = (p: ProviderKind): boolean => p !== "OpenAiCompatible";
+// The compatible endpoints are consent-free, local-first paths (point them only
+// at servers you trust); every other provider sends data off-machine.
+export const isRemote = (p: ProviderKind): boolean =>
+  p !== "OpenAiCompatible" && p !== "AnthropicCompatible";
 
 export interface AiConfig {
   active: ProviderKind | null;
@@ -40,6 +44,8 @@ export interface AiConfig {
   default_model: string | null;
   openai_base_url: string;
   openai_context_window: number;
+  anthropic_base_url: string;
+  anthropic_context_window: number;
   azure_endpoint: string;
   azure_deployment: string;
   consented: ProviderKind[];

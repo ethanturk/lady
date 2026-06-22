@@ -99,8 +99,8 @@ impl AiTask {
     }
 }
 
-/// Which provider backs a request. `Ollama` is local-first (no consent gate);
-/// the rest are remote and require consent + redaction (ADR-0009).
+/// Which provider backs a request. The "Compatible" kinds are local-first (no
+/// consent gate); the rest are remote and require consent + redaction (ADR-0009).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub enum ProviderKind {
     /// Any OpenAI-compatible Chat Completions server (Ollama, LM Studio, vLLM,
@@ -113,6 +113,10 @@ pub enum ProviderKind {
     OpenAi,
     /// Anthropic Claude Messages.
     Anthropic,
+    /// Any Anthropic Claude Messages-compatible server (Bedrock Agent, a
+    /// gateway, llama.cpp's `/v1/messages`, …) at a user-set base URL. Treated
+    /// as local-first like OpenAiCompatible.
+    AnthropicCompatible,
     /// Google Gemini `generateContent`.
     Gemini,
     /// Azure OpenAI (deployment-scoped Chat Completions).
@@ -123,10 +127,11 @@ pub enum ProviderKind {
 
 impl ProviderKind {
     /// Every provider kind, for UI enumeration.
-    pub const ALL: [ProviderKind; 6] = [
+    pub const ALL: [ProviderKind; 7] = [
         ProviderKind::OpenAiCompatible,
         ProviderKind::OpenAi,
         ProviderKind::Anthropic,
+        ProviderKind::AnthropicCompatible,
         ProviderKind::Gemini,
         ProviderKind::AzureOpenAi,
         ProviderKind::Mistral,
@@ -138,6 +143,7 @@ impl ProviderKind {
             ProviderKind::OpenAiCompatible => "OpenAI Compatible",
             ProviderKind::OpenAi => "OpenAI",
             ProviderKind::Anthropic => "Anthropic Claude",
+            ProviderKind::AnthropicCompatible => "Anthropic Compatible",
             ProviderKind::Gemini => "Google Gemini",
             ProviderKind::AzureOpenAi => "Azure OpenAI",
             ProviderKind::Mistral => "Mistral",
@@ -145,20 +151,21 @@ impl ProviderKind {
     }
 
     /// Whether using this provider sends data off the machine. The
-    /// user-configured OpenAI-compatible endpoint is the consent-free,
-    /// redaction-optional path (like the old local Ollama option).
+    /// user-configured compatible endpoints are the consent-free,
+    /// redaction-optional paths (point them only at servers you trust).
     pub fn is_remote(self) -> bool {
-        !matches!(self, ProviderKind::OpenAiCompatible)
+        !matches!(self, ProviderKind::OpenAiCompatible | ProviderKind::AnthropicCompatible)
     }
 
     /// The keychain key under which this provider's API key is stored. The
-    /// OpenAI-compatible endpoint may need a key (remote gateways) or none
-    /// (local servers) — it is optional there.
+    /// compatible endpoints may need a key (remote gateways) or none (local
+    /// servers) — it is optional there.
     pub fn key_id(self) -> Option<&'static str> {
         match self {
             ProviderKind::OpenAiCompatible => Some("ai-openai-compat-key"),
             ProviderKind::OpenAi => Some("ai-openai-key"),
             ProviderKind::Anthropic => Some("ai-anthropic-key"),
+            ProviderKind::AnthropicCompatible => Some("ai-anthropic-compat-key"),
             ProviderKind::Gemini => Some("ai-gemini-key"),
             ProviderKind::AzureOpenAi => Some("ai-azure-key"),
             ProviderKind::Mistral => Some("ai-mistral-key"),
@@ -169,7 +176,7 @@ impl ProviderKind {
     pub fn default_model(self) -> &'static str {
         match self {
             // No universal default for a generic server — the user sets it.
-            ProviderKind::OpenAiCompatible => "",
+            ProviderKind::OpenAiCompatible | ProviderKind::AnthropicCompatible => "",
             ProviderKind::OpenAi => "gpt-4o-mini",
             ProviderKind::Anthropic => "claude-3-5-sonnet-latest",
             ProviderKind::Gemini => "gemini-1.5-flash",
@@ -203,6 +210,14 @@ pub struct AiConfig {
     /// user-configurable; default is a conservative 32k.
     #[serde(default = "default_openai_context_window")]
     pub openai_context_window: usize,
+    /// Base URL of the Anthropic-compatible server (must include the API version
+    /// segment, e.g. `http://localhost:11434/v1`).
+    #[serde(default = "default_anthropic_base_url")]
+    pub anthropic_base_url: String,
+    /// Context window (tokens) advertised by the Anthropic-compatible model,
+    /// used to size the diff budget. Default is a conservative 32k.
+    #[serde(default = "default_anthropic_context_window")]
+    pub anthropic_context_window: usize,
     /// Azure OpenAI resource endpoint (e.g. `https://my.openai.azure.com`).
     #[serde(default)]
     pub azure_endpoint: String,
@@ -224,6 +239,16 @@ fn default_openai_context_window() -> usize {
     32_768
 }
 
+fn default_anthropic_base_url() -> String {
+    // Anthropic-compatible servers (Bedrock Agent, llama.cpp, a gateway, …) have
+    // no single local default; the user must set the base URL explicitly.
+    String::new()
+}
+
+fn default_anthropic_context_window() -> usize {
+    32_768
+}
+
 impl Default for AiConfig {
     fn default() -> Self {
         AiConfig {
@@ -232,6 +257,8 @@ impl Default for AiConfig {
             default_model: None,
             openai_base_url: default_openai_base_url(),
             openai_context_window: default_openai_context_window(),
+            anthropic_base_url: default_anthropic_base_url(),
+            anthropic_context_window: default_anthropic_context_window(),
             azure_endpoint: String::new(),
             azure_deployment: String::new(),
             consented: Vec::new(),
@@ -387,6 +414,10 @@ pub fn build_provider(
         // Key is optional (local servers ignore it); pass through whatever is set.
         ProviderKind::OpenAiCompatible => Ok(Box::new(OpenAiProvider::with_base_url(
             cfg.openai_base_url.trim_end_matches('/'),
+            api_key.unwrap_or_default(),
+        ))),
+        ProviderKind::AnthropicCompatible => Ok(Box::new(AnthropicProvider::with_base_url(
+            cfg.anthropic_base_url.trim_end_matches('/'),
             api_key.unwrap_or_default(),
         ))),
         ProviderKind::OpenAi => Ok(Box::new(OpenAiProvider::new(require_key(kind, api_key)?))),
@@ -618,6 +649,7 @@ mod tests {
     fn consent_required_only_for_remote() {
         let cfg = AiConfig::default();
         assert!(cfg.has_consent(ProviderKind::OpenAiCompatible));
+        assert!(cfg.has_consent(ProviderKind::AnthropicCompatible));
         assert!(!cfg.has_consent(ProviderKind::OpenAi));
         let cfg = AiConfig {
             consented: vec![ProviderKind::OpenAi],

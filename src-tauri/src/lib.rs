@@ -2583,6 +2583,31 @@ mod tests {
     }
 
     #[test]
+    fn settings_round_trip_preserves_ai_repos() {
+        let mut s = Settings::default();
+        s.ai_repos.push("/repo/enabled".to_string());
+        s.ai.active = Some(lady_ai::ProviderKind::OpenAi);
+
+        let toml = toml::to_string_pretty(&s).expect("serialize settings");
+        let mut back: Settings = toml::from_str(&toml).expect("deserialize settings");
+
+        // Simulate ai_set_config: replace ai config but preserve ai_repos.
+        let consented = back.ai.consented.clone();
+        let ai_repos = back.ai_repos.clone();
+        let repo_overrides = back.repo_overrides.clone();
+        back.ai = lady_ai::AiConfig::default();
+        back.ai.consented = consented;
+        back.ai_repos = ai_repos;
+        back.repo_overrides = repo_overrides;
+
+        let toml2 = toml::to_string_pretty(&back).expect("serialize settings");
+        let back2: Settings = toml::from_str(&toml2).expect("deserialize settings");
+
+        assert_eq!(back2.ai_repos, vec!["/repo/enabled"]);
+        assert_eq!(back2.ai.active, None, "ai config was replaced");
+    }
+
+    #[test]
     fn settings_tolerates_missing_new_fields() {
         // An old settings file with no defaults/overrides still loads.
         let s: Settings = toml::from_str("recent = []\n").expect("deserialize legacy settings");

@@ -236,6 +236,41 @@ const AiSettings: Component<{ repoId: RepoId | null }> = (props) => {
           </Show>
         </Show>
 
+        {/* Anthropic-compatible server config (Bedrock Agent, llama.cpp
+            /v1/messages, a gateway, …) */}
+        <Show when={active() === "AnthropicCompatible"}>
+          <div style={{ display: "flex", "align-items": "center", gap: "0.4rem", "margin-bottom": "0.5rem" }}>
+            <span style={{ width: "6rem", "font-size": "0.82rem" }}>Base URL</span>
+            <input
+              style={{ ...field, flex: "1" }}
+              placeholder="http://localhost:8080/v1"
+              value={cfg()!.anthropic_base_url}
+              onChange={(e) => persist({ ...cfg()!, anthropic_base_url: e.currentTarget.value })}
+            />
+          </div>
+          <div style={{ display: "flex", "align-items": "center", gap: "0.4rem", "margin-bottom": "0.5rem" }}>
+            <span style={{ width: "6rem", "font-size": "0.82rem" }}>Context window</span>
+            <input
+              type="number"
+              min="2048"
+              step="1024"
+              style={{ ...field, width: "8rem" }}
+              value={cfg()!.anthropic_context_window}
+              onChange={(e) => {
+                const n = parseInt(e.currentTarget.value, 10);
+                persist({ ...cfg()!, anthropic_context_window: Number.isFinite(n) && n >= 2048 ? n : 32768 });
+              }}
+            />
+            <span style={{ "font-size": "0.74rem", color: "var(--fg-muted)" }}>tokens — raise to fit larger diffs</span>
+          </div>
+          <p style={{ "font-size": "0.74rem", color: "var(--fg-muted)", margin: "0 0 0.5rem" }}>
+            Any Anthropic Claude Messages-compatible server (Bedrock Agent, llama.cpp,
+            a gateway, …). Include the version segment (e.g. <code>/v1</code>). The API
+            key below is optional — local servers ignore it. Set the context window to
+            your model's real size so diffs aren't truncated.
+          </p>
+        </Show>
+
         {/* Azure-specific config */}
         <Show when={active() === "AzureOpenAi"}>
           <div style={{ display: "flex", "align-items": "center", gap: "0.4rem", "margin-bottom": "0.5rem" }}>
@@ -258,11 +293,11 @@ const AiSettings: Component<{ repoId: RepoId | null }> = (props) => {
         </Show>
 
         {/* API key — required for remote providers, optional for the
-            OpenAI-compatible endpoint (local servers ignore it). */}
-        <Show when={active() && (isRemote(active()!) || active() === "OpenAiCompatible")}>
+            OpenAI/Anthropic-compatible endpoints (local servers ignore it). */}
+        <Show when={active() && (isRemote(active()!) || active() === "OpenAiCompatible" || active() === "AnthropicCompatible")}>
           <div style={{ display: "flex", "align-items": "center", gap: "0.4rem", "margin-bottom": "0.5rem" }}>
             <span style={{ width: "6rem", "font-size": "0.82rem" }}>
-              API key{active() === "OpenAiCompatible" ? " (optional)" : ""}
+              API key{active() === "OpenAiCompatible" || active() === "AnthropicCompatible" ? " (optional)" : ""}
             </span>
             <input
               type="password"
