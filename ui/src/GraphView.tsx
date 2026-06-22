@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, For, onMount, Show } from "solid-js";
 import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
-import type { CommitGraphRow, RepoId, StashEntry, WalkLogGraphResult, WalkLogQuery } from "./commands";
+import type { CommitGraphRow, RefInfo, RepoId, StashEntry, WalkLogGraphResult, WalkLogQuery } from "./commands";
 import { relTime } from "./time";
 import { authorColor, initials } from "./avatar";
 import { uiPadding } from "./prefs";
@@ -105,10 +105,26 @@ const chipStyle = (kind: ChipKind) => {
   return { ...base, color: "var(--tx)", background: "var(--hov)" }; // head
 };
 
+function graphRefsForOid(refs: RefInfo[], oid: string, fallback: string[]): string[] {
+  if (refs.length === 0) return fallback;
+
+  const headNames = new Set(refs.filter((r) => r.kind === "Head").map((r) => r.name));
+  return refs
+    .filter((r) => r.target === oid)
+    .flatMap((r) => {
+      if (r.kind === "Tag") return [`tag:${r.name}`];
+      if (r.kind === "Head") return [`head:${r.name}`];
+      if (headNames.has(r.name)) return [];
+      return [r.name];
+    });
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 const GraphView: Component<{
   repoId: RepoId;
+  /** Latest refs from App; used to refresh ref chips without reloading rows. */
+  refs: RefInfo[];
   /** All selected commit oids (multi-select, controlled by the parent). */
   selected?: string[];
   /** The last-clicked oid — drives the detail pane and gets the accent bar. */
@@ -321,7 +337,8 @@ const GraphView: Component<{
             <div style={{ position: "absolute", top: `${startRow() * rowHeight()}px`, left: 0, right: 0 }}>
               <For each={visibleSlice()}>
                 {(row) => {
-                  const isHead = () => row.refs.includes("HEAD");
+                  const rowRefs = () => graphRefsForOid(props.refs, row.oid, row.refs);
+                  const isHead = () => rowRefs().some((ref) => ref === "HEAD" || ref.startsWith("head:"));
                   const isSel = () => (props.selected ?? []).includes(row.oid);
                   const isPrimary = () => props.primary === row.oid;
                   return (
@@ -354,7 +371,7 @@ const GraphView: Component<{
                     >
                       {/* Description: ref chips + subject */}
                       <span style={{ ...colDesc, display: "flex", "align-items": "center", gap: "6px" }}>
-                        <For each={row.refs}>
+                        <For each={rowRefs()}>
                           {(ref) => {
                             const c = classifyRef(ref);
                             return (

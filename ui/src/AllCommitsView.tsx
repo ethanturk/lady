@@ -66,6 +66,7 @@ const AllCommitsView: Component<AllCommitsViewProps> = (props) => {
       <div style={{ flex: "1", "min-height": "0" }}>
         <GraphView
           repoId={props.repoId}
+          refs={props.refs}
           selected={props.selected}
           primary={props.primary}
           onSelectionChange={props.onSelectionChange}
