@@ -1382,6 +1382,14 @@ fn repo_identity_set(
 fn friendly_git_err(e: impl std::fmt::Display) -> String {
     let s = e.to_string();
     let low = s.to_lowercase();
+    if low.contains("personal access token")
+        && low.contains("workflow")
+        && low.contains(".github/workflows")
+    {
+        return format!(
+            "{s}\n\nGitHub rejected this push because the token used for this repo is missing the `workflow` scope. Re-add this GitHub account in Settings with a token that has `repo` and `workflow` scopes, or push with a credential helper/account that has workflow access."
+        );
+    }
     if low.contains("could not read username")
         || low.contains("could not read password")
         || low.contains("terminal prompts disabled")

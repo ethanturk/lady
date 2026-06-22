@@ -57,12 +57,15 @@ import {
   setRepoOverride,
 } from "./repoSettings";
 
+type SettingsTab = "general" | "git" | "accounts" | "ai";
+
 /**
  * Settings panel (PH3-011 / PH4): connect/disconnect the active repo's forge
  * (GitHub / GitLab / Bitbucket / Azure DevOps, auto-detected from the remote)
  * via a token stored in the OS keychain (never on disk), plus license entry.
  */
 const SettingsView: Component<{ repoId: RepoId | null }> = (props) => {
+  const [tab, setTab] = createSignal<SettingsTab>("general");
   const [status, setStatus] = createSignal<HostingInfo>({
     kind: null,
     connected: false,
@@ -347,8 +350,63 @@ const SettingsView: Component<{ repoId: RepoId | null }> = (props) => {
       .finally(() => setBusy(false));
   };
 
+  const tabs: { id: SettingsTab; label: string; hint: string }[] = [
+    { id: "general", label: "General", hint: "Appearance, updates, license" },
+    { id: "git", label: "Git", hint: "Defaults and repository overrides" },
+    { id: "accounts", label: "Accounts", hint: "GitHub, hosting, remote repos" },
+    { id: "ai", label: "AI", hint: "Providers, models, consent" },
+  ];
+  const tabButton = (id: SettingsTab) => ({
+    width: "100%",
+    border: "none",
+    "border-radius": "6px",
+    padding: "8px 10px",
+    background: tab() === id ? "var(--tabact)" : "transparent",
+    color: tab() === id ? "var(--tx)" : "var(--tx2)",
+    "text-align": "left" as const,
+    cursor: "pointer",
+    "font-size": "12.5px",
+    "box-shadow": tab() === id ? "inset 2px 0 0 var(--accent)" : "none",
+  });
+
   return (
-    <div style={{ height: "100%", width: "100%", "box-sizing": "border-box", "overflow-y": "auto", padding: "1rem 1.4rem" }}>
+    <div style={{ height: "100%", width: "100%", "box-sizing": "border-box", display: "flex", overflow: "hidden" }}>
+      <nav
+        aria-label="Settings sections"
+        style={{
+          width: "176px",
+          "flex-shrink": 0,
+          padding: "12px",
+          border: "1px solid var(--bd)",
+          "border-left": "none",
+          "border-top": "none",
+          "border-bottom": "none",
+          background: "var(--sub)",
+          display: "flex",
+          "flex-direction": "column",
+          gap: "4px",
+        }}
+      >
+        <For each={tabs}>
+          {(t) => (
+            <button
+              type="button"
+              aria-selected={tab() === t.id}
+              title={t.hint}
+              onClick={() => setTab(t.id)}
+              style={tabButton(t.id)}
+            >
+              <div style={{ "font-weight": 700 }}>{t.label}</div>
+              <div style={{ color: "var(--tx3)", "font-size": "11px", "line-height": 1.25, "margin-top": "2px" }}>
+                {t.hint}
+              </div>
+            </button>
+          )}
+        </For>
+      </nav>
+
+      <div class="scroll-thin" style={{ flex: "1", "min-width": 0, overflow: "auto", padding: "1rem 1.4rem" }}>
+      <Show when={tab() === "general"}>
       <h3 style={{ margin: "0 0 0.4rem", "font-size": "0.95rem" }}>Appearance</h3>
       <div style={{ display: "flex", "flex-direction": "column", gap: "0.55rem", "max-width": "30rem" }}>
         <label style={{ display: "flex", "align-items": "center", gap: "0.5rem", "font-size": "0.85rem" }}>
@@ -415,7 +473,9 @@ const SettingsView: Component<{ repoId: RepoId | null }> = (props) => {
           Wrap long lines in diffs
         </label>
       </div>
+      </Show>
 
+      <Show when={tab() === "git"}>
       <h3 style={{ margin: "1.2rem 0 0.4rem", "font-size": "0.95rem" }}>Git defaults</h3>
       <p style={{ "font-size": "0.8rem", color: "var(--fg-muted)", margin: "0 0 0.5rem" }}>
         Used for every repository unless overridden below.
@@ -618,12 +678,15 @@ const SettingsView: Component<{ repoId: RepoId | null }> = (props) => {
         </div>
       </div>
       </Show>
+      </Show>
 
+      <Show when={tab() === "accounts"}>
       <h3 style={{ margin: "1.2rem 0 0.4rem", "font-size": "0.95rem" }}>GitHub accounts</h3>
       <p style={{ "font-size": "0.8rem", color: "var(--fg-muted)", margin: "0 0 0.5rem" }}>
         Add your work and personal accounts here, then pin a repo to one under
         “This repository” so pushes use the right credentials automatically. Tokens
-        are stored in your OS keychain — never on disk or in logs.
+        are stored in your OS keychain — never on disk or in logs. Use a token with
+        the <code>repo</code> scope, plus <code>workflow</code> if you push workflow files.
       </p>
       <Show when={acctErr()}>
         <p role="alert" style={{ color: "var(--error)", "font-size": "0.82rem" }}>{acctErr()}</p>
@@ -658,7 +721,9 @@ const SettingsView: Component<{ repoId: RepoId | null }> = (props) => {
           {acctBusy() ? "Validating…" : "Add account"}
         </button>
       </div>
+      </Show>
 
+      <Show when={tab() === "general"}>
       <h3 style={{ margin: "1.2rem 0 0.4rem", "font-size": "0.95rem" }}>Updates</h3>
       <label style={{ display: "flex", gap: "0.45rem", "align-items": "center", "font-size": "0.85rem", margin: "0 0 0.5rem" }}>
         <input type="checkbox" checked={autoUpdateCheck()} onChange={(e) => setAutoUpdateCheck(e.currentTarget.checked)} />
@@ -708,7 +773,9 @@ const SettingsView: Component<{ repoId: RepoId | null }> = (props) => {
       <Show when={licenseErr()}>
         <p style={{ color: "var(--error)", "font-size": "0.82rem" }}>{licenseErr()}</p>
       </Show>
+      </Show>
 
+      <Show when={tab() === "accounts"}>
       <Show when={props.repoId}>
       <h3 style={{ margin: "1.2rem 0 0.6rem", "font-size": "0.95rem" }}>Hosting — {forgeName()}</h3>
 
@@ -813,10 +880,14 @@ const SettingsView: Component<{ repoId: RepoId | null }> = (props) => {
         </div>
       </Show>
       </Show>
+      </Show>
 
+      <Show when={tab() === "ai"}>
       {/* AI is global config (provider / keys / consent / model); the per-repo
           enable toggle inside appears only when a repo is open. */}
       <AiSettings repoId={props.repoId} />
+      </Show>
+      </div>
     </div>
   );
 };
