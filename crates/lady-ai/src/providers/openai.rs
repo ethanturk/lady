@@ -119,6 +119,86 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn skips_reasoning_and_keeps_answer() {
+        // Reasoning models stream `delta.reasoning_content` (thinking) before the
+        // real `delta.content` answer. Only the answer must end up in the result,
+        // and the reasoning must not be streamed to the sink.
+        let server = MockServer::start().await;
+        let sse = "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"thinking…\"}}]}\n\n\
+                   data: {\"choices\":[{\"delta\":{\"content\":\"feat: x\"}}]}\n\n\
+                   data: [DONE]\n\n";
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(sse))
+            .mount(&server)
+            .await;
+        let p = OpenAiProvider::with_base_url(server.uri(), "");
+        let mut buf = String::new();
+        let mut cb = |d: &str| buf.push_str(d);
+        let mut sink = StreamSink::new(&mut cb, CancelToken::new());
+        let resp = p
+            .complete(
+                &AiRequest::new(AiTask::CommitMessage, "gemma"),
+                &mut sink,
+            )
+            .await
+            .expect("complete");
+        assert_eq!(resp.text, "feat: x");
+        assert_eq!(buf, "feat: x", "reasoning must not be streamed to the sink");
+    }
+
+    #[tokio::test]
+    async fn cancel_stops_even_with_no_answer_deltas() {
+        // A reasoning model emits no answer deltas while thinking, so `push` (and
+        // its cancel check) never runs. The per-chunk guard must still honor a
+        // cancel — here pre-cancelled, so complete bails with Cancelled rather
+        // than draining the reasoning-only stream.
+        let server = MockServer::start().await;
+        let sse = "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"thinking\"}}]}\n\n\
+                   data: [DONE]\n\n";
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(sse))
+            .mount(&server)
+            .await;
+        let p = OpenAiProvider::with_base_url(server.uri(), "");
+        let mut cb = |_d: &str| {};
+        let cancel = CancelToken::new();
+        cancel.cancel();
+        let mut sink = StreamSink::new(&mut cb, cancel);
+        let err = p
+            .complete(&AiRequest::new(AiTask::CommitMessage, "gemma"), &mut sink)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, crate::Error::Cancelled), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn errors_when_only_reasoning_no_answer() {
+        // Budget-truncated mid-thought: reasoning but no content. Must fail loudly
+        // (BadOutput) rather than silently resolving to an empty message.
+        let server = MockServer::start().await;
+        let sse = "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"still thinking\"}}]}\n\n\
+                   data: [DONE]\n\n";
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(sse))
+            .mount(&server)
+            .await;
+        let p = OpenAiProvider::with_base_url(server.uri(), "");
+        let mut cb = |_d: &str| {};
+        let mut sink = StreamSink::new(&mut cb, CancelToken::new());
+        let err = p
+            .complete(
+                &AiRequest::new(AiTask::CommitMessage, "gemma"),
+                &mut sink,
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, crate::Error::BadOutput(_)), "got {err:?}");
+    }
+
+    #[tokio::test]
     async fn lists_models_from_compatible_server() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))

@@ -136,7 +136,10 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
       setBody(nl === -1 ? "" : full.slice(nl + 1).replace(/^\n/, ""));
     } catch (e) {
       const msg = String(e);
-      setErr(isConsentError(msg) ? "AI consent required — enable the provider and grant consent in Settings." : msg);
+      // A user-initiated cancel is not an error — leave whatever streamed so far.
+      if (!/cancelled|canceled/i.test(msg)) {
+        setErr(isConsentError(msg) ? "AI consent required — enable the provider and grant consent in Settings." : msg);
+      }
     } finally {
       setAiBusy(false);
       setAiReq(null);

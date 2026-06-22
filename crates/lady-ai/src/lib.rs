@@ -290,7 +290,10 @@ impl AiRequest {
             system: String::new(),
             prompt: String::new(),
             temperature: 0.2,
-            max_tokens: 1024,
+            // Generous so reasoning models (which spend output tokens "thinking"
+            // before answering) still reach the actual answer; short tasks stop
+            // well before this via the stop token.
+            max_tokens: 4096,
         }
     }
 }
@@ -343,6 +346,13 @@ impl<'a> StreamSink<'a> {
         }
         (self.on_token)(delta);
         Ok(())
+    }
+
+    /// Whether cancellation has been requested. Lets a streaming loop bail out
+    /// between chunks even when no token is being pushed (e.g. while a reasoning
+    /// model is "thinking" and emitting no answer deltas yet).
+    pub fn is_cancelled(&self) -> bool {
+        self.cancel.is_cancelled()
     }
 }
 

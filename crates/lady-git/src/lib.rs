@@ -730,12 +730,24 @@ pub(crate) fn run_git(workdir: &Path, args: &[&str]) -> Result<std::process::Out
     Ok(out)
 }
 
+/// Make a git child non-interactive so it never blocks on a terminal credential
+/// prompt. Lady runs behind a GUI with no controlling TTY, so a prompt yields the
+/// cryptic `could not read Username for 'https://…': Device not configured` (and
+/// can hang). Credentials must come from a per-invocation [`GitAuth`] header/
+/// helper or a configured credential helper; when none resolve, git now fails
+/// fast with a clear auth error instead of reaching for a terminal.
+fn make_noninteractive(cmd: &mut Command) {
+    cmd.env("GIT_TERMINAL_PROMPT", "0");
+    // Git Credential Manager (if it is the configured helper): do not pop UI.
+    cmd.env("GCM_INTERACTIVE", "never");
+}
+
 /// Run system `git` and return the raw output without mapping non-zero exits.
 fn run_git_raw(workdir: &Path, args: &[&str]) -> Result<std::process::Output> {
-    Command::new("git")
-        .current_dir(workdir)
-        .args(args)
-        .output()
+    let mut cmd = Command::new("git");
+    cmd.current_dir(workdir).args(args);
+    make_noninteractive(&mut cmd);
+    cmd.output()
         .map_err(|e| Error::Git(format!("failed to run git: {e}")))
 }
 
@@ -749,6 +761,7 @@ fn run_git_env_raw(
 ) -> Result<std::process::Output> {
     let mut cmd = Command::new("git");
     cmd.current_dir(workdir).args(args);
+    make_noninteractive(&mut cmd);
     for (k, v) in envs {
         cmd.env(k, v);
     }
@@ -818,9 +831,10 @@ pub(crate) fn run_git_stdin(workdir: &Path, args: &[&str], input: &[u8]) -> Resu
     use std::io::Write;
     use std::process::Stdio;
 
-    let mut child = Command::new("git")
-        .current_dir(workdir)
-        .args(args)
+    let mut cmd = Command::new("git");
+    cmd.current_dir(workdir).args(args);
+    make_noninteractive(&mut cmd);
+    let mut child = cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -863,6 +877,7 @@ pub(crate) fn run_git_streaming(
 
     let mut cmd = Command::new("git");
     cmd.current_dir(workdir);
+    make_noninteractive(&mut cmd);
     // Per-invocation auth overrides as leading `-c k=v` flags before the
     // subcommand (no-op when `auth` is empty — the default path).
     for (k, v) in &auth.config {

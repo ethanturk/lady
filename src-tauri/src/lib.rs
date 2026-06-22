@@ -723,6 +723,10 @@ fn clone_repo(
         .unwrap_or_else(GitAuth::none);
 
     let mut cmd = Command::new("git");
+    // Never block on a terminal credential prompt (no TTY behind the GUI) — fail
+    // fast with a clear auth error instead of "could not read Username … Device
+    // not configured". Auth comes from `auth` below or a configured helper.
+    cmd.env("GIT_TERMINAL_PROMPT", "0").env("GCM_INTERACTIVE", "never");
     for (k, v) in &auth.config {
         cmd.arg("-c").arg(format!("{k}={v}"));
     }
@@ -776,7 +780,7 @@ fn fetch(
     };
     engine
         .fetch(&repo, remote.as_deref(), &auth, &mut emit)
-        .map_err(|e| e.to_string())
+        .map_err(friendly_git_err)
 }
 
 /// Pull (fetch + integrate) from `remote`/`branch`, or the configured upstream.
@@ -808,7 +812,7 @@ fn pull(
             &auth,
             &mut emit,
         )
-        .map_err(|e| e.to_string())
+        .map_err(friendly_git_err)
 }
 
 /// Push the current branch to `remote`/`branch`. `set_upstream` records the
@@ -846,7 +850,7 @@ fn push(
             &auth,
             &mut emit,
         )
-        .map_err(|e| e.to_string())
+        .map_err(friendly_git_err)
 }
 
 /// Delete `refspec` on `remote` by pushing an empty source to it
@@ -881,7 +885,7 @@ fn delete_remote_ref(
             &auth,
             &mut emit,
         )
-        .map_err(|e| e.to_string())
+        .map_err(friendly_git_err)
 }
 
 /// How far the current branch is ahead/behind its upstream (`None` if untracked).
@@ -1327,6 +1331,25 @@ fn repo_identity_set(
 }
 
 // ── Multiple GitHub accounts — per-repo transport auth ───────────────────────────
+
+/// Rewrite git's opaque HTTPS-auth failures into an actionable message. With
+/// terminal prompts disabled (see `make_noninteractive`), an unauthenticated
+/// remote op fails with "could not read Username … terminal prompts disabled" or
+/// "Authentication failed" — point the user at the fix instead of git's raw text.
+fn friendly_git_err(e: impl std::fmt::Display) -> String {
+    let s = e.to_string();
+    let low = s.to_lowercase();
+    if low.contains("could not read username")
+        || low.contains("could not read password")
+        || low.contains("terminal prompts disabled")
+        || low.contains("authentication failed")
+    {
+        return format!(
+            "{s}\n\nAuthentication required for this remote. Connect a GitHub account in Settings, or configure a git credential helper / use an SSH remote."
+        );
+    }
+    s
+}
 
 /// Wrap `s` in single quotes for a POSIX shell (git runs `!`-helpers and
 /// `GIT_SSH_COMMAND` via the shell), escaping embedded single quotes.

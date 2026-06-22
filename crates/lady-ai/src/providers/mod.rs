@@ -79,11 +79,25 @@ pub(crate) async fn openai_chat(
         .await
         .map_err(|e| Error::Http(e.to_string()))?;
     let resp = check_status(resp).await?;
-    stream_sse(resp, sink, |v| {
-        v.pointer("/choices/0/delta/content")
-            .and_then(|c| c.as_str())
-            .map(String::from)
-    })
+    // Reasoning models served over the OpenAI shape (llama.cpp, vLLM, …) stream
+    // their chain-of-thought as `delta.reasoning_content` and the actual answer
+    // as `delta.content`. Capture the answer (streamed live); track reasoning
+    // only so an all-reasoning, budget-truncated response fails loudly instead of
+    // returning empty.
+    stream_sse_reasoning(
+        resp,
+        sink,
+        |v| {
+            v.pointer("/choices/0/delta/content")
+                .and_then(|c| c.as_str())
+                .map(String::from)
+        },
+        |v| {
+            v.pointer("/choices/0/delta/reasoning_content")
+                .and_then(|c| c.as_str())
+                .map(String::from)
+        },
+    )
     .await
 }
 
@@ -98,7 +112,36 @@ pub(crate) async fn stream_sse<F>(
 where
     F: FnMut(&serde_json::Value) -> Option<String> + Send,
 {
-    stream_body(resp, sink, true, &mut extract).await
+    stream_body(resp, sink, true, &mut extract, &mut |_| None).await
+}
+
+/// Like [`stream_sse`] but with a second `reasoning` extractor for providers that
+/// split chain-of-thought into its own field. Reasoning is accumulated but NOT
+/// streamed to the sink (it must not land in the user-facing answer); if the
+/// stream ends with reasoning but no answer, that surfaces as [`Error::BadOutput`].
+async fn stream_sse_reasoning<A, R>(
+    resp: reqwest::Response,
+    sink: &mut StreamSink<'_>,
+    mut answer: A,
+    mut reasoning: R,
+) -> Result<AiResponse>
+where
+    A: FnMut(&serde_json::Value) -> Option<String> + Send,
+    R: FnMut(&serde_json::Value) -> Option<String> + Send,
+{
+    stream_body(resp, sink, true, &mut answer, &mut reasoning).await
+}
+
+/// Finalize a stream: return the answer, or error if the model emitted only
+/// reasoning (typically budget-truncated mid-thought) so it never silently
+/// resolves to empty text.
+fn finish_stream(text: String, reasoning: String) -> Result<AiResponse> {
+    if text.trim().is_empty() && !reasoning.trim().is_empty() {
+        return Err(Error::BadOutput(
+            "the model produced only reasoning and no answer before hitting its output limit — raise Max tokens for this model, or disable its thinking mode".to_string(),
+        ));
+    }
+    Ok(AiResponse { text })
 }
 
 async fn stream_body(
@@ -106,10 +149,18 @@ async fn stream_body(
     sink: &mut StreamSink<'_>,
     sse: bool,
     extract: &mut (dyn FnMut(&serde_json::Value) -> Option<String> + Send),
+    extract_reasoning: &mut (dyn FnMut(&serde_json::Value) -> Option<String> + Send),
 ) -> Result<AiResponse> {
     let mut buf = String::new();
     let mut text = String::new();
+    let mut reasoning = String::new();
     loop {
+        // Bail out as soon as cancellation is requested — checked per chunk so a
+        // cancel lands even during a reasoning model's no-answer "thinking" phase
+        // (where `sink.push` is never called). Dropping `resp` closes the stream.
+        if sink.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
         let chunk = resp.chunk().await.map_err(|e| Error::Http(e.to_string()))?;
         let Some(bytes) = chunk else { break };
         buf.push_str(&String::from_utf8_lossy(&bytes));
@@ -132,7 +183,7 @@ async fn stream_body(
                 continue;
             }
             if sse && payload == "[DONE]" {
-                return Ok(AiResponse { text });
+                return finish_stream(text, reasoning);
             }
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(payload) {
                 if let Some(delta) = extract(&v) {
@@ -141,8 +192,12 @@ async fn stream_body(
                         text.push_str(&delta);
                     }
                 }
+                // Reasoning is recorded but never streamed into the answer.
+                if let Some(r) = extract_reasoning(&v) {
+                    reasoning.push_str(&r);
+                }
             }
         }
     }
-    Ok(AiResponse { text })
+    finish_stream(text, reasoning)
 }

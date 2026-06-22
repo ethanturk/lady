@@ -637,8 +637,8 @@ const SettingsView: Component<{ repoId: RepoId | null }> = (props) => {
                 <Show when={a.email}>
                   <span style={{ color: "var(--fg-muted)" }}> · {a.email}</span>
                 </Show>
-                <Show when={a.known_owners.length > 0}>
-                  <span style={{ color: "var(--fg-muted)" }}> · owners: {a.known_owners.join(", ")}</span>
+                <Show when={(a.known_owners ?? []).length > 0}>
+                  <span style={{ color: "var(--fg-muted)" }}> · owners: {(a.known_owners ?? []).join(", ")}</span>
                 </Show>
               </span>
               <button onClick={() => removeAccount(a.id)} style={{ padding: "0.2rem 0.7rem" }}>Remove</button>

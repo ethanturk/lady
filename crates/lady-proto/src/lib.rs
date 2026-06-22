@@ -318,8 +318,10 @@ pub struct GitHubAccount {
     #[serde(default)]
     pub email: String,
     /// Owners/orgs this account should match for auto-suggest (in addition to
-    /// `login`). E.g. the work account's company orgs.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// `login`). E.g. the work account's company orgs. Always serialized (even
+    /// when empty) so the frontend can rely on the field existing — skipping it
+    /// made the UI read `undefined.length`.
+    #[serde(default)]
     pub known_owners: Vec<String>,
 }
 
