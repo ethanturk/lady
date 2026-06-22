@@ -25,6 +25,8 @@ interface TagMenuProps {
   onCreateBranch: (startPoint: string) => void;
   /** Open the AI view to explain the tagged commit. */
   onAiExplain: (oid: string) => void;
+  /** Open the push confirmation dialog to push this tag. */
+  onPush: (tag: string) => void;
 }
 
 /**
@@ -69,6 +71,7 @@ const TagMenu: Component<TagMenuProps> = (props) => {
       "divider",
       { label: `Delete ${tag()} Locally`, danger: true, run: async () => result(await deleteTagLocal(props.repoId, tag())) },
       { label: `Delete ${tag()} from origin`, danger: true, run: async () => result(await deleteTagOrigin(props.repoId, "origin", tag())) },
+      { label: `Push ${tag()} to origin`, run: () => props.onPush(tag()) },
       "divider",
       { label: "Copy Tag Name", shortcut: "⌘C", run: async () => result(await copyTagName(tag())) },
       { label: "Copy Link to Tag", run: async () => result(await copyRemoteLink(props.repoId, { kind: "Tag", value: tag() })) },

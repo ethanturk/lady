@@ -75,6 +75,8 @@ interface ChangesViewProps {
   onChanged?: () => void;
   /** Surface a file-action result (toast / error) in the app shell. */
   onResult?: (r: ActionResult | null) => void;
+  /** Open the push confirmation dialog after committing (Shift+Commit). */
+  onPush?: () => void;
   /** Open the Blame overlay focused on a path (file menu). */
   onOpenBlame?: (path: string) => void;
   /** Open the File-History overlay focused on a path (file menu). */
@@ -441,23 +443,9 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
       setBody("");
       setAmend(false);
       if (push) {
-        const ab = await invoke<AheadBehind | null>("ahead_behind", { repo: props.repoId }).catch(() => null);
-        try {
-          await invoke("push", {
-            repo: props.repoId,
-            remote: null,
-            branch: null,
-            setUpstream: ab === null,
-            force: false,
-          });
-          props.onResult?.({ ok: true, message: "Committed and pushed." });
-        } catch (e) {
-          const msg = String(e);
-          setErr(`Push failed: ${msg}`);
-          props.onResult?.({ ok: false, message: `Committed, but push failed: ${msg}` });
-          afterMutation(false);
-          return;
-        }
+        // Hand off to the app-level push dialog so the user can confirm the
+        // remote and opt into a force push before the network request.
+        props.onPush?.();
       }
       afterMutation();
     } catch (e) {

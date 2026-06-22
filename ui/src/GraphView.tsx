@@ -296,7 +296,23 @@ const GraphView: Component<{
 
       <div style={{ display: "flex", flex: "1", "min-height": "0", overflow: "hidden" }}>
         {/* Canvas column: graph lanes and edges (redraws on scroll). */}
-        <canvas ref={canvasEl} style={{ "flex-shrink": "0", "pointer-events": "none", "align-self": "flex-start" }} />
+        <canvas ref={canvasEl} style={{ "flex-shrink": "0" }} onClick={(e) => {
+          const rect = canvasEl.getBoundingClientRect();
+          const y = e.clientY - rect.top + listContainer.scrollTop;
+          const idx = Math.floor(y / rowHeight());
+          const row = rows()[idx];
+          if (row) handleClick(row.oid, { meta: e.metaKey || e.ctrlKey, shift: e.shiftKey });
+        }} onContextMenu={(e) => {
+          if (!props.onCommitMenu) return;
+          const rect = canvasEl.getBoundingClientRect();
+          const y = e.clientY - rect.top + listContainer.scrollTop;
+          const idx = Math.floor(y / rowHeight());
+          const row = rows()[idx];
+          if (row) {
+            e.preventDefault();
+            props.onCommitMenu(row.oid, row.summary, { x: e.clientX, y: e.clientY });
+          }
+        }} />
 
         {/* Commit list column: virtualized DOM rows. */}
         <div ref={listContainer} class="scroll-thin" style={{ flex: "1", "min-width": "0", "overflow-y": "auto" }} onScroll={onScroll}>

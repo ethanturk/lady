@@ -12,7 +12,7 @@ import {
   createTagAt,
   deleteBranch,
   pullCurrent,
-  pushBranch,
+  rebaseCurrentOnto,
   renameBranch,
   setTracking,
 } from "./branchActions";
@@ -61,6 +61,8 @@ interface CommitMenuProps {
   onRecompose: (oid: string) => void;
   /** Open the Pull-Request creation flow for a branch. */
   onCreatePr: (branch: string) => void;
+  /** Open the push confirmation dialog for the tip branch. */
+  onPush: (branch: string) => void;
 }
 
 /**
@@ -165,19 +167,22 @@ const CommitMenu: Component<CommitMenuProps> = (props) => {
       {
         label: "New Tag Here…",
         shortcut: "⇧⌘G",
-        run: () =>
+        run: () => {
+          const target = oid();
           props.onPrompt({
-            title: `New tag at ${oid().slice(0, 8)}`,
+            title: `New tag at ${target.slice(0, 8)}`,
             placeholder: "tag-name",
             submitLabel: "Create Tag",
-            onSubmit: async (name) => result(await createTagAt(props.repoId, name, oid())),
-          }),
+            onSubmit: async (name) => result(await createTagAt(props.repoId, name, target)),
+          });
+        },
       },
       {
         label: "New Annotated Tag Here…",
-        run: () =>
+        run: () => {
+          const target = oid();
           props.onPrompt({
-            title: `Annotated tag at ${oid().slice(0, 8)}`,
+            title: `Annotated tag at ${target.slice(0, 8)}`,
             placeholder: "tag-name",
             submitLabel: "Next: message",
             onSubmit: (name) =>
@@ -185,9 +190,10 @@ const CommitMenu: Component<CommitMenuProps> = (props) => {
                 title: `Message for ${name}`,
                 placeholder: "tag message",
                 submitLabel: "Create Tag",
-                onSubmit: async (message) => result(await createAnnotatedTagAt(props.repoId, name, oid(), message)),
+                onSubmit: async (message) => result(await createAnnotatedTagAt(props.repoId, name, target, message)),
               }),
-          }),
+          });
+        },
       },
       "divider",
       { label: "Copy Commit SHA", shortcut: "⌘C", run: async () => result(await copyCommitSha(oid())) },
@@ -202,7 +208,7 @@ const CommitMenu: Component<CommitMenuProps> = (props) => {
         "divider",
         { label: `— branch ${b} —`, disabled: true },
         { label: `Pull '${upstream() ?? "upstream"}'`, disabled: b !== props.currentBranch || !upstream(), run: async () => result(await pullCurrent(props.repoId)) },
-        { label: `Push to '${remote}'…`, run: async () => result(await pushBranch(props.repoId, b, !upstream())) },
+        { label: `Push to '${remote}'…`, run: () => props.onPush(b) },
         { label: "Set Upstream (Tracking)", submenu: trackingSubmenu(b) },
         { label: `Create Pull Request on '${remote}'…`, run: () => props.onCreatePr(b) },
         {

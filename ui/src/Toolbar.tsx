@@ -43,6 +43,8 @@ interface ToolbarProps {
   onBranchMenu: (anchor: { x: number; y: number }) => void;
   /** Open the global Settings dialog (gear button, right group). */
   onSettings: () => void;
+  /** Open the push confirmation dialog (required for all push operations). */
+  onPush: () => void;
 }
 
 /** Vertical icon-over-label quick action (design toolbar left group). */
@@ -127,8 +129,6 @@ const Toolbar: Component<ToolbarProps> = (props) => {
 
   const fetch = () => run("Fetching", "fetch", { remote: null });
   const pull = () => run("Pulling", "pull", { remote: null, branch: null });
-  const push = () =>
-    run("Pushing", "push", { remote: null, branch: null, setUpstream: ab() === null, force: false });
   const stash = () =>
     run("Stashing", "stash_save", { message: null, includeUntracked: false });
 
@@ -158,7 +158,7 @@ const Toolbar: Component<ToolbarProps> = (props) => {
         <Show when={!isNarrow()}>
           <QuickAction icon={<IconFetch />} label="Fetch" disabled={!props.repoId || !!busy()} onClick={fetch} />
           <QuickAction icon={<IconPull />} label="Pull" disabled={!props.repoId || !!busy()} onClick={pull} />
-          <QuickAction icon={<IconPush />} label="Push" disabled={!props.repoId || !!busy()} onClick={push} />
+          <QuickAction icon={<IconPush />} label="Push" disabled={!props.repoId || !!busy()} onClick={() => props.onPush()} />
           <QuickAction icon={<IconStash />} label="Stash" disabled={!props.repoId || !!busy()} onClick={stash} />
         </Show>
       </div>
@@ -249,7 +249,7 @@ const Toolbar: Component<ToolbarProps> = (props) => {
                 <For each={[
                   { label: "Fetch", run: fetch },
                   { label: "Pull", run: pull },
-                  { label: "Push", run: push },
+                  { label: "Push", run: () => props.onPush() },
                   { label: "Stash", run: stash },
                 ]}>
                   {(item) => (

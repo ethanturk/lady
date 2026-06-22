@@ -108,6 +108,23 @@ fn walk_log_graph(
     };
     let commits = engine.walk_log(&repo, gq).map_err(|e| e.to_string())?;
 
+    // Build an oid → ref-name map for branch/tag/HEAD labels on graph rows.
+    let refs = engine.list_refs(&repo).map_err(|e| e.to_string())?;
+    let mut refs_by_oid: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for r in refs {
+        // Distinguish tags so the renderer can style them separately from branches.
+        let label = if r.kind == lady_proto::RefKind::Tag {
+            format!("tag:{}", r.name)
+        } else {
+            r.name
+        };
+        refs_by_oid
+            .entry(r.target.as_str().to_owned())
+            .or_default()
+            .push(label);
+    }
+
     // Deserialize the opaque lane state (Option<String> → Option<Oid>).
     let state: Vec<Option<Oid>> = layout_state
         .unwrap_or_default()
@@ -136,7 +153,10 @@ fn walk_log_graph(
                     to_lane: e.to_lane,
                 })
                 .collect(),
-            refs: r.refs,
+            refs: refs_by_oid
+                .get(c.oid.as_str())
+                .cloned()
+                .unwrap_or_default(),
         })
         .collect();
 

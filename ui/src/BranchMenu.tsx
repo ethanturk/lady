@@ -13,7 +13,6 @@ import {
   fastForwardBranch,
   mergeIntoCurrent,
   pullCurrent,
-  pushBranch,
   rebaseCurrentOnto,
   renameBranch,
   setTracking,
@@ -53,8 +52,10 @@ interface BranchMenuProps {
   onWorktree: (branch: string) => void;
   /** Open the AI view to explain this branch. */
   onAiExplain: (branch: string) => void;
-  /** Open the Pull-Request creation flow (Refs view) for this branch. */
+  /** Open the pull-request creation flow (Refs view) for this branch. */
   onCreatePr: (branch: string) => void;
+  /** Open the push confirmation dialog for this branch. */
+  onPush: (branch: string) => void;
 }
 
 /**
@@ -127,7 +128,7 @@ const BranchMenu: Component<BranchMenuProps> = (props) => {
     }
     list.push({
       label: `Push to '${remote}'…`,
-      run: async () => result(await pushBranch(props.repoId, b(), !upstream())),
+      run: () => props.onPush(b()),
     });
     list.push({
       label: `Create Pull Request on '${remote}'…`,
@@ -154,13 +155,15 @@ const BranchMenu: Component<BranchMenuProps> = (props) => {
       {
         label: "New Tag Here…",
         shortcut: "⇧⌘G",
-        run: () =>
+        run: () => {
+          const target = b();
           props.onPrompt({
-            title: `New tag at ${b()}`,
+            title: `New tag at ${target}`,
             placeholder: "tag-name",
             submitLabel: "Create Tag",
-            onSubmit: async (name) => result(await createTagAt(props.repoId, name, b())),
-          }),
+            onSubmit: async (name) => result(await createTagAt(props.repoId, name, target)),
+          });
+        },
       },
       {
         label: "Tracking",
@@ -168,14 +171,16 @@ const BranchMenu: Component<BranchMenuProps> = (props) => {
       },
       {
         label: "Rename…",
-        run: () =>
+        run: () => {
+          const oldName = b();
           props.onPrompt({
-            title: `Rename ${b()}`,
+            title: `Rename ${oldName}`,
             placeholder: "new-branch-name",
-            initial: b(),
+            initial: oldName,
             submitLabel: "Rename",
-            onSubmit: async (name) => result(await renameBranch(props.repoId, b(), name)),
-          }),
+            onSubmit: async (name) => result(await renameBranch(props.repoId, oldName, name)),
+          });
+        },
       },
       {
         label: `Delete ${b()}`,

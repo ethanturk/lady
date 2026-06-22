@@ -20,6 +20,8 @@ import CommitMenu from "./CommitMenu";
 import type { CommitMenuState } from "./CommitMenu";
 import TagMenu from "./TagMenu";
 import type { TagMenuState } from "./TagMenu";
+import PushDialog from "./PushDialog";
+import type { PushDialogState } from "./PushDialog";
 import { addWorktreeFor, checkoutBranch, createBranchAt, createTagAt, deleteBranch } from "./branchActions";
 import { autoUpdateCheck, hideResizers, isNarrow, setSettingsWidth, setSidebarWidth, settingsWidth, sidebarWidth } from "./prefs";
 import ConflictResolver from "./ConflictResolver";
@@ -100,6 +102,8 @@ const App: Component = () => {
   const [recomposeFrom, setRecomposeFrom] = createSignal<string | null>(null);
   // When set, the AI "Explain changes" overlay is open for this target.
   const [explainSpec, setExplainSpec] = createSignal<{ target: Record<string, unknown>; title: string; subtitle?: string } | null>(null);
+  // Push confirmation dialog (shown for every push operation).
+  const [pushDialog, setPushDialog] = createSignal<PushDialogState | null>(null);
   // Recent repositories (from RepoBar) shown in the Launch palette.
   const [recents, setRecents] = createSignal<RecentRepo[]>([]);
   // Openers handed up from RepoBar: open a known path (worktrees) + native picker.
@@ -447,6 +451,25 @@ const App: Component = () => {
     refresh();
   };
 
+  // Open the push dialog for any ref (branch or tag). All push operations in
+  // Lady route through here so the user can confirm the remote and opt into a
+  // force push.
+  const openPushDialog = (state: Omit<PushDialogState, "onSuccess" | "onError"> & { onSuccess?: () => void; onError?: (msg: string) => void }) => {
+    setPushDialog({
+      ...state,
+      onSuccess: () => {
+        setPushDialog(null);
+        state.onSuccess?.();
+        refresh();
+      },
+      onError: (msg) => {
+        setPushDialog(null);
+        state.onError?.(msg);
+        setErr(msg);
+      },
+    });
+  };
+
   // Open the generalized name prompt (Rename, New Tag, …).
   const openPrompt = (spec: PromptSpec) => {
     setPromptValue(spec.initial ?? "");
@@ -579,6 +602,10 @@ const App: Component = () => {
           if (b) openBranchMenu(b, at);
         }}
         onSettings={() => setOverlay("settings")}
+        onPush={() => {
+          const b = currentBranchName();
+          if (b) openPushDialog({ repo: repoId()!, refspec: b, remote: "origin", isTag: false });
+        }}
       />
 
       {/* Licensing gate: blocks the UI when the trial has expired (ADR-0007). */}
@@ -687,6 +714,10 @@ const App: Component = () => {
                   refreshNonce={refreshNonce()}
                   onChanged={refresh}
                   onResult={showResult}
+                  onPush={() => {
+                    const b = currentBranchName();
+                    if (b) openPushDialog({ repo: repoId()!, refspec: b, remote: "origin", isTag: false });
+                  }}
                   onOpenBlame={openBlameFor}
                   onOpenHistory={openHistoryFor}
                   onExplain={openExplain}
@@ -775,6 +806,7 @@ const App: Component = () => {
           onWorktree={pickWorktreeDir}
           onAiExplain={explainBranch}
           onCreatePr={() => setOverlay("refs")}
+          onPush={(branch) => openPushDialog({ repo: repoId()!, refspec: branch, remote: "origin", isTag: false })}
         />
       </Show>
 
@@ -797,6 +829,7 @@ const App: Component = () => {
           onAiExplain={explainCommit}
           onRecompose={(oid) => setRecomposeFrom(oid)}
           onCreatePr={() => setOverlay("refs")}
+          onPush={(branch) => openPushDialog({ repo: repoId()!, refspec: branch, remote: "origin", isTag: false })}
         />
       </Show>
 
@@ -814,6 +847,7 @@ const App: Component = () => {
             setNewBranchFrom(startPoint);
           }}
           onAiExplain={explainCommit}
+          onPush={(tag) => openPushDialog({ repo: repoId()!, refspec: `refs/tags/${tag}`, remote: "origin", isTag: true })}
         />
       </Show>
 
@@ -933,6 +967,14 @@ const App: Component = () => {
             </div>
           </div>
         </div>
+      </Show>
+
+      {/* Push confirmation dialog — shown for every push operation. */}
+      <Show when={pushDialog() && active()}>
+        <PushDialog
+          state={pushDialog()!}
+          onClose={() => setPushDialog(null)}
+        />
       </Show>
 
       {/* Interactive-rebase editor (PH3-004) */}
