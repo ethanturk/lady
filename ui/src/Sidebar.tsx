@@ -303,13 +303,13 @@ const Sidebar: Component<SidebarProps> = (props) => {
       >
         {r.name}
       </span>
-      {/* Outgoing (↑ ahead) / incoming (↓ behind) vs upstream. */}
-      <Show when={kind === "Branch" && aheadBehind()[r.name]}>
+      {/* Outgoing (↑ local-only) / incoming (↓ remote-only) vs the paired branch. */}
+      <Show when={kind !== "Tag" && aheadBehind()[r.name]}>
         {(() => {
           const ab = () => aheadBehind()[r.name];
           return (
             <Show when={ab().ahead > 0 || ab().behind > 0}>
-              <span style={{ display: "flex", "align-items": "center", gap: "5px", "font-size": "11px", "font-family": "ui-monospace, monospace", color: "var(--tx3)", "flex-shrink": 0 }} title={`${ab().ahead} ahead, ${ab().behind} behind ${"origin"}`}>
+              <span style={{ display: "flex", "align-items": "center", gap: "5px", "font-size": "11px", "font-family": "ui-monospace, monospace", color: "var(--tx3)", "flex-shrink": 0 }} title={`${ab().ahead} outgoing, ${ab().behind} incoming`}>
                 <Show when={ab().ahead > 0}>
                   <span style={{ color: "var(--badge-a)" }}>↑{ab().ahead}</span>
                 </Show>

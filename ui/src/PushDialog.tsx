@@ -2,6 +2,7 @@ import { createSignal, Show } from "solid-js";
 import type { Component } from "solid-js";
 import type { RepoId } from "./commands";
 import { invoke } from "@tauri-apps/api/core";
+import ladyLogo from "../../src-tauri/icons/128x128.png";
 
 export interface PushDialogState {
   repo: RepoId;
@@ -79,10 +80,6 @@ const PushDialog: Component<{ state: PushDialogState; onClose: () => void }> = (
   const icon = {
     width: "56px",
     height: "56px",
-    "border-radius": "50%",
-    background: "linear-gradient(180deg, #21b7ef 0%, #0c83c7 100%)",
-    border: "2px solid #ffffff",
-    "box-shadow": "0 0 0 1px rgba(0,0,0,0.22), inset 0 -10px 18px rgba(0,0,0,0.12)",
     display: "grid",
     "place-items": "center",
     "align-self": "start",
@@ -147,12 +144,11 @@ const PushDialog: Component<{ state: PushDialogState; onClose: () => void }> = (
         style={dialog}
       >
         <div aria-hidden="true" style={icon}>
-          <div style={{ position: "relative", width: "22px", height: "32px" }}>
-            <span style={{ position: "absolute", left: "3px", top: "1px", width: "3px", height: "26px", background: "#fff", "border-radius": "2px" }} />
-            <span style={{ position: "absolute", left: "9px", top: "1px", width: "3px", height: "26px", background: "#fff", "border-radius": "2px" }} />
-            <span style={{ position: "absolute", left: "15px", top: "1px", width: "3px", height: "26px", background: "#fff", "border-radius": "2px" }} />
-            <span style={{ position: "absolute", left: "4px", top: "25px", width: "14px", height: "4px", background: "#fff", "border-radius": "0 0 7px 7px" }} />
-          </div>
+          <img
+            src={ladyLogo}
+            alt=""
+            style={{ width: "56px", height: "56px", "object-fit": "contain", display: "block" }}
+          />
         </div>
 
         <div style={{ "min-width": 0 }}>

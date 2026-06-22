@@ -216,6 +216,7 @@ const App: Component = () => {
   // Poll local repo state so edits made outside Lady (editor, terminal) show up
   // without clicking Fetch. Pauses while the window is hidden.
   const REPO_POLL_MS = 2_000;
+  const REMOTE_FETCH_MS = 5_000;
   createEffect(() => {
     if (!active()) return;
     const tick = () => {
@@ -225,6 +226,37 @@ const App: Component = () => {
     const onVis = () => {
       if (document.visibilityState === "visible") refresh();
     };
+    document.addEventListener("visibilitychange", onVis);
+    onCleanup(() => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    });
+  });
+
+  // Keep remote-tracking branches fresh for incoming/outgoing branch badges.
+  // This intentionally uses a quiet backend command so the toolbar progress line
+  // is reserved for user-initiated Fetch/Pull/Push operations.
+  createEffect(() => {
+    const repo = active();
+    if (!repo) return;
+    let fetching = false;
+    const tick = async () => {
+      if (fetching || document.visibilityState === "hidden") return;
+      fetching = true;
+      try {
+        await invoke("fetch_background", { repo: repo.id });
+        if (active()?.id === repo.id) refresh();
+      } catch {
+        // Background fetch is best-effort; explicit Fetch still reports errors.
+      } finally {
+        fetching = false;
+      }
+    };
+    const id = window.setInterval(tick, REMOTE_FETCH_MS);
+    const onVis = () => {
+      if (document.visibilityState === "visible") void tick();
+    };
+    void tick();
     document.addEventListener("visibilitychange", onVis);
     onCleanup(() => {
       clearInterval(id);

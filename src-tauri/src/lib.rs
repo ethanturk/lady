@@ -826,6 +826,27 @@ fn fetch(
         .map_err(friendly_git_err)
 }
 
+/// Quiet best-effort background fetch used by the UI poller. It uses the same
+/// credential resolution as the explicit Fetch action but does not emit progress
+/// events, so periodic refreshes do not disturb the toolbar status line.
+#[tauri::command]
+fn fetch_background(
+    repo: RepoId,
+    engine: State<GixEngine>,
+    hosting: State<'_, Hosting>,
+) -> Result<(), String> {
+    let mut auth = git_auth_for_repo(&repo, &engine);
+    if auth.is_empty() {
+        if let Some(token) = http_bearer_for_remote(&repo, None, &engine, &hosting) {
+            auth = http_bearer_git_auth(token);
+        }
+    }
+    let mut ignore = |_line: &str| {};
+    engine
+        .fetch(&repo, None, &auth, &mut ignore)
+        .map_err(friendly_git_err)
+}
+
 /// Pull (fetch + integrate) from `remote`/`branch`, or the configured upstream.
 /// Progress streams as `fetch-progress` events.
 #[tauri::command]
@@ -940,7 +961,7 @@ fn ahead_behind(
     engine.ahead_behind(&repo).map_err(|e| e.to_string())
 }
 
-/// Ahead/behind vs upstream for every local branch, keyed by branch name.
+/// Incoming/outgoing counts for comparable local and remote branch rows.
 #[tauri::command]
 fn branches_ahead_behind(
     repo: RepoId,
@@ -2372,6 +2393,7 @@ pub fn run() {
             move_tag,
             reset,
             fetch,
+            fetch_background,
             pull,
             push,
             delete_remote_ref,

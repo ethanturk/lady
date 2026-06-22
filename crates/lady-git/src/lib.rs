@@ -334,8 +334,11 @@ pub trait GitEngine: Send + Sync {
     /// there is no upstream configured (nothing to compare against).
     fn ahead_behind(&self, repo: &RepoId) -> Result<Option<AheadBehind>>;
 
-    /// Ahead/behind counts for every local branch that has an upstream, keyed by
-    /// branch short name. Branches without an upstream are omitted.
+    /// Ahead/behind counts for branch rows that can be compared to a local /
+    /// remote pair. Local branches with an upstream are keyed by local branch
+    /// short name; their upstream remote-tracking rows are keyed by remote short
+    /// name (for example `origin/main`). Remote-tracking rows with a same-named
+    /// local branch are also included even when tracking is not configured.
     fn branches_ahead_behind(
         &self,
         repo: &RepoId,
@@ -1668,11 +1671,14 @@ impl GitEngine for GixEngine {
         )?;
         let text = String::from_utf8_lossy(&out.stdout);
         let mut map = std::collections::BTreeMap::new();
+        let mut local_branches = std::collections::BTreeSet::new();
+        let mut counted_remotes = std::collections::BTreeSet::new();
         for line in text.lines() {
             let mut parts = line.split('\u{0}');
             let (Some(name), Some(upstream)) = (parts.next(), parts.next()) else {
                 continue;
             };
+            local_branches.insert(name.to_string());
             if upstream.is_empty() {
                 continue;
             }
@@ -1685,7 +1691,38 @@ impl GitEngine for GixEngine {
             let mut nums = ctext.split_whitespace();
             let behind = nums.next().and_then(|s| s.parse().ok()).unwrap_or(0);
             let ahead = nums.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-            map.insert(name.to_string(), AheadBehind { ahead, behind });
+            let counts = AheadBehind { ahead, behind };
+            map.insert(name.to_string(), counts);
+            map.insert(upstream.to_string(), counts);
+            counted_remotes.insert(upstream.to_string());
+        }
+
+        // Also show counts beside remote-tracking branches that have a same
+        // named local branch but no explicit upstream relationship configured.
+        let remotes = run_git(
+            &wd,
+            &["for-each-ref", "--format=%(refname:short)", "refs/remotes"],
+        )?;
+        let text = String::from_utf8_lossy(&remotes.stdout);
+        for remote in text.lines().filter(|r| !r.ends_with("/HEAD")) {
+            if counted_remotes.contains(remote) {
+                continue;
+            }
+            let Some((_, local)) = remote.split_once('/') else {
+                continue;
+            };
+            if !local_branches.contains(local) {
+                continue;
+            }
+            let range = format!("{remote}...{local}");
+            let Ok(counts) = run_git(&wd, &["rev-list", "--left-right", "--count", &range]) else {
+                continue;
+            };
+            let ctext = String::from_utf8_lossy(&counts.stdout);
+            let mut nums = ctext.split_whitespace();
+            let behind = nums.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+            let ahead = nums.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+            map.insert(remote.to_string(), AheadBehind { ahead, behind });
         }
         Ok(map)
     }
@@ -5381,6 +5418,13 @@ mod tests {
         let map = engine.branches_ahead_behind(&id).expect("ahead/behind");
         assert_eq!(
             map.get("main"),
+            Some(&AheadBehind {
+                ahead: 1,
+                behind: 0
+            })
+        );
+        assert_eq!(
+            map.get("origin/main"),
             Some(&AheadBehind {
                 ahead: 1,
                 behind: 0
