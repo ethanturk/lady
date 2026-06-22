@@ -12,6 +12,60 @@ type Panel = "local" | "remote" | "tags" | "stashes" | "prs" | "issues";
 
 /** Scale a px padding by the global density step (--pad-scale). */
 const ps = (px: number) => `calc(${px}px * var(--pad-scale))`;
+const treePad = (base: number, depth: number) => ps(base + depth * 14);
+
+interface RefTreeNode {
+  name: string;
+  path: string;
+  ref?: RefInfo;
+  children: RefTreeNode[];
+  childrenByName?: Map<string, RefTreeNode>;
+}
+
+const branchTree = (refs: RefInfo[]): RefTreeNode[] => {
+  const root = new Map<string, RefTreeNode>();
+  const ensure = (map: Map<string, RefTreeNode>, name: string, path: string) => {
+    let node = map.get(name);
+    if (!node) {
+      node = { name, path, children: [] };
+      map.set(name, node);
+    }
+    return node;
+  };
+
+  for (const ref of refs) {
+    const parts = ref.name.split("/").filter(Boolean);
+    let map = root;
+    let path = "";
+    for (const [index, part] of parts.entries()) {
+      path = path ? `${path}/${part}` : part;
+      const node = ensure(map, part, path);
+      if (index === parts.length - 1) {
+        node.ref = ref;
+      }
+      node.childrenByName ??= new Map<string, RefTreeNode>();
+      map = node.childrenByName;
+    }
+  }
+
+  const sortNodes = (map: Map<string, RefTreeNode>): RefTreeNode[] =>
+    [...map.values()]
+      .map((node) => {
+        const childMap = node.childrenByName;
+        node.children = childMap ? sortNodes(childMap) : [];
+        delete node.childrenByName;
+        return node;
+      })
+      .sort((a, b) => {
+        const folderDelta = Number(b.children.length > 0) - Number(a.children.length > 0);
+        return folderDelta || a.name.localeCompare(b.name);
+      });
+
+  return sortNodes(root);
+};
+
+const leafCount = (node: RefTreeNode): number =>
+  (node.ref ? 1 : 0) + node.children.reduce((sum, child) => sum + leafCount(child), 0);
 
 interface SidebarProps {
   repoId: RepoId | null;
@@ -103,11 +157,24 @@ const Sidebar: Component<SidebarProps> = (props) => {
   const branches = createMemo(() => byKind("Branch"));
   const remotes = createMemo(() => byKind("Remote"));
   const tags = createMemo(() => byKind("Tag"));
+  const branchTreeNodes = createMemo(() => branchTree(branches()));
+  const remoteTreeNodes = createMemo(() => branchTree(remotes()));
   const isCurrent = (r: RefInfo) => r.kind === "Branch" && r.name === headBranch();
 
   // The ref row last clicked (shown in All Commits), highlighted so the user
   // knows which branch they're viewing. Keyed `${kind}:${name}`.
   const [selectedRef, setSelectedRef] = createSignal<string | null>(null);
+  const [closedFolders, setClosedFolders] = createSignal<Set<string>>(new Set());
+  const folderKey = (kind: "Branch" | "Remote", path: string) => `${kind}:${path}`;
+  const folderOpen = (kind: "Branch" | "Remote", path: string) => !closedFolders().has(folderKey(kind, path));
+  const toggleFolder = (kind: "Branch" | "Remote", path: string) =>
+    setClosedFolders((cur) => {
+      const next = new Set(cur);
+      const key = folderKey(kind, path);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
 
   // Accordion: multiple panels may be open on tall screens; short screens keep
   // a single panel open at a time so the list never overflows awkwardly.
@@ -230,7 +297,7 @@ const Sidebar: Component<SidebarProps> = (props) => {
     );
   };
 
-  const branchRow = (r: RefInfo, kind: "Branch" | "Remote" | "Tag") => {
+  const branchRow = (r: RefInfo, kind: "Branch" | "Remote" | "Tag", label = r.name, depth = 0) => {
     const rowKey = `${kind}:${r.name}`;
     const isShown = () => selectedRef() === rowKey;
     return (
@@ -275,7 +342,7 @@ const Sidebar: Component<SidebarProps> = (props) => {
         display: "flex",
         "align-items": "center",
         gap: "6px",
-        padding: `${ps(6)} 8px ${ps(6)} 26px`,
+        padding: `${ps(6)} 8px ${ps(6)} ${treePad(26, depth)}`,
         "border-radius": "6px",
         "font-size": "13px",
         color: "var(--tx2)",
@@ -301,7 +368,7 @@ const Sidebar: Component<SidebarProps> = (props) => {
         }}
         title={r.name}
       >
-        {r.name}
+        {label}
       </span>
       {/* Outgoing (↑ local-only) / incoming (↓ remote-only) vs the paired branch. */}
       <Show when={kind !== "Tag" && aheadBehind()[r.name]}>
@@ -343,6 +410,62 @@ const Sidebar: Component<SidebarProps> = (props) => {
         </button>
       </Show>
     </div>
+    );
+  };
+
+  const treeFolderRow = (node: RefTreeNode, kind: "Branch" | "Remote", depth: number) => {
+    const open = () => folderOpen(kind, node.path);
+    return (
+      <button
+        class="hov"
+        onClick={() => toggleFolder(kind, node.path)}
+        aria-expanded={open()}
+        title={node.path}
+        style={{
+          display: "flex",
+          "align-items": "center",
+          gap: "6px",
+          width: "100%",
+          padding: `${ps(5)} 8px ${ps(5)} ${treePad(8, depth)}`,
+          border: "none",
+          "border-radius": "6px",
+          background: "transparent",
+          color: "var(--tx3)",
+          "font-size": "12.5px",
+          cursor: "pointer",
+          "text-align": "left",
+          "user-select": "none",
+        }}
+      >
+        <IconChevron size={12} open={open()} style={{ color: "var(--tx4)", "flex-shrink": 0 }} />
+        <span
+          style={{
+            flex: "1",
+            overflow: "hidden",
+            "text-overflow": "ellipsis",
+            "white-space": "nowrap",
+            "font-weight": 600,
+          }}
+        >
+          {node.name}
+        </span>
+        <span style={{ color: "var(--tx4)", "font-size": "11px", "flex-shrink": 0 }}>{leafCount(node)}</span>
+      </button>
+    );
+  };
+
+  const treeNode = (node: RefTreeNode, kind: "Branch" | "Remote", depth = 0): JSX.Element => {
+    if (node.children.length === 0) {
+      return node.ref ? branchRow(node.ref, kind, node.name, depth) : null;
+    }
+    return (
+      <>
+        {treeFolderRow(node, kind, depth)}
+        <Show when={folderOpen(kind, node.path)}>
+          <Show when={node.ref}>{(ref) => branchRow(ref(), kind, node.name, depth + 1)}</Show>
+          <For each={node.children}>{(child) => treeNode(child, kind, depth + 1)}</For>
+        </Show>
+      </>
     );
   };
 
@@ -418,11 +541,11 @@ const Sidebar: Component<SidebarProps> = (props) => {
       {/* Accordion panels (one open at a time) */}
       <div style={{ padding: "0 6px 16px", display: "flex", "flex-direction": "column", gap: "2px" }}>
         <AccordionPanel title="Local" count={branches().length} open={isOpen("local")} onToggle={() => toggle("local")}>
-          <For each={branches()} fallback={<Note>No local branches.</Note>}>{(r) => branchRow(r, "Branch")}</For>
+          <For each={branchTreeNodes()} fallback={<Note>No local branches.</Note>}>{(node) => treeNode(node, "Branch")}</For>
         </AccordionPanel>
 
         <AccordionPanel title="Remote" count={remotes().length} open={isOpen("remote")} onToggle={() => toggle("remote")}>
-          <For each={remotes()} fallback={<Note>No remote branches.</Note>}>{(r) => branchRow(r, "Remote")}</For>
+          <For each={remoteTreeNodes()} fallback={<Note>No remote branches.</Note>}>{(node) => treeNode(node, "Remote")}</For>
         </AccordionPanel>
 
         <AccordionPanel title="Tags" count={tags().length} open={isOpen("tags")} onToggle={() => toggle("tags")}>

@@ -966,6 +966,54 @@ fn default_push_remote(workdir: &Path, branch: &str) -> Result<String> {
     )))
 }
 
+fn git_ref_exists(workdir: &Path, refname: &str) -> Result<bool> {
+    Ok(
+        run_git_raw(workdir, &["show-ref", "--verify", "--quiet", refname])?
+            .status
+            .success(),
+    )
+}
+
+fn checkout_remote_tracking(workdir: &Path, target: &str, force: bool) -> Result<bool> {
+    let exact_local = format!("refs/heads/{target}");
+    if git_ref_exists(workdir, &exact_local)? {
+        return Ok(false);
+    }
+
+    let remote_ref = format!("refs/remotes/{target}");
+    if !git_ref_exists(workdir, &remote_ref)? {
+        return Ok(false);
+    }
+
+    let Some((_, local_branch)) = target.split_once('/') else {
+        return Ok(false);
+    };
+    if local_branch == "HEAD" || local_branch.ends_with("/HEAD") {
+        return Err(Error::Git(format!(
+            "cannot check out remote HEAD '{target}'; choose a branch"
+        )));
+    }
+
+    let local_ref = format!("refs/heads/{local_branch}");
+    if git_ref_exists(workdir, &local_ref)? {
+        let mut args: Vec<&str> = vec!["checkout"];
+        if force {
+            args.push("--force");
+        }
+        args.push(local_branch);
+        run_git(workdir, &args)?;
+        return Ok(true);
+    }
+
+    let mut args: Vec<&str> = vec!["checkout"];
+    if force {
+        args.push("--force");
+    }
+    args.extend(["--track", "-b", local_branch, target]);
+    run_git(workdir, &args)?;
+    Ok(true)
+}
+
 impl Default for GixEngine {
     fn default() -> Self {
         Self::new()
@@ -1508,6 +1556,9 @@ impl GitEngine for GixEngine {
 
     fn checkout(&self, repo: &RepoId, target: &str, force: bool) -> Result<()> {
         let wd = self.workdir(repo)?;
+        if checkout_remote_tracking(&wd, target, force)? {
+            return Ok(());
+        }
         // Without `--force`, git refuses to overwrite local changes and prints a
         // clear message — surfaced verbatim by run_git's Error::Git.
         let mut args: Vec<&str> = vec!["checkout"];
@@ -4024,6 +4075,16 @@ mod tests {
         String::from_utf8_lossy(&out.stdout).trim().to_string()
     }
 
+    fn current_upstream(p: &Path) -> String {
+        let out = std::process::Command::new("git")
+            .current_dir(p)
+            .args(["rev-parse", "--abbrev-ref", "@{u}"])
+            .output()
+            .expect("rev-parse upstream");
+        assert!(out.status.success(), "current branch should have upstream");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
     #[test]
     fn create_checkout_and_delete_branch() {
         let dir = fixture_repo();
@@ -4044,6 +4105,58 @@ mod tests {
             !refs.iter().any(|r| r.name == "feature"),
             "branch ref removed"
         );
+    }
+
+    #[test]
+    fn checkout_remote_tracking_creates_local_tracking_branch() {
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let root = tmp.path();
+
+        let remote = root.join("remote.git");
+        git(root, &["init", "-q", "--bare", "-b", "main", "remote.git"]);
+
+        let seed = root.join("seed");
+        git(
+            root,
+            &[
+                "clone",
+                "-q",
+                remote.to_str().unwrap(),
+                seed.to_str().unwrap(),
+            ],
+        );
+        git(&seed, &["config", "user.name", "Lady Test"]);
+        git(&seed, &["config", "user.email", "test@example.com"]);
+        git(&seed, &["config", "commit.gpgsign", "false"]);
+        std::fs::write(seed.join("file.txt"), "main\n").expect("write");
+        git(&seed, &["add", "."]);
+        git(&seed, &["commit", "-q", "-m", "main"]);
+        git(&seed, &["push", "-q", "origin", "main"]);
+        git(&seed, &["checkout", "-q", "-b", "feature/deep"]);
+        std::fs::write(seed.join("feature.txt"), "feature\n").expect("write");
+        git(&seed, &["add", "."]);
+        git(&seed, &["commit", "-q", "-m", "feature"]);
+        git(&seed, &["push", "-q", "origin", "feature/deep"]);
+
+        let clone = root.join("clone");
+        git(
+            root,
+            &[
+                "clone",
+                "-q",
+                remote.to_str().unwrap(),
+                clone.to_str().unwrap(),
+            ],
+        );
+
+        let engine = GixEngine::new();
+        let id = engine.open(&clone).expect("open clone");
+        engine
+            .checkout(&id, "origin/feature/deep", false)
+            .expect("checkout remote tracking branch");
+
+        assert_eq!(current_branch(&clone), "feature/deep");
+        assert_eq!(current_upstream(&clone), "origin/feature/deep");
     }
 
     #[test]

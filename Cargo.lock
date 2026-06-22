@@ -3104,7 +3104,7 @@ dependencies = [
 
 [[package]]
 name = "lady-ai"
-version = "1.3.0"
+version = "0.0.5"
 dependencies = [
  "async-trait",
  "lady-proto",
@@ -3120,7 +3120,7 @@ dependencies = [
 
 [[package]]
 name = "lady-app"
-version = "0.0.1"
+version = "0.0.5"
 dependencies = [
  "base64 0.22.1",
  "directories",
@@ -3144,7 +3144,7 @@ dependencies = [
 
 [[package]]
 name = "lady-cli"
-version = "1.3.0"
+version = "0.0.5"
 dependencies = [
  "lady-git",
  "lady-proto",
@@ -3153,7 +3153,7 @@ dependencies = [
 
 [[package]]
 name = "lady-diff"
-version = "1.3.0"
+version = "0.0.5"
 dependencies = [
  "criterion",
  "imara-diff",
@@ -3163,7 +3163,7 @@ dependencies = [
 
 [[package]]
 name = "lady-fixtures"
-version = "1.3.0"
+version = "0.0.5"
 dependencies = [
  "lady-proto",
  "tempfile",
@@ -3171,7 +3171,7 @@ dependencies = [
 
 [[package]]
 name = "lady-git"
-version = "1.3.0"
+version = "0.0.5"
 dependencies = [
  "base64 0.22.1",
  "criterion",
@@ -3185,7 +3185,7 @@ dependencies = [
 
 [[package]]
 name = "lady-graph"
-version = "1.3.0"
+version = "0.0.5"
 dependencies = [
  "criterion",
  "lady-fixtures",
@@ -3194,7 +3194,7 @@ dependencies = [
 
 [[package]]
 name = "lady-hosting"
-version = "1.3.0"
+version = "0.0.5"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -3209,7 +3209,7 @@ dependencies = [
 
 [[package]]
 name = "lady-license"
-version = "1.3.0"
+version = "0.0.5"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
@@ -3221,7 +3221,7 @@ dependencies = [
 
 [[package]]
 name = "lady-mcp"
-version = "1.3.0"
+version = "0.0.5"
 dependencies = [
  "lady-git",
  "lady-proto",
@@ -3235,7 +3235,7 @@ dependencies = [
 
 [[package]]
 name = "lady-proto"
-version = "1.3.0"
+version = "0.0.5"
 dependencies = [
  "serde",
  "serde_json",
