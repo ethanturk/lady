@@ -44,8 +44,12 @@ const Row: Component<{ item: Exclude<MenuEntry, "divider">; onClose: () => void 
   const fire = () => {
     if (props.item.disabled) return;
     if (hasSub()) return; // submenu parents don't act on click
+    // Kick off the action BEFORE closing: `run` is a closure that reads the
+    // opener's state (e.g. the branch name) synchronously when invoked, and
+    // closing disposes that state — running first lets it capture valid values.
+    const pending = props.item.run?.();
     props.onClose();
-    void props.item.run?.();
+    void pending;
   };
 
   return (
