@@ -16,6 +16,10 @@ import type { PrimaryView } from "./Sidebar";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import BranchMenu from "./BranchMenu";
 import type { BranchMenuState, PromptSpec } from "./BranchMenu";
+import CommitMenu from "./CommitMenu";
+import type { CommitMenuState } from "./CommitMenu";
+import TagMenu from "./TagMenu";
+import type { TagMenuState } from "./TagMenu";
 import { addWorktreeFor, checkoutBranch, createBranchAt, createTagAt, deleteBranch } from "./branchActions";
 import { autoUpdateCheck, hideResizers, isNarrow, setSettingsWidth, setSidebarWidth, settingsWidth, sidebarWidth } from "./prefs";
 import ConflictResolver from "./ConflictResolver";
@@ -70,6 +74,8 @@ const App: Component = () => {
   const [overlay, setOverlay] = createSignal<Overlay | null>(null);
   const [changeCount, setChangeCount] = createSignal(0);
   const [branchMenu, setBranchMenu] = createSignal<BranchMenuState | null>(null);
+  const [commitMenu, setCommitMenu] = createSignal<CommitMenuState | null>(null);
+  const [tagMenu, setTagMenu] = createSignal<TagMenuState | null>(null);
   // "New branch from <startPoint>" modal (replaces the unsupported window.prompt).
   const [newBranchFrom, setNewBranchFrom] = createSignal<string | null>(null);
   const [newBranchName, setNewBranchName] = createSignal("");
@@ -401,6 +407,16 @@ const App: Component = () => {
       y: at.y,
     });
 
+  const openCommitMenu = (oid: string, summary: string, at: { x: number; y: number }) =>
+    setCommitMenu({ oid, summary, x: at.x, y: at.y });
+
+  const openTagMenu = (tag: string, at: { x: number; y: number }) =>
+    setTagMenu({ tag, x: at.x, y: at.y });
+
+  // Explain a single commit via the AI overlay (commit-menu / tag-menu target).
+  const explainCommit = (oid: string) =>
+    openExplain({ kind: "commit", oid }, `Explain ${oid.slice(0, 8)}`, oid.slice(0, 8));
+
   // Create a branch from the modal's start point + name.
   const doCreateBranch = async () => {
     const repo = repoId();
@@ -644,6 +660,7 @@ const App: Component = () => {
               onView={goPrimary}
               refs={refs()}
               onBranchMenu={openBranchMenu}
+              onTagMenu={openTagMenu}
               onCheckout={checkoutByName}
               onSelectRef={showRef}
               onBranchKey={onBranchKey}
@@ -690,6 +707,7 @@ const App: Component = () => {
                   onRevert={() => runCommitAction("revert", "Revert")}
                   onRebaseInteractive={(oid) => setRebaseFrom(oid)}
                   onRecompose={(oid) => setRecomposeFrom(oid)}
+                  onCommitMenu={openCommitMenu}
                 />
               </Show>
             </Show>
@@ -729,6 +747,7 @@ const App: Component = () => {
                 onView={goPrimary}
                 refs={refs()}
                 onBranchMenu={openBranchMenu}
+                onTagMenu={openTagMenu}
                 onCheckout={checkoutByName}
                 onSelectRef={showRef}
                 onBranchKey={onBranchKey}
@@ -756,6 +775,45 @@ const App: Component = () => {
           onWorktree={pickWorktreeDir}
           onAiExplain={explainBranch}
           onCreatePr={() => setOverlay("refs")}
+        />
+      </Show>
+
+      {/* Commit context menu (right-click a commit row in All Commits) */}
+      <Show when={commitMenu() && active()}>
+        <CommitMenu
+          repoId={repoId()!}
+          currentBranch={currentBranchName()}
+          refs={refs()}
+          state={commitMenu()!}
+          onClose={() => setCommitMenu(null)}
+          onResult={showResult}
+          onRebaseComplete={onRebaseComplete}
+          onCreateBranch={(startPoint) => {
+            setNewBranchName("");
+            setNewBranchFrom(startPoint);
+          }}
+          onPrompt={openPrompt}
+          onWorktree={pickWorktreeDir}
+          onAiExplain={explainCommit}
+          onRecompose={(oid) => setRecomposeFrom(oid)}
+          onCreatePr={() => setOverlay("refs")}
+        />
+      </Show>
+
+      {/* Tag context menu (right-click a tag in the sidebar Tags panel) */}
+      <Show when={tagMenu() && active()}>
+        <TagMenu
+          repoId={repoId()!}
+          currentBranch={currentBranchName()}
+          refs={refs()}
+          state={tagMenu()!}
+          onClose={() => setTagMenu(null)}
+          onResult={showResult}
+          onCreateBranch={(startPoint) => {
+            setNewBranchName("");
+            setNewBranchFrom(startPoint);
+          }}
+          onAiExplain={explainCommit}
         />
       </Show>
 

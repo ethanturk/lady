@@ -15,8 +15,8 @@ use lady_proto::{
     AheadBehind, ApplyOutcome, BisectState, Blame, BlameLine, ChangeKind, CommandOutput,
     CommitMeta, ConflictSides, ConflictState, FfMode, FileDiff, FileDiffKind, FileStatus,
     FlowConfig, FlowKind, GitIdentity, LfsFile, LfsStatus, MergeOutcome, Oid, ParsedConflict,
-    RebaseOutcome, RebaseStep, RefInfo, RefKind, ReflogEntry, RepoId, Signature, SignatureStatus,
-    StashEntry, Submodule, WorkingTree, Worktree,
+    RebaseOutcome, RebaseStep, RefInfo, RefKind, ReflogEntry, RepoId, ResetMode, Signature,
+    SignatureStatus, StashEntry, Submodule, WorkingTree, Worktree,
 };
 
 /// Whether `git-lfs` is installed and usable (`git lfs version`). Free function
@@ -153,10 +153,11 @@ pub trait GitEngine: Send + Sync {
     /// `base..head`). Used to plan a recompose without touching the working tree.
     fn diff_range(&self, repo: &RepoId, base: &Oid, head: &Oid) -> Result<Vec<FileDiff>>;
 
-    /// `git reset --hard|--mixed <target>`. Mixed moves HEAD and unstages but
-    /// keeps the working tree; hard also discards working-tree changes (used to
-    /// roll a failed recompose back to the original HEAD).
-    fn reset(&self, repo: &RepoId, target: &Oid, hard: bool) -> Result<()>;
+    /// `git reset --soft|--mixed|--hard <target>`. Soft moves HEAD only (changes
+    /// staged); mixed also resets the index but keeps the working tree (changes
+    /// unstaged); hard discards working-tree changes too (used to roll a failed
+    /// recompose back to the original HEAD). See [`ResetMode`].
+    fn reset(&self, repo: &RepoId, target: &Oid, mode: ResetMode) -> Result<()>;
 
     /// The current `HEAD` commit oid.
     fn head_commit(&self, repo: &RepoId) -> Result<Oid>;
@@ -1082,10 +1083,9 @@ impl GitEngine for GixEngine {
         diff_trees(&grepo, Some(old_tree_id), new_tree_id)
     }
 
-    fn reset(&self, repo: &RepoId, target: &Oid, hard: bool) -> Result<()> {
+    fn reset(&self, repo: &RepoId, target: &Oid, mode: ResetMode) -> Result<()> {
         let wd = self.workdir(repo)?;
-        let mode = if hard { "--hard" } else { "--mixed" };
-        run_git(&wd, &["reset", mode, target.as_str()]).map(|_| ())
+        run_git(&wd, &["reset", mode.flag(), target.as_str()]).map(|_| ())
     }
 
     fn head_commit(&self, repo: &RepoId) -> Result<Oid> {
@@ -3162,7 +3162,7 @@ mod tests {
     }
 
     #[test]
-    fn reset_mixed_then_hard_round_trips() {
+    fn reset_soft_mixed_then_hard_round_trips() {
         let dir = fixture_repo();
         let p = dir.path();
         let engine = GixEngine::new();
@@ -3175,9 +3175,30 @@ mod tests {
         let tip = Oid::from(rev("HEAD"));
         let base = Oid::from(rev("HEAD~2"));
 
+        // Soft reset to base: HEAD moves back, but the index keeps the span's
+        // content, so the difference shows up as *staged* changes only.
+        engine
+            .reset(&id, &base, ResetMode::Soft)
+            .expect("soft reset");
+        assert_eq!(
+            engine.head_commit(&id).expect("head").as_str(),
+            base.as_str()
+        );
+        let staged = engine.status(&id).expect("status");
+        assert!(
+            !staged.staged.is_empty(),
+            "soft reset should leave the span's changes staged"
+        );
+        assert!(
+            staged.unstaged.is_empty(),
+            "soft reset should not leave unstaged changes"
+        );
+
         // Mixed reset to base: HEAD moves back, the span's files remain on disk
         // (now untracked/modified), so the tree is dirty.
-        engine.reset(&id, &base, false).expect("mixed reset");
+        engine
+            .reset(&id, &base, ResetMode::Mixed)
+            .expect("mixed reset");
         assert_eq!(
             engine.head_commit(&id).expect("head").as_str(),
             base.as_str()
@@ -3189,7 +3210,9 @@ mod tests {
         );
 
         // Hard reset back to the tip restores the original clean state.
-        engine.reset(&id, &tip, true).expect("hard reset");
+        engine
+            .reset(&id, &tip, ResetMode::Hard)
+            .expect("hard reset");
         assert_eq!(
             engine.head_commit(&id).expect("head").as_str(),
             tip.as_str()

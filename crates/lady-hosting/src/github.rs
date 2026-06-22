@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 use crate::{
     api_error_message, detect_github_slug, Error, ForgeItem, ForgeKind, HostingProvider,
-    NewPullRequest, NewRepo, Notification, RepoInfo, RepoSlug, Result,
+    NewPullRequest, NewRepo, Notification, RepoInfo, RepoSlug, Result, WebTarget,
 };
 
 /// Map a GitHub pulls/issues JSON object to a [`ForgeItem`].
@@ -195,6 +195,15 @@ impl HostingProvider for GitHubClient {
 
     fn detect_slug(&self, remote_urls: &[String]) -> Option<RepoSlug> {
         detect_github_slug(remote_urls)
+    }
+
+    fn web_url(&self, web_base: &str, slug: &RepoSlug, target: &WebTarget) -> String {
+        let RepoSlug { owner, repo, .. } = slug;
+        match target {
+            WebTarget::Commit(sha) => format!("{web_base}/{owner}/{repo}/commit/{sha}"),
+            WebTarget::Branch(branch) => format!("{web_base}/{owner}/{repo}/tree/{branch}"),
+            WebTarget::Tag(tag) => format!("{web_base}/{owner}/{repo}/releases/tag/{tag}"),
+        }
     }
 
     async fn get_login(&self, token: &str) -> Result<String> {

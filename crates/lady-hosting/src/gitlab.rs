@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 use crate::{
     api_error_message, owner_repo_slug, remote_host, Error, ForgeKind, HostingProvider,
-    NewPullRequest, NewRepo, RepoInfo, RepoSlug, Result,
+    NewPullRequest, NewRepo, RepoInfo, RepoSlug, Result, WebTarget,
 };
 
 #[derive(Deserialize)]
@@ -55,6 +55,15 @@ impl HostingProvider for GitLabClient {
             // gitlab.com or any host carrying "gitlab" (self-hosted heuristic).
             (host == "gitlab.com" || host.contains("gitlab")).then(|| owner_repo_slug(u))?
         })
+    }
+
+    fn web_url(&self, web_base: &str, slug: &RepoSlug, target: &WebTarget) -> String {
+        let RepoSlug { owner, repo, .. } = slug;
+        match target {
+            WebTarget::Commit(sha) => format!("{web_base}/{owner}/{repo}/-/commit/{sha}"),
+            WebTarget::Branch(branch) => format!("{web_base}/{owner}/{repo}/-/tree/{branch}"),
+            WebTarget::Tag(tag) => format!("{web_base}/{owner}/{repo}/-/tags/{tag}"),
+        }
     }
 
     async fn get_login(&self, token: &str) -> Result<String> {

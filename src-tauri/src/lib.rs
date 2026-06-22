@@ -2,7 +2,7 @@ use lady_git::{CommitOpts, DiffSpec, GitAuth, GitEngine, GixEngine, GraphQuery, 
 use lady_graph::layout_continuation;
 use lady_proto::{
     ApplyOutcome, Blame, CommitMeta, FfMode, FileDiff, GitHubAccount, GitIdentity, MergeOutcome,
-    Oid, RebaseOutcome, RefInfo, RepoAuth, RepoId, RepoSettings, WorkingTree,
+    Oid, RebaseOutcome, RefInfo, RepoAuth, RepoId, RepoSettings, ResetMode, WorkingTree,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -679,6 +679,20 @@ fn delete_tag(repo: RepoId, name: String, engine: State<GixEngine>) -> Result<()
     engine.delete_tag(&repo, &name).map_err(|e| e.to_string())
 }
 
+/// `git reset --soft|--mixed|--hard <target>` — move the current branch to
+/// `target`, optionally rewinding the index and working tree (see [`ResetMode`]).
+#[tauri::command]
+fn reset(
+    repo: RepoId,
+    target: String,
+    mode: ResetMode,
+    engine: State<GixEngine>,
+) -> Result<(), String> {
+    engine
+        .reset(&repo, &Oid::from(target), mode)
+        .map_err(|e| e.to_string())
+}
+
 /// Clone `url` into `dest` via system git (ADR-0003 shell-out tier), streaming
 /// git's progress lines to the frontend as `clone-progress` events, and open
 /// the result.
@@ -829,6 +843,41 @@ fn push(
             branch.as_deref(),
             set_upstream,
             force,
+            &auth,
+            &mut emit,
+        )
+        .map_err(|e| e.to_string())
+}
+
+/// Delete `refspec` on `remote` by pushing an empty source to it
+/// (`git push <remote> :<refspec>`). `refspec` is a full ref name such as
+/// `refs/tags/v1` or `refs/heads/feature`. Auth mirrors [`push`].
+#[tauri::command]
+fn delete_remote_ref(
+    repo: RepoId,
+    remote: String,
+    refspec: String,
+    app: tauri::AppHandle,
+    engine: State<GixEngine>,
+    hosting: State<'_, Hosting>,
+) -> Result<(), String> {
+    use tauri::Emitter;
+    let mut auth = git_auth_for_repo(&repo, &engine);
+    if auth.is_empty() {
+        if let Some(token) = http_bearer_for_remote(&repo, Some(&remote), &engine, &hosting) {
+            auth = http_bearer_git_auth(token);
+        }
+    }
+    let mut emit = |line: &str| {
+        let _ = app.emit("push-progress", line.to_string());
+    };
+    engine
+        .push(
+            &repo,
+            Some(&remote),
+            Some(&format!(":{refspec}")),
+            false,
+            false,
             &auth,
             &mut emit,
         )
@@ -1893,6 +1942,34 @@ fn resolve_forge(
     Ok((provider, slug, token))
 }
 
+/// Build a browser URL for `target` (commit/branch/tag) on the active repo's
+/// forge, or `None` when no supported remote/slug is detected. No token needed —
+/// this is pure URL assembly so "Copy link" works even when not signed in.
+#[tauri::command]
+fn remote_web_url(
+    repo: RepoId,
+    target: lady_hosting::WebTarget,
+    engine: State<GixEngine>,
+    hosting: State<'_, Hosting>,
+) -> Result<Option<String>, String> {
+    let Some((provider, urls)) = provider_for_repo(&repo, &engine, &hosting)? else {
+        return Ok(None);
+    };
+    let Some(slug) = provider.detect_slug(&urls) else {
+        return Ok(None);
+    };
+    // Web base = the matching remote's host, so self-hosted installs resolve to
+    // their own host rather than the forge's public one.
+    let web_base = urls
+        .iter()
+        .find(|u| {
+            lady_hosting::provider_for(u, &hosting.self_hosted).map(|p| p.kind())
+                == Some(provider.kind())
+        })
+        .and_then(|u| lady_hosting::web_base(u));
+    Ok(web_base.map(|base| provider.web_url(&base, &slug, &target)))
+}
+
 /// List open pull/merge requests for the active repo's forge.
 #[tauri::command]
 async fn list_pull_requests(
@@ -2218,9 +2295,12 @@ pub fn run() {
             checkout,
             create_tag,
             delete_tag,
+            reset,
             fetch,
             pull,
             push,
+            delete_remote_ref,
+            remote_web_url,
             ahead_behind,
             branches_ahead_behind,
             stash_save,

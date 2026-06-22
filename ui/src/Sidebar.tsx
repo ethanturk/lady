@@ -8,7 +8,7 @@ import { sidebarWidth } from "./prefs";
 export type PrimaryView = "changes" | "commits";
 
 /** Which accordion panel is expanded (only one at a time). */
-type Panel = "local" | "remote" | "stashes" | "prs" | "issues";
+type Panel = "local" | "remote" | "tags" | "stashes" | "prs" | "issues";
 
 /** Scale a px padding by the global density step (--pad-scale). */
 const ps = (px: number) => `calc(${px}px * var(--pad-scale))`;
@@ -25,6 +25,8 @@ interface SidebarProps {
   refs: RefInfo[];
   /** Open the branch context menu for `branch` at the pointer location. */
   onBranchMenu: (branch: string, at: { x: number; y: number }) => void;
+  /** Open the tag context menu for `tag` at the pointer location. */
+  onTagMenu?: (tag: string, at: { x: number; y: number }) => void;
   /** Check out `branch` (double-click on a branch/remote row). */
   onCheckout: (branch: string) => void;
   /** Single-click a ref row → show that branch/tag in All Commits (its tip). */
@@ -100,6 +102,7 @@ const Sidebar: Component<SidebarProps> = (props) => {
       .sort((a, b) => a.name.localeCompare(b.name));
   const branches = createMemo(() => byKind("Branch"));
   const remotes = createMemo(() => byKind("Remote"));
+  const tags = createMemo(() => byKind("Tag"));
   const isCurrent = (r: RefInfo) => r.kind === "Branch" && r.name === headBranch();
 
   // The ref row last clicked (shown in All Commits), highlighted so the user
@@ -242,6 +245,9 @@ const Sidebar: Component<SidebarProps> = (props) => {
         if (kind === "Branch") {
           e.preventDefault();
           props.onBranchMenu(r.name, { x: e.clientX, y: e.clientY });
+        } else if (kind === "Tag" && props.onTagMenu) {
+          e.preventDefault();
+          props.onTagMenu(r.name, { x: e.clientX, y: e.clientY });
         }
       }}
       onDblClick={() => {
@@ -315,13 +321,14 @@ const Sidebar: Component<SidebarProps> = (props) => {
           );
         })()}
       </Show>
-      <Show when={kind === "Branch"}>
+      <Show when={kind === "Branch" || (kind === "Tag" && props.onTagMenu)}>
         <button
           aria-label={`Actions for ${r.name}`}
           onClick={(e) => {
             e.stopPropagation();
             const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
-            props.onBranchMenu(r.name, { x: box.left, y: box.bottom });
+            if (kind === "Tag") props.onTagMenu?.(r.name, { x: box.left, y: box.bottom });
+            else props.onBranchMenu(r.name, { x: box.left, y: box.bottom });
           }}
           style={{
             border: "none",
@@ -416,6 +423,10 @@ const Sidebar: Component<SidebarProps> = (props) => {
 
         <AccordionPanel title="Remote" count={remotes().length} open={isOpen("remote")} onToggle={() => toggle("remote")}>
           <For each={remotes()} fallback={<Note>No remote branches.</Note>}>{(r) => branchRow(r, "Remote")}</For>
+        </AccordionPanel>
+
+        <AccordionPanel title="Tags" count={tags().length} open={isOpen("tags")} onToggle={() => toggle("tags")}>
+          <For each={tags()} fallback={<Note>No tags.</Note>}>{(r) => branchRow(r, "Tag")}</For>
         </AccordionPanel>
 
         <AccordionPanel title="Stashes" count={stashes().length} open={isOpen("stashes")} onToggle={() => toggle("stashes")}>

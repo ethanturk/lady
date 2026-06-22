@@ -114,6 +114,8 @@ const GraphView: Component<{
   primary?: string;
   /** Emits the new selection after a click resolves Cmd/Ctrl + Shift gestures. */
   onSelectionChange?: (oids: string[], primary: string) => void;
+  /** Right-click a commit row → open the commit context menu at the cursor. */
+  onCommitMenu?: (oid: string, summary: string, at: { x: number; y: number }) => void;
 }> = (props) => {
   const [rows, setRows] = createSignal<CommitGraphRow[]>([]);
   // Anchor oid for Shift-range selection (the last plainly/Cmd-clicked row).
@@ -314,6 +316,11 @@ const GraphView: Component<{
                           shift: e.shiftKey,
                         })
                       }
+                      onContextMenu={(e) => {
+                        if (!props.onCommitMenu) return;
+                        e.preventDefault();
+                        props.onCommitMenu(row.oid, row.summary, { x: e.clientX, y: e.clientY });
+                      }}
                       style={{
                         position: "relative",
                         height: `${rowHeight()}px`,

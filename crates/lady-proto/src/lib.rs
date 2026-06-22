@@ -373,6 +373,29 @@ pub enum RebaseOutcome {
     Stopped,
 }
 
+/// How far a `reset` rewinds: which of HEAD, the index, and the working tree
+/// move to the target (mirrors `git reset --soft|--mixed|--hard`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ResetMode {
+    /// Move HEAD only; leave the index and working tree (changes become staged).
+    Soft,
+    /// Move HEAD and reset the index; keep the working tree (changes unstaged).
+    Mixed,
+    /// Move HEAD, index, and working tree; discard all changes.
+    Hard,
+}
+
+impl ResetMode {
+    /// The `git reset` flag for this mode.
+    pub fn flag(self) -> &'static str {
+        match self {
+            ResetMode::Soft => "--soft",
+            ResetMode::Mixed => "--mixed",
+            ResetMode::Hard => "--hard",
+        }
+    }
+}
+
 /// What to do with a commit in an interactive rebase (mirrors git's todo verbs).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RebaseAction {

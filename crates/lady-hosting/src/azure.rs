@@ -8,7 +8,7 @@ use serde::Deserialize;
 
 use crate::{
     api_error_message, path_segments, remote_host, Error, ForgeKind, HostingProvider,
-    NewPullRequest, NewRepo, RepoInfo, RepoSlug, Result,
+    NewPullRequest, NewRepo, RepoInfo, RepoSlug, Result, WebTarget,
 };
 
 const API_VERSION: &str = "7.1";
@@ -123,6 +123,24 @@ impl HostingProvider for AzureDevOpsClient {
 
     fn detect_slug(&self, remote_urls: &[String]) -> Option<RepoSlug> {
         remote_urls.iter().find_map(|u| azure_slug(u))
+    }
+
+    fn web_url(&self, web_base: &str, slug: &RepoSlug, target: &WebTarget) -> String {
+        let RepoSlug {
+            owner,
+            repo,
+            project,
+        } = slug;
+        // Azure's repo home is `/{org}/{project}/_git/{repo}`; project falls back
+        // to the repo name (the common default). Refs use a `version=GC|GB|GT`
+        // query (best-effort — branch/tag names are not URL-encoded here).
+        let project = project.as_deref().unwrap_or(repo.as_str());
+        let base = format!("{web_base}/{owner}/{project}/_git/{repo}");
+        match target {
+            WebTarget::Commit(sha) => format!("{base}/commit/{sha}"),
+            WebTarget::Branch(branch) => format!("{base}?version=GB{branch}"),
+            WebTarget::Tag(tag) => format!("{base}?version=GT{tag}"),
+        }
     }
 
     async fn get_login(&self, token: &str) -> Result<String> {

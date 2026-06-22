@@ -641,13 +641,13 @@ pub(crate) fn recompose_apply_inner(
     recompose_guard(repo, engine, &base)?;
     let orig = engine.head_commit(repo).map_err(|e| e.to_string())?;
     engine
-        .reset(repo, &base, false)
+        .reset(repo, &base, lady_proto::ResetMode::Mixed)
         .map_err(|e| e.to_string())?;
     match apply_commit_plan_inner(repo, plan, engine) {
         Ok(made) => Ok(made),
         Err(e) => {
             // Roll the original commits back so a failure leaves history intact.
-            let _ = engine.reset(repo, &orig, true);
+            let _ = engine.reset(repo, &orig, lady_proto::ResetMode::Hard);
             Err(format!("Recompose failed and was rolled back: {e}"))
         }
     }

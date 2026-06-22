@@ -18,6 +18,8 @@ interface AllCommitsViewProps {
   onRevert: () => void;
   onRebaseInteractive: (oid: string) => void;
   onRecompose: (oid: string) => void;
+  /** Right-click a commit row → open the commit context menu at the cursor. */
+  onCommitMenu?: (oid: string, summary: string, at: { x: number; y: number }) => void;
 }
 
 /**
@@ -67,6 +69,7 @@ const AllCommitsView: Component<AllCommitsViewProps> = (props) => {
           selected={props.selected}
           primary={props.primary}
           onSelectionChange={props.onSelectionChange}
+          onCommitMenu={props.onCommitMenu}
         />
       </div>
 

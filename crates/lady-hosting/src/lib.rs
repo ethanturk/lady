@@ -115,6 +115,18 @@ impl RepoSlug {
     }
 }
 
+/// What on the forge to build a browser URL for (commit / branch / tag).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value")]
+pub enum WebTarget {
+    /// A commit, by full or short sha.
+    Commit(String),
+    /// A branch, by short name.
+    Branch(String),
+    /// A tag, by short name.
+    Tag(String),
+}
+
 /// Details for opening a pull / merge request.
 #[derive(Clone, Debug, Serialize)]
 pub struct NewPullRequest {
@@ -206,6 +218,11 @@ pub trait HostingProvider: Send + Sync {
     /// Detect this provider's repo slug among the repository's remote URLs.
     fn detect_slug(&self, remote_urls: &[String]) -> Option<RepoSlug>;
 
+    /// Build a browser URL on this forge for `target`. `web_base` is the
+    /// `scheme://host` derived from the matching remote (see [`web_base`]), so
+    /// self-hosted installs resolve to their own host.
+    fn web_url(&self, web_base: &str, slug: &RepoSlug, target: &WebTarget) -> String;
+
     /// Verify `token` and return the authenticated user's login/handle.
     async fn get_login(&self, token: &str) -> Result<String>;
 
@@ -249,6 +266,12 @@ pub fn remote_host(url: &str) -> Option<String> {
         return host.contains('.').then(|| host.to_string());
     }
     None
+}
+
+/// The browser base (`https://host`) for a remote URL — the web host always
+/// uses https even when the remote is ssh. `None` when no host can be parsed.
+pub fn web_base(remote_url: &str) -> Option<String> {
+    remote_host(remote_url).map(|h| format!("https://{h}"))
 }
 
 /// The path segments after the host (no leading/trailing slash, `.git` stripped
@@ -501,6 +524,85 @@ mod tests {
         assert_eq!(p.kind(), ForgeKind::GitLab);
         // Without the config it would be unknown.
         assert!(provider_for("https://gitlab.mycorp.com/group/proj.git", &[]).is_none());
+    }
+
+    #[test]
+    fn web_base_uses_https_for_any_remote_scheme() {
+        assert_eq!(
+            web_base("git@github.com:o/r.git").as_deref(),
+            Some("https://github.com")
+        );
+        assert_eq!(
+            web_base("https://ghe.corp.com/o/r.git").as_deref(),
+            Some("https://ghe.corp.com")
+        );
+        assert!(web_base("not a url").is_none());
+    }
+
+    #[test]
+    fn web_url_builds_per_forge_links() {
+        let slug = RepoSlug::new("o", "r");
+        let cases: [(Box<dyn HostingProvider>, &str, &str, &str); 3] = [
+            (
+                Box::new(GitHubClient::new()),
+                "https://github.com/o/r/commit/abc",
+                "https://github.com/o/r/tree/main",
+                "https://github.com/o/r/releases/tag/v1",
+            ),
+            (
+                Box::new(GitLabClient::new()),
+                "https://gitlab.com/o/r/-/commit/abc",
+                "https://gitlab.com/o/r/-/tree/main",
+                "https://gitlab.com/o/r/-/tags/v1",
+            ),
+            (
+                Box::new(BitbucketClient::new()),
+                "https://bitbucket.org/o/r/commits/abc",
+                "https://bitbucket.org/o/r/branch/main",
+                "https://bitbucket.org/o/r/src/v1",
+            ),
+        ];
+        let base = |p: &dyn HostingProvider| match p.kind() {
+            ForgeKind::GitHub => "https://github.com",
+            ForgeKind::GitLab => "https://gitlab.com",
+            ForgeKind::Bitbucket => "https://bitbucket.org",
+            ForgeKind::AzureDevOps => "https://dev.azure.com",
+        };
+        for (p, commit, branch, tag) in &cases {
+            let b = base(p.as_ref());
+            assert_eq!(
+                p.web_url(b, &slug, &WebTarget::Commit("abc".into())),
+                *commit
+            );
+            assert_eq!(
+                p.web_url(b, &slug, &WebTarget::Branch("main".into())),
+                *branch
+            );
+            assert_eq!(p.web_url(b, &slug, &WebTarget::Tag("v1".into())), *tag);
+        }
+    }
+
+    #[test]
+    fn web_url_azure_uses_git_path_and_version_query() {
+        let p = AzureDevOpsClient::new();
+        let slug = RepoSlug {
+            owner: "org".into(),
+            repo: "repo".into(),
+            project: Some("proj".into()),
+        };
+        let base = "https://dev.azure.com";
+        assert_eq!(
+            p.web_url(base, &slug, &WebTarget::Commit("abc".into())),
+            "https://dev.azure.com/org/proj/_git/repo/commit/abc"
+        );
+        assert_eq!(
+            p.web_url(base, &slug, &WebTarget::Branch("main".into())),
+            "https://dev.azure.com/org/proj/_git/repo?version=GBmain"
+        );
+        assert_eq!(
+            p.web_url(base, &slug, &WebTarget::Tag("v1".into())),
+            "https://dev.azure.com/org/proj/_git/repo?version=GTv1"
+        );
     }
 
     #[test]

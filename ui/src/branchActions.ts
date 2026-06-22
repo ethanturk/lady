@@ -202,3 +202,13 @@ export async function createTagAt(repo: RepoId, name: string, target: string): P
     return { ok: false, message: String(e) };
   }
 }
+
+/** Create an annotated tag at `target` (carries a `message`). */
+export async function createAnnotatedTagAt(repo: RepoId, name: string, target: string, message: string): Promise<ActionResult> {
+  try {
+    await invoke("create_tag", { repo, name, target, message });
+    return { ok: true, message: `Annotated tag ${name} at ${short(target)}.` };
+  } catch (e) {
+    return { ok: false, message: String(e) };
+  }
+}

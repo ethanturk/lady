@@ -248,6 +248,15 @@ export interface RebaseStep {
   message: string | null;
 }
 
+/** Mirrors lady_proto::ResetMode (how far a `reset` rewinds). */
+export type ResetMode = "Soft" | "Mixed" | "Hard";
+
+/** Mirrors lady_hosting::WebTarget (serde tag "kind", content "value"). */
+export type WebTarget =
+  | { kind: "Commit"; value: string }
+  | { kind: "Branch"; value: string }
+  | { kind: "Tag"; value: string };
+
 /** Mirrors lady_proto::SignatureStatus. */
 export type SignatureStatus = "Good" | "Bad" | "Untrusted" | "None";
 
