@@ -41,6 +41,7 @@ const FileBadge: Component<{ kind: FileDiffKind }> = (props) => (
 interface CommitDetailProps {
   repoId: RepoId;
   sha: string;
+  selectedShas?: string[];
   refs: RefInfo[];
   sig?: SignatureStatus;
   onCherryPick: () => void;
@@ -51,8 +52,8 @@ interface CommitDetailProps {
 }
 
 /** Build a directory tree of "dir/ rows + · file rows" from flat paths. */
-function treeRows(paths: string[]): { depth: number; label: string; dir: boolean }[] {
-  const out: { depth: number; label: string; dir: boolean }[] = [];
+function treeRows(paths: string[]): { depth: number; label: string; dir: boolean; path?: string }[] {
+  const out: { depth: number; label: string; dir: boolean; path?: string }[] = [];
   const seen = new Set<string>();
   for (const p of [...paths].sort()) {
     const parts = p.split("/");
@@ -63,7 +64,7 @@ function treeRows(paths: string[]): { depth: number; label: string; dir: boolean
         out.push({ depth: i, label: parts[i], dir: true });
       }
     }
-    out.push({ depth: parts.length - 1, label: parts[parts.length - 1], dir: false });
+    out.push({ depth: parts.length - 1, label: parts[parts.length - 1], dir: false, path: p });
   }
   return out;
 }
@@ -78,15 +79,44 @@ const CommitDetail: Component<CommitDetailProps> = (props) => {
   const [tab, setTab] = createSignal<Tab>("commit");
   const [meta, setMeta] = createSignal<CommitMeta | null>(null);
   const [files, setFiles] = createSignal<FileDiff[]>([]);
+  const [scrollPath, setScrollPath] = createSignal<string | undefined>(undefined);
+  const [scrollNonce, setScrollNonce] = createSignal(0);
+  let requestId = 0;
+
+  const detailShas = createMemo(() => (props.selectedShas?.length ? props.selectedShas : [props.sha]));
+  const uniqueFiles = createMemo(() => {
+    const byPath = new Map<string, FileDiff>();
+    for (const file of files()) {
+      const key = `${file.old_path ?? ""}\0${file.path}`;
+      if (!byPath.has(key)) byPath.set(key, file);
+    }
+    return [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path));
+  });
 
   createEffect(() => {
     const sha = props.sha;
     const repo = props.repoId;
+    const shas = detailShas();
+    const currentRequest = ++requestId;
     setMeta(null);
     setFiles([]);
     const q: WalkLogQuery = { start: sha, limit: 1 };
-    invoke<CommitMeta[]>("walk_log", { repo, query: q }).then((m) => setMeta(m[0] ?? null)).catch(() => setMeta(null));
-    invoke<FileDiff[]>("diff", { repo, commit: sha }).then(setFiles).catch(() => setFiles([]));
+    invoke<CommitMeta[]>("walk_log", { repo, query: q })
+      .then((m) => {
+        if (currentRequest === requestId) setMeta(m[0] ?? null);
+      })
+      .catch(() => {
+        if (currentRequest === requestId) setMeta(null);
+      });
+    Promise.all(
+      shas.map((commit) =>
+        invoke<FileDiff[]>("diff", { repo, commit })
+          .then((diffs) => diffs.map((file) => ({ ...file, sourceLabel: shas.length > 1 ? commit.slice(0, 8) : undefined })))
+          .catch(() => []),
+      ),
+    ).then((groups) => {
+      if (currentRequest === requestId) setFiles(groups.flat());
+    });
   });
 
   const commitRefs = createMemo(() => props.refs.filter((r) => r.target === props.sha && r.kind !== "Head"));
@@ -125,6 +155,12 @@ const CommitDetail: Component<CommitDetailProps> = (props) => {
       <span style={{ color: "var(--tx2)", "min-width": "0" }}>{value}</span>
     </>
   );
+
+  const openFileInChanges = (path: string) => {
+    setScrollPath(path);
+    setScrollNonce((n) => n + 1);
+    setTab("changes");
+  };
 
   return (
     <div style={{ height: "100%", display: "flex", "flex-direction": "column", background: "var(--panel)", "border-top": "1px solid var(--bd)" }}>
@@ -200,9 +236,10 @@ const CommitDetail: Component<CommitDetailProps> = (props) => {
 
                 {/* Files changed footer */}
                 <div style={{ "font-size": "10.5px", "text-transform": "uppercase", "letter-spacing": "0.05em", color: "var(--tx4)", "margin-bottom": "6px" }}>
-                  {files().length} file{files().length === 1 ? "" : "s"} changed
+                  {uniqueFiles().length} file{uniqueFiles().length === 1 ? "" : "s"} changed
+                  <Show when={detailShas().length > 1}> across {detailShas().length} commits</Show>
                 </div>
-                <For each={files()}>
+                <For each={uniqueFiles()}>
                   {(f) => (
                     <div class="hov" style={{ display: "flex", "align-items": "center", gap: "8px", padding: "4px 6px", "border-radius": "6px", "font-size": "12.5px" }}>
                       <FileBadge kind={f.kind} />
@@ -219,16 +256,34 @@ const CommitDetail: Component<CommitDetailProps> = (props) => {
       {/* Changes tab */}
       <Show when={tab() === "changes"}>
         <div style={{ flex: "1", "min-height": "0" }}>
-          <DiffView repoId={props.repoId} commit={props.sha} />
+          <DiffView
+            repoId={props.repoId}
+            commit={detailShas().length === 1 ? props.sha : undefined}
+            files={files()}
+            title={detailShas().length > 1 ? `${detailShas().length} selected commits` : undefined}
+            collapsible
+            scrollToPath={scrollPath()}
+            scrollKey={scrollNonce()}
+          />
         </div>
       </Show>
 
       {/* File Tree tab */}
       <Show when={tab() === "filetree"}>
         <div class="scroll-thin" style={{ flex: "1", "overflow-y": "auto", padding: "12px 0", "font-family": "ui-monospace, monospace", "font-size": "12.5px" }}>
-          <For each={treeRows(files().map((f) => f.path))}>
+          <For each={treeRows(uniqueFiles().map((f) => f.path))}>
             {(node) => (
-              <div style={{ padding: "2px 0", "padding-left": `${14 + node.depth * 18}px`, color: node.dir ? "var(--tx3)" : "var(--tx2)" }}>
+              <div
+                class="hov"
+                onClick={() => node.path && openFileInChanges(node.path)}
+                style={{
+                  padding: "2px 0",
+                  "padding-left": `${14 + node.depth * 18}px`,
+                  color: node.dir ? "var(--tx3)" : "var(--tx2)",
+                  cursor: node.path ? "pointer" : "default",
+                  "user-select": "none",
+                }}
+              >
                 {node.dir ? "▾ " : "· "}
                 {node.label}
               </div>

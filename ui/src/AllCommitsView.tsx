@@ -4,6 +4,7 @@ import type { RefInfo, RepoId, SignatureStatus } from "./commands";
 import GraphView from "./GraphView";
 import CommitDetail from "./CommitDetail";
 import ExplainPanel from "./ExplainPanel";
+import { commitDetailHeight, hideResizers, setCommitDetailHeight } from "./prefs";
 
 interface AllCommitsViewProps {
   repoId: RepoId;
@@ -29,9 +30,30 @@ interface AllCommitsViewProps {
  */
 const AllCommitsView: Component<AllCommitsViewProps> = (props) => {
   const [explainOpen, setExplainOpen] = createSignal(false);
+  let rootEl!: HTMLDivElement;
+
+  const startDetailDrag = (e: PointerEvent) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = commitDetailHeight();
+    const rootH = rootEl?.clientHeight ?? window.innerHeight;
+    const target = e.currentTarget as HTMLElement;
+    target.setPointerCapture(e.pointerId);
+    const move = (ev: PointerEvent) => {
+      const next = startH + (startY - ev.clientY);
+      setCommitDetailHeight(Math.max(180, Math.min(next, rootH - 180)));
+    };
+    const up = (ev: PointerEvent) => {
+      target.releasePointerCapture(ev.pointerId);
+      target.removeEventListener("pointermove", move);
+      target.removeEventListener("pointerup", up);
+    };
+    target.addEventListener("pointermove", move);
+    target.addEventListener("pointerup", up);
+  };
 
   return (
-    <div style={{ height: "100%", display: "flex", "flex-direction": "column", overflow: "hidden" }}>
+    <div ref={rootEl} style={{ height: "100%", display: "flex", "flex-direction": "column", overflow: "hidden" }}>
       <div
         style={{
           display: "flex",
@@ -75,18 +97,36 @@ const AllCommitsView: Component<AllCommitsViewProps> = (props) => {
       </div>
 
       <Show when={props.primary}>
-        <div style={{ height: "46%", "min-height": "250px", "flex-shrink": 0 }}>
-          <CommitDetail
-            repoId={props.repoId}
-            sha={props.primary!}
-            refs={props.refs}
-            sig={props.sig}
-            onCherryPick={props.onCherryPick}
-            onRevert={props.onRevert}
-            onRebaseInteractive={props.onRebaseInteractive}
-            onRecompose={props.onRecompose}
-          />
-        </div>
+        <>
+          <Show when={!hideResizers()}>
+            <div
+              onPointerDown={startDetailDrag}
+              title="Drag to resize the commit details"
+              style={{
+                "flex-shrink": 0,
+                height: "7px",
+                cursor: "row-resize",
+                background: "var(--sub)",
+                "border-top": "1px solid var(--bd)",
+                "border-bottom": "1px solid var(--bd)",
+                "touch-action": "none",
+              }}
+            />
+          </Show>
+          <div style={{ height: `${commitDetailHeight()}px`, "min-height": "180px", "flex-shrink": 0 }}>
+            <CommitDetail
+              repoId={props.repoId}
+              sha={props.primary!}
+              selectedShas={props.selected}
+              refs={props.refs}
+              sig={props.sig}
+              onCherryPick={props.onCherryPick}
+              onRevert={props.onRevert}
+              onRebaseInteractive={props.onRebaseInteractive}
+              onRecompose={props.onRecompose}
+            />
+          </div>
+        </>
       </Show>
 
       <Show when={explainOpen()}>

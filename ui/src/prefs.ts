@@ -83,6 +83,7 @@ function widthPref(key: string, fallback: number) {
 const [sidebarWidth, setSidebarWidth] = widthPref("lady-sidebar-width", 248);
 const [changesColWidth, setChangesColWidth] = widthPref("lady-changes-col-width", 308);
 const [settingsWidth, setSettingsWidth] = widthPref("lady-settings-width", 640);
+const [commitDetailHeight, setCommitDetailHeight] = widthPref("lady-commit-detail-height", 340);
 
 export {
   sidebarWidth,
@@ -91,6 +92,8 @@ export {
   setChangesColWidth,
   settingsWidth,
   setSettingsWidth,
+  commitDetailHeight,
+  setCommitDetailHeight,
 };
 
 // ── UI density: text size + padding (S / M / L / XL) ─────────────────────────

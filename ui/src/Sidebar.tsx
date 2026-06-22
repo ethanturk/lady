@@ -221,12 +221,16 @@ const Sidebar: Component<SidebarProps> = (props) => {
 
   createEffect(() => {
     const repo = props.repoId;
+    void props.refreshNonce;
+    if (!repo) return setStashes([]);
+    invoke<StashEntry[]>("stash_list", { repo }).then(setStashes).catch(() => setStashes([]));
+  });
+
+  createEffect(() => {
+    const repo = props.repoId;
     const open = openPanels();
     void props.refreshNonce;
     if (!repo) return;
-    if (open.has("stashes")) {
-      invoke<StashEntry[]>("stash_list", { repo }).then(setStashes).catch(() => setStashes([]));
-    }
     if (open.has("prs")) {
       setPrLoading(true);
       setPrErr(null);

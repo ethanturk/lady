@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, For, onMount, Show } from "solid-js";
 import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
-import type { CommitGraphRow, RefInfo, RepoId, StashEntry, WalkLogGraphResult, WalkLogQuery } from "./commands";
+import type { CommitGraphRow, RefInfo, RepoId, WalkLogGraphResult, WalkLogQuery } from "./commands";
 import { relTime } from "./time";
 import { authorColor, initials } from "./avatar";
 import { uiPadding } from "./prefs";
@@ -15,6 +15,7 @@ const PAD_SCALE: Record<SizeStep, number> = { s: 0.4125, m: 1, l: 1.315625, xl: 
 const rowHeight = () => Math.max(36, Math.round(BASE_ROW_H * PAD_SCALE[uiPadding()]));
 const LANE_W = 20; // horizontal pixels per lane column
 const COMMIT_R = 7; // commit circle radius in CSS pixels (design node)
+const MAX_GRAPH_GUTTER_W = 260;
 const BATCH = 500;
 const LOAD_AHEAD_PX = 800;
 const BUFFER = 5;
@@ -168,7 +169,6 @@ const GraphView: Component<{
   const [hasMore, setHasMore] = createSignal(true);
   const [cursor, setCursor] = createSignal<string | undefined>(undefined);
   const [layoutState, setLayoutState] = createSignal<(string | null)[]>([]);
-  const [stashes, setStashes] = createSignal<StashEntry[]>([]);
 
   let listContainer!: HTMLDivElement;
   let canvasEl!: HTMLCanvasElement;
@@ -176,6 +176,7 @@ const GraphView: Component<{
   const totalH = () => rows().length * rowHeight();
   const maxLanes = createMemo(() => rows().reduce((m, r) => Math.max(m, r.num_lanes), 1));
   const graphW = () => Math.max(1, maxLanes()) * LANE_W + LANE_W;
+  const graphGutterW = () => Math.min(graphW(), MAX_GRAPH_GUTTER_W);
 
   const startRow = () => Math.max(0, Math.floor(scrollTop() / rowHeight()) - BUFFER);
   const endRow = () => Math.min(rows().length, Math.ceil((scrollTop() + viewportH()) / rowHeight()) + BUFFER);
@@ -223,14 +224,6 @@ const GraphView: Component<{
     }
   };
 
-  const loadStashes = () => {
-    invoke<StashEntry[]>("stash_list", { repo: props.repoId }).then(setStashes).catch(() => setStashes([]));
-  };
-  createEffect(() => {
-    props.repoId;
-    loadStashes();
-  });
-
   onMount(async () => {
     const h = listContainer.clientHeight || 400;
     setViewportH(h);
@@ -274,21 +267,6 @@ const GraphView: Component<{
 
   return (
     <div style={{ display: "flex", "flex-direction": "column", height: "100%", overflow: "hidden", background: "var(--bg)" }}>
-      {/* Stash markers above the commit graph (Fork parity). */}
-      <Show when={stashes().length > 0}>
-        <div style={{ "flex-shrink": 0, "border-bottom": "1px solid var(--bd)" }}>
-          <For each={stashes()}>
-            {(s) => (
-              <div style={{ display: "flex", "align-items": "center", gap: "0.5rem", padding: "0.2rem 0.5rem", "font-size": "0.8rem", background: "var(--sub)" }}>
-                <span style={{ color: "var(--accent-2)" }}>⬡</span>
-                <span style={{ "font-family": "ui-monospace, monospace", color: "var(--accent-2)", "min-width": "8ch" }}>{`stash@{${s.index}}`}</span>
-                <span style={{ flex: "1", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }} title={s.message}>{s.message}</span>
-              </div>
-            )}
-          </For>
-        </div>
-      </Show>
-
       {/* Column header (non-scrolling), aligned over the list via a graph-width spacer. */}
       <div
         style={{
@@ -304,7 +282,7 @@ const GraphView: Component<{
           "letter-spacing": "0.05em",
         }}
       >
-        <span style={{ width: `${graphW() + 8}px`, "flex-shrink": 0 }} />
+        <span style={{ width: `${graphGutterW() + 8}px`, "flex-shrink": 0 }} />
         <span style={colDesc}>Description</span>
         <span style={colAuthor}>Author</span>
         <span style={colCommit}>Commit</span>
@@ -313,23 +291,25 @@ const GraphView: Component<{
 
       <div style={{ display: "flex", flex: "1", "min-height": "0", overflow: "hidden" }}>
         {/* Canvas column: graph lanes and edges (redraws on scroll). */}
-        <canvas ref={canvasEl} style={{ "flex-shrink": "0" }} onClick={(e) => {
-          const rect = canvasEl.getBoundingClientRect();
-          const y = e.clientY - rect.top + listContainer.scrollTop;
-          const idx = Math.floor(y / rowHeight());
-          const row = rows()[idx];
-          if (row) handleClick(row.oid, { meta: e.metaKey || e.ctrlKey, shift: e.shiftKey });
-        }} onContextMenu={(e) => {
-          if (!props.onCommitMenu) return;
-          const rect = canvasEl.getBoundingClientRect();
-          const y = e.clientY - rect.top + listContainer.scrollTop;
-          const idx = Math.floor(y / rowHeight());
-          const row = rows()[idx];
-          if (row) {
-            e.preventDefault();
-            props.onCommitMenu(row.oid, row.summary, { x: e.clientX, y: e.clientY });
-          }
-        }} />
+        <div style={{ width: `${graphGutterW()}px`, "flex-shrink": 0, overflow: "hidden" }}>
+          <canvas ref={canvasEl} style={{ display: "block" }} onClick={(e) => {
+            const rect = canvasEl.getBoundingClientRect();
+            const y = e.clientY - rect.top + listContainer.scrollTop;
+            const idx = Math.floor(y / rowHeight());
+            const row = rows()[idx];
+            if (row) handleClick(row.oid, { meta: e.metaKey || e.ctrlKey, shift: e.shiftKey });
+          }} onContextMenu={(e) => {
+            if (!props.onCommitMenu) return;
+            const rect = canvasEl.getBoundingClientRect();
+            const y = e.clientY - rect.top + listContainer.scrollTop;
+            const idx = Math.floor(y / rowHeight());
+            const row = rows()[idx];
+            if (row) {
+              e.preventDefault();
+              props.onCommitMenu(row.oid, row.summary, { x: e.clientX, y: e.clientY });
+            }
+          }} />
+        </div>
 
         {/* Commit list column: virtualized DOM rows. */}
         <div ref={listContainer} class="scroll-thin" style={{ flex: "1", "min-width": "0", "overflow-y": "auto" }} onScroll={onScroll}>

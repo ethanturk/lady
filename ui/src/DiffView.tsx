@@ -8,6 +8,9 @@ import type { DiffHunk, DiffLine, DiffSpec, FileDiff, RepoId } from "./commands"
 import { wrapDiff } from "./prefs";
 
 type Mode = "unified" | "split";
+type DisplayFileDiff = FileDiff & { sourceLabel?: string };
+
+const fileKey = (file: DisplayFileDiff) => `${file.sourceLabel ?? ""}\0${file.path}`;
 
 /** A diff line decorated with its computed old/new line numbers. */
 interface NumberedLine {
@@ -358,8 +361,11 @@ const HunkBlock: Component<{
 };
 
 const FileBlock: Component<{
-  file: FileDiff;
+  file: DisplayFileDiff;
   mode: Mode;
+  collapsible?: boolean;
+  collapsed: boolean;
+  onToggle: () => void;
   hunkActionLabel?: string;
   onHunkAction?: (path: string, hunkIndex: number) => void;
   onStageLines?: (path: string, hunkIndex: number, lines: number[]) => void;
@@ -385,7 +391,29 @@ const FileBlock: Component<{
           "font-weight": 600,
         }}
       >
+        <Show when={props.collapsible}>
+          <button
+            onClick={props.onToggle}
+            title={props.collapsed ? "Open file diff" : "Close file diff"}
+            aria-label={props.collapsed ? "Open file diff" : "Close file diff"}
+            aria-expanded={!props.collapsed}
+            style={{
+              border: "none",
+              background: "transparent",
+              color: "var(--tx3)",
+              "font-family": "ui-monospace, monospace",
+              "font-size": "13px",
+              padding: "0 7px 0 0",
+              cursor: "pointer",
+            }}
+          >
+            {props.collapsed ? "▸" : "▾"}
+          </button>
+        </Show>
         {props.file.path}
+        <Show when={props.file.sourceLabel}>
+          <span style={{ color: "var(--tx4)", "font-weight": 400, "margin-left": "8px" }}>{props.file.sourceLabel}</span>
+        </Show>
         <span style={{ color: "var(--tx3)", "font-weight": 400, "margin-left": "8px" }}>{props.file.kind}</span>
         <span style={{ flex: "1" }} />
         <Show when={props.onExternalDiff}>
@@ -394,43 +422,45 @@ const FileBlock: Component<{
           </button>
         </Show>
       </div>
-      <Show when={props.file.kind === "Image"}>
-        <div style={{ display: "flex", gap: "1rem", padding: "0.6rem", "flex-wrap": "wrap" }}>
-          <Show when={props.file.old_image_b64}>
-            <figure style={{ margin: 0 }}>
-              <figcaption style={{ "font-size": "0.75rem", color: "var(--tx3)" }}>old</figcaption>
-              <img src={`data:${imageMime(props.file.path)};base64,${props.file.old_image_b64}`} style={{ "max-width": "300px", "max-height": "300px" }} />
-            </figure>
-          </Show>
-          <Show when={props.file.new_image_b64}>
-            <figure style={{ margin: 0 }}>
-              <figcaption style={{ "font-size": "0.75rem", color: "var(--tx3)" }}>new</figcaption>
-              <img src={`data:${imageMime(props.file.path)};base64,${props.file.new_image_b64}`} style={{ "max-width": "300px", "max-height": "300px" }} />
-            </figure>
-          </Show>
-        </div>
-      </Show>
-      <Show when={props.file.kind === "Binary"}>
-        <div style={{ padding: "0.6rem", color: "var(--tx3)", "font-size": "0.8rem" }}>Binary file — no text diff.</div>
-      </Show>
-      <Show when={props.file.hunks.length > 0}>
-        <For each={props.file.hunks}>
-          {(hunk, hunkIndex) => (
-            <HunkBlock
-              path={props.file.path}
-              hunk={hunk}
-              hunkIndex={hunkIndex()}
-              mode={props.mode}
-              lang={lang()}
-              hunkActionLabel={props.hunkActionLabel}
-              onHunkAction={props.onHunkAction}
-              onStageLines={props.onStageLines}
-              onDiscardLines={props.onDiscardLines}
-              onDiscardHunk={props.onDiscardHunk}
-              onExplainHunk={props.onExplainHunk}
-            />
-          )}
-        </For>
+      <Show when={!props.collapsed}>
+        <Show when={props.file.kind === "Image"}>
+          <div style={{ display: "flex", gap: "1rem", padding: "0.6rem", "flex-wrap": "wrap" }}>
+            <Show when={props.file.old_image_b64}>
+              <figure style={{ margin: 0 }}>
+                <figcaption style={{ "font-size": "0.75rem", color: "var(--tx3)" }}>old</figcaption>
+                <img src={`data:${imageMime(props.file.path)};base64,${props.file.old_image_b64}`} style={{ "max-width": "300px", "max-height": "300px" }} />
+              </figure>
+            </Show>
+            <Show when={props.file.new_image_b64}>
+              <figure style={{ margin: 0 }}>
+                <figcaption style={{ "font-size": "0.75rem", color: "var(--tx3)" }}>new</figcaption>
+                <img src={`data:${imageMime(props.file.path)};base64,${props.file.new_image_b64}`} style={{ "max-width": "300px", "max-height": "300px" }} />
+              </figure>
+            </Show>
+          </div>
+        </Show>
+        <Show when={props.file.kind === "Binary"}>
+          <div style={{ padding: "0.6rem", color: "var(--tx3)", "font-size": "0.8rem" }}>Binary file — no text diff.</div>
+        </Show>
+        <Show when={props.file.hunks.length > 0}>
+          <For each={props.file.hunks}>
+            {(hunk, hunkIndex) => (
+              <HunkBlock
+                path={props.file.path}
+                hunk={hunk}
+                hunkIndex={hunkIndex()}
+                mode={props.mode}
+                lang={lang()}
+                hunkActionLabel={props.hunkActionLabel}
+                onHunkAction={props.onHunkAction}
+                onStageLines={props.onStageLines}
+                onDiscardLines={props.onDiscardLines}
+                onDiscardHunk={props.onDiscardHunk}
+                onExplainHunk={props.onExplainHunk}
+              />
+            )}
+          </For>
+        </Show>
       </Show>
     </div>
   );
@@ -476,7 +506,12 @@ const DiffView: Component<{
   repoId: RepoId;
   commit?: string;
   spec?: DiffSpec;
+  files?: DisplayFileDiff[];
+  title?: string;
   filterPath?: string;
+  collapsible?: boolean;
+  scrollToPath?: string;
+  scrollKey?: unknown;
   /** Bump to force a refetch when the underlying diff changed but the spec did
    * not (e.g. after staging a hunk of the currently-selected file). */
   refreshKey?: unknown;
@@ -490,10 +525,22 @@ const DiffView: Component<{
   /** When set, each hunk shows an "Explain changes" button (AI). */
   onExplainHunk?: (path: string, patch: string) => void;
 }> = (props) => {
-  const [files, setFiles] = createSignal<FileDiff[]>([]);
+  const [files, setFiles] = createSignal<DisplayFileDiff[]>([]);
   const [mode, setMode] = createSignal<Mode>("unified");
   const [loading, setLoading] = createSignal(false);
   const [err, setErr] = createSignal<string | null>(null);
+  const [collapsed, setCollapsed] = createSignal<Set<string>>(new Set());
+
+  let scrollEl!: HTMLDivElement;
+  const fileEls = new Map<string, HTMLDivElement>();
+
+  const toggleFile = (key: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  };
 
   // Open a file in the user's configured external diff tool (PH3-010).
   const externalDiff = (path: string) => {
@@ -502,18 +549,26 @@ const DiffView: Component<{
   };
 
   const title = () => {
+    if (props.title) return props.title;
     if (props.spec) return props.spec.value;
     return props.commit ? props.commit.slice(0, 8) : "";
   };
 
   createEffect(() => {
+    const suppliedFiles = props.files;
     const spec = props.spec;
     const commit = props.commit;
     const repo = props.repoId;
     void props.refreshKey; // refetch when the diff changed under a stable spec
     setLoading(true);
     setErr(null);
+    fileEls.clear();
     const filter = props.filterPath;
+    if (suppliedFiles) {
+      setFiles(filter ? suppliedFiles.filter((f) => f.path === filter) : suppliedFiles);
+      setLoading(false);
+      return;
+    }
     const req = spec
       ? invoke<FileDiff[]>("diff_spec", { repo, spec })
       : invoke<FileDiff[]>("diff", { repo, commit });
@@ -521,6 +576,24 @@ const DiffView: Component<{
       .then((d) => setFiles(filter ? d.filter((f) => f.path === filter) : d))
       .catch((e) => setErr(String(e)))
       .finally(() => setLoading(false));
+  });
+
+  createEffect(() => {
+    const target = props.scrollToPath;
+    void props.scrollKey;
+    if (!target) return;
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      for (const file of files()) {
+        if (file.path === target) next.delete(fileKey(file));
+      }
+      return next;
+    });
+    requestAnimationFrame(() => {
+      const el = fileEls.get(target);
+      if (!el || !scrollEl) return;
+      scrollEl.scrollTo({ top: Math.max(0, el.offsetTop - 10), behavior: "smooth" });
+    });
   });
 
   return (
@@ -543,7 +616,7 @@ const DiffView: Component<{
         <span style={{ flex: "1" }} />
         <Segmented mode={mode()} onMode={setMode} />
       </div>
-      <div class="scroll-thin" style={{ flex: "1", "overflow-y": "auto", padding: "12px", background: "var(--bg)" }}>
+      <div ref={scrollEl} class="scroll-thin" style={{ flex: "1", "overflow-y": "auto", padding: "12px", background: "var(--bg)" }}>
         <Show when={err()}>
           <p style={{ color: "var(--error)", "font-size": "0.85rem" }}>{err()}</p>
         </Show>
@@ -555,17 +628,22 @@ const DiffView: Component<{
         </Show>
         <For each={files()}>
           {(file) => (
-            <FileBlock
-              file={file}
-              mode={mode()}
-              hunkActionLabel={props.hunkActionLabel}
-              onHunkAction={props.onHunkAction}
-              onStageLines={props.onStageLines}
-              onDiscardLines={props.onDiscardLines}
-              onDiscardHunk={props.onDiscardHunk}
-              onExternalDiff={externalDiff}
-              onExplainHunk={props.onExplainHunk}
-            />
+            <div ref={(el) => { if (!fileEls.has(file.path)) fileEls.set(file.path, el); }}>
+              <FileBlock
+                file={file}
+                mode={mode()}
+                collapsible={props.collapsible}
+                collapsed={props.collapsible ? collapsed().has(fileKey(file)) : false}
+                onToggle={() => toggleFile(fileKey(file))}
+                hunkActionLabel={props.hunkActionLabel}
+                onHunkAction={props.onHunkAction}
+                onStageLines={props.onStageLines}
+                onDiscardLines={props.onDiscardLines}
+                onDiscardHunk={props.onDiscardHunk}
+                onExternalDiff={props.files && !props.commit && !props.spec ? undefined : externalDiff}
+                onExplainHunk={props.onExplainHunk}
+              />
+            </div>
           )}
         </For>
       </div>
