@@ -854,6 +854,7 @@ const App: Component = () => {
           state={tagMenu()!}
           onClose={() => setTagMenu(null)}
           onResult={showResult}
+          onMutate={refresh}
           onCreateBranch={(startPoint) => {
             setNewBranchName("");
             setNewBranchFrom(startPoint);

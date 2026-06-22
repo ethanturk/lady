@@ -7,6 +7,9 @@ import type { ActionResult } from "./branchActions";
  * a typed IPC call and returns a human-readable {@link ActionResult}; the caller
  * owns how it is shown. `copyRemoteLink` for a tag lives in `commitActions` (it
  * is target-generic).
+ *
+ * The optional `onMutate` callback is fired after any operation that changes
+ * refs, so callers can refresh refs/graph immediately.
  */
 
 /** Checkout the commit a tag points at (detached HEAD). */
@@ -28,9 +31,15 @@ export async function checkoutTag(repo: RepoId, tag: string): Promise<ActionResu
 }
 
 /** Move (fast-forward) an existing tag to `target`. */
-export async function moveTag(repo: RepoId, tag: string, target: string): Promise<ActionResult> {
+export async function moveTag(
+  repo: RepoId,
+  tag: string,
+  target: string,
+  onMutate?: () => void,
+): Promise<ActionResult> {
   try {
     await invoke("move_tag", { repo, name: tag, target });
+    onMutate?.();
     return { ok: true, message: `Moved ${tag} to ${target}.` };
   } catch (e) {
     return { ok: false, message: String(e) };
@@ -38,7 +47,11 @@ export async function moveTag(repo: RepoId, tag: string, target: string): Promis
 }
 
 /** Merge `source` into the checked-out tag (detached HEAD). */
-export async function mergeIntoTag(repo: RepoId, source: string): Promise<ActionResult> {
+export async function mergeIntoTag(
+  repo: RepoId,
+  source: string,
+  onMutate?: () => void,
+): Promise<ActionResult> {
   try {
     await invoke("checkout", { repo, target: "HEAD", force: false });
     const outcome = await invoke<MergeOutcome>("merge", {
@@ -47,6 +60,7 @@ export async function mergeIntoTag(repo: RepoId, source: string): Promise<Action
       fastForward: "Auto",
       commitMessage: null,
     });
+    onMutate?.();
     switch (outcome.kind) {
       case "AlreadyUpToDate":
         return { ok: true, message: "Already up to date." };
@@ -63,10 +77,15 @@ export async function mergeIntoTag(repo: RepoId, source: string): Promise<Action
 }
 
 /** Delete a tag locally (`git tag -d`). */
-export async function deleteTagLocal(repo: RepoId, tag: string): Promise<ActionResult | null> {
+export async function deleteTagLocal(
+  repo: RepoId,
+  tag: string,
+  onMutate?: () => void,
+): Promise<ActionResult | null> {
   if (!confirm(`Delete tag '${tag}' locally?`)) return null;
   try {
     await invoke("delete_tag", { repo, name: tag });
+    onMutate?.();
     return { ok: true, message: `Deleted tag ${tag}.` };
   } catch (e) {
     return { ok: false, message: String(e) };
@@ -74,10 +93,16 @@ export async function deleteTagLocal(repo: RepoId, tag: string): Promise<ActionR
 }
 
 /** Delete a tag on `remote` (`git push <remote> :refs/tags/<tag>`). */
-export async function deleteTagOrigin(repo: RepoId, remote: string, tag: string): Promise<ActionResult | null> {
+export async function deleteTagOrigin(
+  repo: RepoId,
+  remote: string,
+  tag: string,
+  onMutate?: () => void,
+): Promise<ActionResult | null> {
   if (!confirm(`Delete tag '${tag}' from '${remote}'?`)) return null;
   try {
     await invoke("delete_remote_ref", { repo, remote, refspec: `refs/tags/${tag}` });
+    onMutate?.();
     return { ok: true, message: `Deleted tag ${tag} from ${remote}.` };
   } catch (e) {
     return { ok: false, message: String(e) };

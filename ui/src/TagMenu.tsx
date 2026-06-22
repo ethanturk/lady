@@ -23,6 +23,8 @@ interface TagMenuProps {
   state: TagMenuState;
   onClose: () => void;
   onResult: (r: ActionResult | null) => void;
+  /** Called when the operation mutates refs so the parent can refresh immediately. */
+  onMutate: () => void;
   /** Open the "new branch from <startPoint>" name modal. */
   onCreateBranch: (startPoint: string) => void;
   /** Open the AI view to explain the tagged commit. */
@@ -61,17 +63,18 @@ const TagMenu: Component<TagMenuProps> = (props) => {
     const list: MenuEntry[] = [
       {
         label: `Fast forward ${tag()} to ${base}`,
-        run: async () => result(await moveTag(props.repoId, tag(), base)),
+        run: async () => result(await moveTag(props.repoId, tag(), base, props.onMutate)),
       },
       {
         label: `Merge ${base} into ${tag()}`,
-        run: async () => result(await mergeIntoTag(props.repoId, base)),
+        run: async () => result(await mergeIntoTag(props.repoId, base, props.onMutate)),
       },
       {
         label: `Rebase ${base} into ${tag()}`,
         run: async () => {
           try {
             const outcome = await rebaseBranchOnto(props.repoId, base, tag());
+            props.onMutate();
             if (outcome.kind === "Rebased") {
               result({ ok: true, message: `Rebased ${base} onto ${tag()}.` });
             } else if (outcome.kind === "Stopped") {
@@ -100,8 +103,8 @@ const TagMenu: Component<TagMenuProps> = (props) => {
       { label: "Revert Commit", disabled: !oid, run: async () => { if (oid) result(await revertCommit(props.repoId, oid)); } },
       { label: "Explain Commit", disabled: !oid, run: () => { if (oid) props.onAiExplain(oid); } },
       "divider",
-      { label: `Delete ${tag()} Locally`, danger: true, run: async () => result(await deleteTagLocal(props.repoId, tag())) },
-      { label: `Delete ${tag()} from origin`, danger: true, run: async () => result(await deleteTagOrigin(props.repoId, "origin", tag())) },
+      { label: `Delete ${tag()} Locally`, danger: true, run: async () => result(await deleteTagLocal(props.repoId, tag(), props.onMutate)) },
+      { label: `Delete ${tag()} from origin`, danger: true, run: async () => result(await deleteTagOrigin(props.repoId, "origin", tag(), props.onMutate)) },
       { label: `Push ${tag()} to origin`, run: () => props.onPush(tag()) },
       "divider",
       { label: "Copy Tag Name", shortcut: "⌘C", run: async () => result(await copyTagName(tag())) },
