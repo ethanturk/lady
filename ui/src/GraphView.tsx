@@ -83,7 +83,8 @@ function drawGraph(canvas: HTMLCanvasElement, rows: CommitGraphRow[], scrollTop:
 // ── Ref chips ───────────────────────────────────────────────────────────────
 type ChipKind = "head" | "remote" | "tag" | "branch";
 function classifyRef(ref: string): { label: string; kind: ChipKind } {
-  if (ref === "HEAD") return { label: "HEAD", kind: "head" };
+  if (ref === "HEAD" || ref === "head:HEAD") return { label: "HEAD", kind: "head" };
+  if (ref.startsWith("head:")) return { label: ref.slice(5).trim(), kind: "head" };
   if (ref.startsWith("tag:")) return { label: ref.slice(4).trim(), kind: "tag" };
   if (ref.includes("/")) return { label: ref, kind: "remote" };
   return { label: ref, kind: "branch" };

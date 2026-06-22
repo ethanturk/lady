@@ -109,15 +109,27 @@ fn walk_log_graph(
     let commits = engine.walk_log(&repo, gq).map_err(|e| e.to_string())?;
 
     // Build an oid → ref-name map for branch/tag/HEAD labels on graph rows.
+    // Tags are prefixed with `tag:` so the renderer can style them. HEAD is
+    // prefixed with `head:` (e.g. `head:main`) so the current branch chip gets a
+    // checkmark. When HEAD points at a named branch, skip the duplicate branch
+    // entry so we only show one chip.
     let refs = engine.list_refs(&repo).map_err(|e| e.to_string())?;
+    let mut head_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for r in &refs {
+        if r.kind == lady_proto::RefKind::Head {
+            head_names.insert(r.name.clone());
+        }
+    }
     let mut refs_by_oid: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
     for r in refs {
-        // Distinguish tags so the renderer can style them separately from branches.
-        let label = if r.kind == lady_proto::RefKind::Tag {
-            format!("tag:{}", r.name)
-        } else {
-            r.name
+        let label = match r.kind {
+            lady_proto::RefKind::Tag => format!("tag:{}", r.name),
+            lady_proto::RefKind::Head => format!("head:{}", r.name),
+            // Skip branch/tag/remote entries whose name matches the current HEAD
+            // branch — the `head:<name>` entry already covers them.
+            _ if head_names.contains(&r.name) => continue,
+            _ => r.name,
         };
         refs_by_oid
             .entry(r.target.as_str().to_owned())
@@ -699,8 +711,16 @@ fn delete_tag(repo: RepoId, name: String, engine: State<GixEngine>) -> Result<()
     engine.delete_tag(&repo, &name).map_err(|e| e.to_string())
 }
 
-/// `git reset --soft|--mixed|--hard <target>` — move the current branch to
-/// `target`, optionally rewinding the index and working tree (see [`ResetMode`]).
+/// Move an existing lightweight tag `name` to `target`. This is the local
+/// equivalent of "fast-forwarding" a tag to a newer commit (`git tag -f`).
+/// Annotated tags are recreated as lightweight tags at the new target.
+#[tauri::command]
+fn move_tag(repo: RepoId, name: String, target: String, engine: State<GixEngine>) -> Result<(), String> {
+    engine
+        .move_tag(&repo, &name, &target)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn reset(
     repo: RepoId,
@@ -2338,6 +2358,7 @@ pub fn run() {
             checkout,
             create_tag,
             delete_tag,
+            move_tag,
             reset,
             fetch,
             pull,

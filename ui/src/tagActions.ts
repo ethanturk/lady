@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { RepoId } from "./commands";
+import type { MergeOutcome, RepoId } from "./commands";
 import type { ActionResult } from "./branchActions";
 
 /**
@@ -23,6 +23,41 @@ export async function checkoutTag(repo: RepoId, tag: string): Promise<ActionResu
         return { ok: false, message: String(e2) };
       }
     }
+    return { ok: false, message: String(e) };
+  }
+}
+
+/** Move (fast-forward) an existing tag to `target`. */
+export async function moveTag(repo: RepoId, tag: string, target: string): Promise<ActionResult> {
+  try {
+    await invoke("move_tag", { repo, name: tag, target });
+    return { ok: true, message: `Moved ${tag} to ${target}.` };
+  } catch (e) {
+    return { ok: false, message: String(e) };
+  }
+}
+
+/** Merge `source` into the checked-out tag (detached HEAD). */
+export async function mergeIntoTag(repo: RepoId, source: string): Promise<ActionResult> {
+  try {
+    await invoke("checkout", { repo, target: "HEAD", force: false });
+    const outcome = await invoke<MergeOutcome>("merge", {
+      repo,
+      source,
+      fastForward: "Auto",
+      commitMessage: null,
+    });
+    switch (outcome.kind) {
+      case "AlreadyUpToDate":
+        return { ok: true, message: "Already up to date." };
+      case "FastForwarded":
+        return { ok: true, message: `Fast-forwarded to ${source}.` };
+      case "Merged":
+        return { ok: true, message: `Merged ${source} as ${outcome.value.slice(0, 8)}.` };
+      case "Conflicts":
+        return { ok: false, message: `Merge stopped with ${outcome.value.length} conflict(s).` };
+    }
+  } catch (e) {
     return { ok: false, message: String(e) };
   }
 }

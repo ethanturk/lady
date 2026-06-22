@@ -2,9 +2,9 @@ import type { Component } from "solid-js";
 import type { RefInfo, RepoId } from "./commands";
 import ContextMenu from "./ContextMenu";
 import type { MenuEntry } from "./ContextMenu";
-import { ActionResult, rebaseCurrentOnto } from "./branchActions";
+import { ActionResult, rebaseBranchOnto } from "./branchActions";
 import { copyRemoteLink, resetTo, revertCommit } from "./commitActions";
-import { checkoutTag, copyTagName, deleteTagLocal, deleteTagOrigin } from "./tagActions";
+import { checkoutTag, copyTagName, deleteTagLocal, deleteTagOrigin, mergeIntoTag, moveTag } from "./tagActions";
 
 export interface TagMenuState {
   tag: string;
@@ -18,6 +18,8 @@ interface TagMenuProps {
   currentBranch: string | null;
   /** All refs, to resolve the tag's target oid. */
   refs: RefInfo[];
+  /** Name of the default branch (e.g. main), used for tag-into-branch ops. */
+  defaultBranch: string;
   state: TagMenuState;
   onClose: () => void;
   onResult: (r: ActionResult | null) => void;
@@ -27,13 +29,16 @@ interface TagMenuProps {
   onAiExplain: (oid: string) => void;
   /** Open the push confirmation dialog to push this tag. */
   onPush: (tag: string) => void;
+  /** Open the interactive-rebase editor for `branch` onto `tag`. */
+  onInteractiveRebase: (branch: string, ontoTag: string) => void;
 }
 
 /**
- * The tag context menu (right-click a tag in the sidebar Tags panel). Mirrors
- * {@link BranchMenu}/CommitMenu: rebase current onto the tag, checkout (detached),
- * explain, branch/reset/revert at the tagged commit, delete locally / on origin,
- * and copy name/link. Reset and rebase are disabled on a detached HEAD.
+ * The tag context menu (right-click a tag in the sidebar Tags panel). Adds tag-
+ * specific operations against the default branch: fast-forward the tag, merge
+ * the default branch into the tag, rebase the default branch onto the tag, and
+ * interactive-rebase the default branch onto the tag. Also includes checkout,
+ * new branch, reset/revert/explain, delete, push, and copy actions.
  */
 const TagMenu: Component<TagMenuProps> = (props) => {
   const tag = () => props.state.tag;
@@ -52,12 +57,38 @@ const TagMenu: Component<TagMenuProps> = (props) => {
 
   const items = (): MenuEntry[] => {
     const oid = target();
+    const base = props.defaultBranch;
     const list: MenuEntry[] = [
       {
-        label: `Rebase ${cur()} onto ${tag()}`,
-        disabled: !canRewrite(),
-        run: async () => result(await rebaseCurrentOnto(props.repoId, cur(), tag())),
+        label: `Fast forward ${tag()} to ${base}`,
+        run: async () => result(await moveTag(props.repoId, tag(), base)),
       },
+      {
+        label: `Merge ${base} into ${tag()}`,
+        run: async () => result(await mergeIntoTag(props.repoId, base)),
+      },
+      {
+        label: `Rebase ${base} into ${tag()}`,
+        run: async () => {
+          try {
+            const outcome = await rebaseBranchOnto(props.repoId, base, tag());
+            if (outcome.kind === "Rebased") {
+              result({ ok: true, message: `Rebased ${base} onto ${tag()}.` });
+            } else if (outcome.kind === "Stopped") {
+              result({ ok: false, message: "Rebase stopped to edit a commit — continue or abort." });
+            } else {
+              result({ ok: false, message: `Rebase stopped with ${outcome.value.length} conflict(s).` });
+            }
+          } catch (e) {
+            result({ ok: false, message: String(e) });
+          }
+        },
+      },
+      {
+        label: `Interactive Rebase ${base} into ${tag()}`,
+        run: () => props.onInteractiveRebase(base, tag()),
+      },
+      "divider",
       { label: `Checkout Commit at ${tag()}`, run: async () => result(await checkoutTag(props.repoId, tag())) },
       "divider",
       { label: "New Branch Here…", shortcut: "⇧⌘B", run: () => props.onCreateBranch(tag()) },

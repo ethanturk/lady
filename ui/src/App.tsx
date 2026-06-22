@@ -164,6 +164,17 @@ const App: Component = () => {
     const h = refs().find((r) => r.kind === "Head")?.name;
     return h && h !== "HEAD" ? h : null;
   };
+  // Best-effort default branch for "branch-into-tag" operations: main, master,
+  // or the first local branch. Falls back to the current branch if no branches
+  // are known, so the menu items remain operational.
+  const defaultBranch = () => {
+    const names = refs()
+      .filter((r) => r.kind === "Branch")
+      .map((r) => r.name);
+    if (names.includes("main")) return "main";
+    if (names.includes("master")) return "master";
+    return names[0] ?? currentBranchName() ?? "main";
+  };
 
   const loadChangeCount = (repo: string) => {
     invoke<WorkingTree>("status", { repo })
@@ -839,6 +850,7 @@ const App: Component = () => {
           repoId={repoId()!}
           currentBranch={currentBranchName()}
           refs={refs()}
+          defaultBranch={defaultBranch()}
           state={tagMenu()!}
           onClose={() => setTagMenu(null)}
           onResult={showResult}
@@ -848,6 +860,12 @@ const App: Component = () => {
           }}
           onAiExplain={explainCommit}
           onPush={(tag) => openPushDialog({ repo: repoId()!, refspec: `refs/tags/${tag}`, remote: "origin", isTag: true })}
+          onInteractiveRebase={(branch, ontoTag) => {
+            // Find the tag's target oid; interactive rebase works from the
+            // common-ancestor commit between branch and the tag's commit.
+            const tagRef = refs().find((r) => r.kind === "Tag" && r.name === ontoTag);
+            if (tagRef) setRebaseFrom(tagRef.target);
+          }}
         />
       </Show>
 

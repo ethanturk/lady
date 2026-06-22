@@ -285,6 +285,10 @@ pub trait GitEngine: Send + Sync {
     /// Delete tag `name`.
     fn delete_tag(&self, repo: &RepoId, name: &str) -> Result<()>;
 
+    /// Move (force-update) an existing tag `name` to `target`. The tag is
+    /// recreated as a lightweight tag, even if it was previously annotated.
+    fn move_tag(&self, repo: &RepoId, name: &str, target: &str) -> Result<()>;
+
     /// Fetch from `remote` (or the default remote when `None`), streaming
     /// git's `--progress` output to `on_progress`. Credentials and transport
     /// are supplied by the per-invocation `auth` overrides, or entirely by
@@ -1536,6 +1540,14 @@ impl GitEngine for GixEngine {
     fn delete_tag(&self, repo: &RepoId, name: &str) -> Result<()> {
         let wd = self.workdir(repo)?;
         run_git(&wd, &["tag", "-d", name]).map(|_| ())
+    }
+
+    fn move_tag(&self, repo: &RepoId, name: &str, target: &str) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        // `git tag -f <name> <target>` updates the ref. This drops any annotation
+        // and creates a lightweight tag at the new target, which matches the
+        // "fast-forward tag" semantics in the UI.
+        run_git(&wd, &["tag", "-f", name, target]).map(|_| ())
     }
 
     fn fetch(

@@ -150,6 +150,11 @@ export async function fastForwardBranch(repo: RepoId, branch: string, upstream: 
   }
 }
 
+/** Rebase `branch` onto `onto` (non-interactive). */
+export async function rebaseBranchOnto(repo: RepoId, branch: string, onto: string): Promise<RebaseOutcome> {
+  return invoke<RebaseOutcome>("rebase", { repo, branch, onto });
+}
+
 /** Set (`upstream`) or unset (`null`) a branch's tracking ref. */
 export async function setTracking(repo: RepoId, branch: string, upstream: string | null): Promise<ActionResult> {
   try {
