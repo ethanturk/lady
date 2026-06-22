@@ -1,6 +1,6 @@
 //! Mistral Chat Completions provider (PH5-004). OpenAI-compatible shape.
 
-use crate::providers::{http_client, openai_chat};
+use crate::providers::{http_client, openai_chat, TemperatureParam, TokenLimitParam};
 use crate::{AiProvider, AiRequest, AiResponse, Result, StreamSink};
 
 /// A Mistral API client (bearer auth, OpenAI-style chat body).
@@ -42,7 +42,15 @@ impl AiProvider for MistralProvider {
             .http
             .post(format!("{}/chat/completions", self.base_url))
             .bearer_auth(&self.api_key);
-        openai_chat(builder, req, true, sink).await
+        openai_chat(
+            builder,
+            req,
+            true,
+            TokenLimitParam::MaxTokens,
+            TemperatureParam::Include,
+            sink,
+        )
+        .await
     }
 }
 

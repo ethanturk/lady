@@ -55,21 +55,42 @@ fn api_error_message(body: &str) -> String {
 /// already-authed POST to the chat endpoint; `include_model` controls whether
 /// the model id goes in the body (false for Azure, which scopes it in the URL).
 /// Shared by OpenAI, Azure OpenAI, and Mistral.
+#[derive(Clone, Copy)]
+pub(crate) enum TokenLimitParam {
+    MaxTokens,
+    MaxCompletionTokens,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum TemperatureParam {
+    Include,
+    Omit,
+}
+
 pub(crate) async fn openai_chat(
     builder: reqwest::RequestBuilder,
     req: &AiRequest,
     include_model: bool,
+    token_limit: TokenLimitParam,
+    temperature: TemperatureParam,
     sink: &mut StreamSink<'_>,
 ) -> Result<AiResponse> {
     let mut body = serde_json::json!({
         "stream": true,
-        "temperature": req.temperature,
-        "max_tokens": req.max_tokens,
         "messages": [
             { "role": "system", "content": req.system },
             { "role": "user", "content": req.prompt },
         ],
     });
+    if matches!(temperature, TemperatureParam::Include) {
+        body["temperature"] = req.temperature.into();
+    }
+    match token_limit {
+        TokenLimitParam::MaxTokens => body["max_tokens"] = req.max_tokens.into(),
+        TokenLimitParam::MaxCompletionTokens => {
+            body["max_completion_tokens"] = req.max_tokens.into();
+        }
+    }
     if include_model {
         body["model"] = serde_json::Value::String(req.model.clone());
     }

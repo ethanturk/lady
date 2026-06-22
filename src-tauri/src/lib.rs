@@ -165,10 +165,7 @@ fn walk_log_graph(
                     to_lane: e.to_lane,
                 })
                 .collect(),
-            refs: refs_by_oid
-                .get(c.oid.as_str())
-                .cloned()
-                .unwrap_or_default(),
+            refs: refs_by_oid.get(c.oid.as_str()).cloned().unwrap_or_default(),
         })
         .collect();
 
@@ -715,7 +712,12 @@ fn delete_tag(repo: RepoId, name: String, engine: State<GixEngine>) -> Result<()
 /// equivalent of "fast-forwarding" a tag to a newer commit (`git tag -f`).
 /// Annotated tags are recreated as lightweight tags at the new target.
 #[tauri::command]
-fn move_tag(repo: RepoId, name: String, target: String, engine: State<GixEngine>) -> Result<(), String> {
+fn move_tag(
+    repo: RepoId,
+    name: String,
+    target: String,
+    engine: State<GixEngine>,
+) -> Result<(), String> {
     engine
         .move_tag(&repo, &name, &target)
         .map_err(|e| e.to_string())
@@ -766,7 +768,8 @@ fn clone_repo(
     // Never block on a terminal credential prompt (no TTY behind the GUI) — fail
     // fast with a clear auth error instead of "could not read Username … Device
     // not configured". Auth comes from `auth` below or a configured helper.
-    cmd.env("GIT_TERMINAL_PROMPT", "0").env("GCM_INTERACTIVE", "never");
+    cmd.env("GIT_TERMINAL_PROMPT", "0")
+        .env("GCM_INTERACTIVE", "never");
     for (k, v) in &auth.config {
         cmd.arg("-c").arg(format!("{k}={v}"));
     }

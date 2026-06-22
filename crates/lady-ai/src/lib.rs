@@ -154,7 +154,10 @@ impl ProviderKind {
     /// user-configured compatible endpoints are the consent-free,
     /// redaction-optional paths (point them only at servers you trust).
     pub fn is_remote(self) -> bool {
-        !matches!(self, ProviderKind::OpenAiCompatible | ProviderKind::AnthropicCompatible)
+        !matches!(
+            self,
+            ProviderKind::OpenAiCompatible | ProviderKind::AnthropicCompatible
+        )
     }
 
     /// The keychain key under which this provider's API key is stored. The

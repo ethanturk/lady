@@ -1,7 +1,7 @@
 //! OpenAI Chat Completions provider (PH5-004). Also backs any OpenAI-compatible
 //! server (Ollama, LM Studio, vLLM, …) via [`OpenAiProvider::with_base_url`].
 
-use crate::providers::{http_client, openai_chat};
+use crate::providers::{http_client, openai_chat, TemperatureParam, TokenLimitParam};
 use crate::{AiProvider, AiRequest, AiResponse, Error, Result, StreamSink};
 
 /// An OpenAI API client (bearer auth, model in body).
@@ -65,6 +65,14 @@ impl OpenAiProvider {
     }
 }
 
+fn uses_max_completion_tokens(model: &str) -> bool {
+    let model = model.to_ascii_lowercase();
+    model.starts_with("gpt-5")
+        || model.starts_with("o1")
+        || model.starts_with("o3")
+        || model.starts_with("o4")
+}
+
 #[async_trait::async_trait]
 impl AiProvider for OpenAiProvider {
     fn id(&self) -> &str {
@@ -81,7 +89,17 @@ impl AiProvider for OpenAiProvider {
             self.http
                 .post(format!("{}/chat/completions", self.base_url)),
         );
-        openai_chat(builder, req, true, sink).await
+        let token_limit = if uses_max_completion_tokens(&req.model) {
+            TokenLimitParam::MaxCompletionTokens
+        } else {
+            TokenLimitParam::MaxTokens
+        };
+        let temperature = if uses_max_completion_tokens(&req.model) {
+            TemperatureParam::Omit
+        } else {
+            TemperatureParam::Include
+        };
+        openai_chat(builder, req, true, token_limit, temperature, sink).await
     }
 }
 
@@ -119,6 +137,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn gpt5_uses_max_completion_tokens() {
+        let server = MockServer::start().await;
+        let sse = "data: {\"choices\":[{\"delta\":{\"content\":\"feat: ok\"}}]}\n\n\
+                   data: [DONE]\n\n";
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(sse))
+            .mount(&server)
+            .await;
+        let p = OpenAiProvider::with_base_url(server.uri(), "sk-test");
+        let mut cb = |_d: &str| {};
+        let mut sink = StreamSink::new(&mut cb, CancelToken::new());
+        let mut req = AiRequest::new(AiTask::CommitMessage, "gpt-5");
+        req.max_tokens = 321;
+
+        p.complete(&req, &mut sink).await.expect("complete");
+
+        let requests = server.received_requests().await.expect("request log");
+        let body: serde_json::Value = serde_json::from_slice(&requests[0].body).expect("json body");
+        assert_eq!(body["max_completion_tokens"], 321);
+        assert!(body.get("max_tokens").is_none(), "body: {body}");
+        assert!(body.get("temperature").is_none(), "body: {body}");
+    }
+
+    #[tokio::test]
     async fn skips_reasoning_and_keeps_answer() {
         // Reasoning models stream `delta.reasoning_content` (thinking) before the
         // real `delta.content` answer. Only the answer must end up in the result,
@@ -137,10 +180,7 @@ mod tests {
         let mut cb = |d: &str| buf.push_str(d);
         let mut sink = StreamSink::new(&mut cb, CancelToken::new());
         let resp = p
-            .complete(
-                &AiRequest::new(AiTask::CommitMessage, "gemma"),
-                &mut sink,
-            )
+            .complete(&AiRequest::new(AiTask::CommitMessage, "gemma"), &mut sink)
             .await
             .expect("complete");
         assert_eq!(resp.text, "feat: x");
@@ -178,7 +218,8 @@ mod tests {
         // Budget-truncated mid-thought: reasoning but no content. Must fail loudly
         // (BadOutput) rather than silently resolving to an empty message.
         let server = MockServer::start().await;
-        let sse = "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"still thinking\"}}]}\n\n\
+        let sse =
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"still thinking\"}}]}\n\n\
                    data: [DONE]\n\n";
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
@@ -189,10 +230,7 @@ mod tests {
         let mut cb = |_d: &str| {};
         let mut sink = StreamSink::new(&mut cb, CancelToken::new());
         let err = p
-            .complete(
-                &AiRequest::new(AiTask::CommitMessage, "gemma"),
-                &mut sink,
-            )
+            .complete(&AiRequest::new(AiTask::CommitMessage, "gemma"), &mut sink)
             .await
             .unwrap_err();
         assert!(matches!(err, crate::Error::BadOutput(_)), "got {err:?}");

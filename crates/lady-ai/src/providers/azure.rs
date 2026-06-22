@@ -1,7 +1,7 @@
 //! Azure OpenAI provider (PH5-004). Deployment-scoped Chat Completions:
 //! the model is the deployment in the URL, auth is the `api-key` header.
 
-use crate::providers::{http_client, openai_chat};
+use crate::providers::{http_client, openai_chat, TemperatureParam, TokenLimitParam};
 use crate::{AiProvider, AiRequest, AiResponse, Result, StreamSink};
 
 /// Azure OpenAI API version pinned for the chat completions shape.
@@ -46,7 +46,15 @@ impl AiProvider for AzureOpenAiProvider {
         );
         let builder = self.http.post(url).header("api-key", &self.api_key);
         // Azure scopes the model in the URL, so omit it from the body.
-        openai_chat(builder, req, false, sink).await
+        openai_chat(
+            builder,
+            req,
+            false,
+            TokenLimitParam::MaxTokens,
+            TemperatureParam::Include,
+            sink,
+        )
+        .await
     }
 }
 
