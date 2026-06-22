@@ -195,7 +195,8 @@ export interface GitHubAccount {
   login: string;
   name: string;
   email: string;
-  known_owners: string[];
+  /** Legacy settings may omit this; accounts.ts normalizes it to [] on read. */
+  known_owners?: string[];
 }
 
 /** Mirrors the backend `AccountSuggestion`. */

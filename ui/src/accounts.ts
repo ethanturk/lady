@@ -6,9 +6,16 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { AccountSuggestion, GitHubAccount, RepoId } from "./commands";
 
+const normalizeAccount = (account: GitHubAccount): GitHubAccount => ({
+  ...account,
+  known_owners: account.known_owners ?? [],
+});
+
 /** List the registered GitHub accounts (no tokens are ever returned). */
 export const listGitHubAccounts = (): Promise<GitHubAccount[]> =>
-  invoke("list_github_accounts");
+  invoke<GitHubAccount[]>("list_github_accounts").then((accounts) =>
+    accounts.map(normalizeAccount),
+  );
 
 /**
  * Register or update a GitHub account: the PAT is validated against the API to
@@ -20,12 +27,12 @@ export const addGitHubAccount = (
   knownOwners: string[],
   token: string,
 ): Promise<GitHubAccount> =>
-  invoke("add_github_account", {
+  invoke<GitHubAccount>("add_github_account", {
     name,
     email,
     knownOwners,
     token,
-  });
+  }).then(normalizeAccount);
 
 /** Remove an account: deletes its token and unpins any repos using it. */
 export const removeGitHubAccount = (id: string): Promise<void> =>
@@ -38,7 +45,12 @@ export const removeGitHubAccount = (id: string): Promise<void> =>
  */
 export const suggestRepoAccount = (
   repo: RepoId,
-): Promise<AccountSuggestion | null> => invoke("suggest_repo_account", { repo });
+): Promise<AccountSuggestion | null> =>
+  invoke<AccountSuggestion | null>("suggest_repo_account", { repo }).then((suggestion) =>
+    suggestion
+      ? { ...suggestion, account: normalizeAccount(suggestion.account) }
+      : null,
+  );
 
 /** Pin `repo` to an account (sets the HTTPS override + stamps the identity). */
 export const assignRepoAccount = (

@@ -120,7 +120,7 @@ jobs:
           tagName: ${{ (github.event_name == 'push' || github.event.inputs.dry_run == 'false') && github.ref_name || '' }}
           releaseName: "Lady ${{ github.ref_name }}"
           releaseBody: "See CHANGELOG.md."
-          releaseDraft: true
+          releaseDraft: false
           includeUpdaterJson: true
           args: ${{ matrix.args }}
 
