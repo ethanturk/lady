@@ -89,6 +89,8 @@ interface SidebarProps {
   onBranchKey?: (branch: string, action: "new-branch" | "new-tag" | "delete") => void;
   /** Open the full Stashes management view. */
   onOpenStashes?: () => void;
+  /** Backend-owned worktree family snapshot. App owns the refresh cadence. */
+  repositoryFamily?: RepositoryFamily | null;
   /** Switch to/open a worktree from the active repository family. */
   onOpenWorktree?: (path: string) => Promise<void> | void;
   /** Worktree path currently being opened. */
@@ -155,12 +157,12 @@ const safeWorktreeName = (name: string): string =>
 
 const WorktreeSwitcher: Component<{
   repoId: RepoId | null;
+  family?: RepositoryFamily | null;
   refreshNonce?: number;
   onOpen?: (path: string) => Promise<void> | void;
   onManage?: () => void;
   switchingPath?: string | null;
 }> = (props) => {
-  const [family, setFamily] = createSignal<RepositoryFamily | null>(null);
   const [err, setErr] = createSignal<string | null>(null);
   const [creating, setCreating] = createSignal(false);
   const [branch, setBranch] = createSignal("");
@@ -168,23 +170,7 @@ const WorktreeSwitcher: Component<{
   const [existing, setExisting] = createSignal(false);
   const [localSwitching, setLocalSwitching] = createSignal<string | null>(null);
 
-  createEffect(() => {
-    const repo = props.repoId;
-    void props.refreshNonce;
-    if (!repo) {
-      setFamily(null);
-      return;
-    }
-    invoke<RepositoryFamily>("repository_family", { repo })
-      .then((next) => {
-        setFamily(next);
-        setErr(null);
-      })
-      .catch((e) => {
-        setFamily(null);
-        setErr(String(e));
-      });
-  });
+  const family = () => props.family ?? null;
 
   createEffect(() => {
     const fam = family();
@@ -661,6 +647,7 @@ const Sidebar: Component<SidebarProps> = (props) => {
 
       <WorktreeSwitcher
         repoId={props.repoId}
+        family={props.repositoryFamily}
         refreshNonce={props.refreshNonce}
         onOpen={props.onOpenWorktree}
         onManage={props.onManageWorktrees}

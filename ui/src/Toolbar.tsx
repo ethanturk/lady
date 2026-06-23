@@ -51,6 +51,7 @@ interface ToolbarProps {
 const QuickAction: Component<{
   icon: JSX.Element;
   label: string;
+  title?: string;
   disabled?: boolean;
   onClick: (e: MouseEvent) => void;
 }> = (props) => (
@@ -73,7 +74,7 @@ const QuickAction: Component<{
       "font-size": "10px",
       "line-height": "1",
     }}
-    title={props.label}
+    title={props.title ?? props.label}
   >
     {props.icon}
     <span>{props.label}</span>
@@ -326,7 +327,12 @@ const Toolbar: Component<ToolbarProps> = (props) => {
             </div>
           </Show>
         </div>
-        <QuickAction icon={<IconSettings />} label="Settings" onClick={() => props.onSettings()} />
+        <QuickAction
+          icon={<IconSettings />}
+          label="Settings"
+          title="Settings (Cmd/Ctrl+,)"
+          onClick={() => props.onSettings()}
+        />
       </div>
     </div>
   );

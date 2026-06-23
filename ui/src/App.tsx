@@ -123,6 +123,22 @@ const App: Component = () => {
   const repoId = () => active()?.id ?? null;
   const repoName = () => (active() ? baseName(active()!.path) : null);
 
+  const openSettings = () => {
+    setPaletteOpen(false);
+    setOverlay("settings");
+  };
+
+  createEffect(() => {
+    const onKey = (ev: KeyboardEvent) => {
+      if ((ev.metaKey || ev.ctrlKey) && ev.key === "," && !ev.altKey && !ev.shiftKey) {
+        ev.preventDefault();
+        openSettings();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    onCleanup(() => window.removeEventListener("keydown", onKey));
+  });
+
   const openWorktreePath = async (path: string) => {
     setSwitchingWorktreePath(path);
     setErr(null);
@@ -192,8 +208,27 @@ const App: Component = () => {
 
   const loadChangeCount = (repo: string) => {
     invoke<WorkingTree>("status", { repo })
-      .then((wt) => setChangeCount(wt.staged.length + wt.unstaged.length + wt.untracked.length))
-      .catch(() => setChangeCount(0));
+      .then((wt) => {
+        if (active()?.id === repo) setChangeCount(wt.staged.length + wt.unstaged.length + wt.untracked.length);
+      })
+      .catch(() => {
+        if (active()?.id === repo) setChangeCount(0);
+      });
+  };
+
+  const refreshRepositoryFamily = (repo = active()) => {
+    if (!repo) {
+      setRepositoryFamily(null);
+      return;
+    }
+    const repoId = repo.id;
+    invoke<RepositoryFamily>("repository_family", { repo: repoId })
+      .then((family) => {
+        if (active()?.id === repoId) setRepositoryFamily(family);
+      })
+      .catch(() => {
+        if (active()?.id === repoId) setRepositoryFamily(null);
+      });
   };
 
   // Poll the mid-operation state; auto-surface the resolver when conflicts
@@ -201,12 +236,13 @@ const App: Component = () => {
   const updateConflictState = (repo: OpenRepo) => {
     invoke<ConflictState>("conflict_state", { repo: repo.id })
       .then((s) => {
+        if (active()?.id !== repo.id) return;
         const wasIdle = conflictState() === "None";
         setConflictState(s);
         if (s !== "None") {
           invoke<string[]>("list_conflicts", { repo: repo.id })
             .then((c) => {
-              if (c.length > 0 && wasIdle) setOverlay("conflicts");
+              if (active()?.id === repo.id && c.length > 0 && wasIdle) setOverlay("conflicts");
             })
             .catch(() => {});
         } else if (overlay() === "conflicts") {
@@ -220,20 +256,20 @@ const App: Component = () => {
     setRefreshNonce((n) => n + 1);
     const repo = active();
     if (!repo) return;
-    invoke<RefInfo[]>("list_refs", { repo: repo.id })
-      .then(setRefs)
+    const repoId = repo.id;
+    invoke<RefInfo[]>("list_refs", { repo: repoId })
+      .then((next) => {
+        if (active()?.id === repoId) setRefs(next);
+      })
       .catch((e) => setErr(String(e)));
-    invoke<RepositoryFamily>("repository_family", { repo: repo.id })
-      .then(setRepositoryFamily)
-      .catch(() => setRepositoryFamily(null));
-    loadChangeCount(repo.id);
+    loadChangeCount(repoId);
     updateConflictState(repo);
   };
 
   // Poll local repo state so edits made outside Lady (editor, terminal) show up
   // without clicking Fetch. Pauses while the window is hidden.
   const REPO_POLL_MS = 2_000;
-  const REMOTE_FETCH_MS = 5_000;
+  const REMOTE_FETCH_MS = 60_000;
   createEffect(() => {
     if (!active()) return;
     const tick = () => {
@@ -273,7 +309,6 @@ const App: Component = () => {
     const onVis = () => {
       if (document.visibilityState === "visible") void tick();
     };
-    void tick();
     document.addEventListener("visibilitychange", onVis);
     onCleanup(() => {
       clearInterval(id);
@@ -393,16 +428,19 @@ const App: Component = () => {
     setOverlay(null);
     setChangeCount(0);
     if (!repo) return;
-    invoke<RefInfo[]>("list_refs", { repo: repo.id })
-      .then(setRefs)
+    const repoId = repo.id;
+    invoke<RefInfo[]>("list_refs", { repo: repoId })
+      .then((next) => {
+        if (active()?.id === repoId) setRefs(next);
+      })
       .catch((e) => setErr(String(e)));
-    invoke<RepositoryFamily>("repository_family", { repo: repo.id })
-      .then(setRepositoryFamily)
-      .catch(() => setRepositoryFamily(null));
-    invoke<string[]>("list_files", { repo: repo.id })
-      .then(setFiles)
+    refreshRepositoryFamily(repo);
+    invoke<string[]>("list_files", { repo: repoId })
+      .then((next) => {
+        if (active()?.id === repoId) setFiles(next);
+      })
       .catch(() => setFiles([]));
-    loadChangeCount(repo.id);
+    loadChangeCount(repoId);
     setConflictState("None");
     updateConflictState(repo);
   });
@@ -422,7 +460,7 @@ const App: Component = () => {
       { kind: "action", label: "Blame", run: () => setOverlay("blame") },
       { kind: "action", label: "File History", run: () => setOverlay("history") },
       { kind: "action", label: "Create Worktree...", run: () => setOverlay("worktrees") },
-      { kind: "action", label: "Settings", run: () => setOverlay("settings") },
+      { kind: "action", label: "Settings", run: openSettings },
     ];
     const worktrees: PaletteEntry[] = (repositoryFamily()?.worktrees ?? [])
       .filter((wt) => !wt.selected && !wt.missing && !wt.prunable)
@@ -509,6 +547,7 @@ const App: Component = () => {
       setErr(r.message);
     }
     refresh();
+    refreshRepositoryFamily();
   };
 
   // Surface a branch/file ActionResult as a toast or error, then refresh.
@@ -673,7 +712,7 @@ const App: Component = () => {
           const b = currentBranchName();
           if (b) openBranchMenu(b, at);
         }}
-        onSettings={() => setOverlay("settings")}
+        onSettings={openSettings}
         onPush={() => {
           const b = currentBranchName();
           if (b) openPushDialog({ repo: repoId()!, refspec: b, remote: "origin", isTag: false });
@@ -769,6 +808,7 @@ const App: Component = () => {
               onSelectRef={showRef}
               onBranchKey={onBranchKey}
               onOpenStashes={() => setOverlay("stashes")}
+              repositoryFamily={repositoryFamily()}
               onOpenWorktree={openWorktreePath}
               switchingWorktreePath={switchingWorktreePath()}
               onManageWorktrees={() => setOverlay("worktrees")}
@@ -863,6 +903,7 @@ const App: Component = () => {
                 onSelectRef={showRef}
                 onBranchKey={onBranchKey}
                 onOpenStashes={() => { setDrawerOpen(false); setOverlay("stashes"); }}
+                repositoryFamily={repositoryFamily()}
                 onOpenWorktree={(path) => { setDrawerOpen(false); return openWorktreePath(path); }}
                 switchingWorktreePath={switchingWorktreePath()}
                 onManageWorktrees={() => { setDrawerOpen(false); setOverlay("worktrees"); }}
@@ -1157,7 +1198,15 @@ const App: Component = () => {
           <FileHistory repoId={id} initialPath={navFile()} />
         </Show>
         <Show when={overlay() === "worktrees"}>
-          <WorktreesView repoId={id} refreshNonce={refreshNonce()} onChanged={refresh} onOpen={(path) => void openWorktreePath(path)} />
+          <WorktreesView
+            repoId={id}
+            refreshNonce={refreshNonce()}
+            onChanged={() => {
+              refresh();
+              refreshRepositoryFamily();
+            }}
+            onOpen={(path) => void openWorktreePath(path)}
+          />
         </Show>
         <Show when={overlay() === "reflog"}>
           <ReflogView repoId={id} refreshNonce={refreshNonce()} onChanged={refresh} />

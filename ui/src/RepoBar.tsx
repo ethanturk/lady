@@ -3,7 +3,7 @@ import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import type { CustomCommand, OpenRepo, RecentRepo, RepoId, RepositoryFamily, RepositoryFamilyIdentity, Settings } from "./commands";
+import type { CustomCommand, OpenRepo, RecentRepo, RepoId, RepositoryFamilyIdentity, Settings } from "./commands";
 
 /** Last path segment, for a compact tab label. */
 function baseName(path: string): string {
@@ -146,23 +146,18 @@ const RepoBar: Component<{
       rememberRecent(repo);
       activate(repo);
 
-      Promise.all([
-        invoke<RepositoryFamily>("repository_family", { repo: id }).catch(() => null),
-        invoke<boolean>("repo_dirty", { repo: id }).catch(() => false),
-      ]).then(([family, dirty]) => {
+      invoke<boolean>("repo_dirty", { repo: id }).then((dirty) => {
         setOpened((prev) =>
           prev.map((r) =>
             r.id === id
               ? {
                   ...r,
-                  path: family?.worktrees.find((wt) => wt.selected)?.path ?? r.path,
-                  family_name: family ? baseName(family.main.path) : r.family_name,
                   dirty,
                 }
               : r,
           ),
         );
-      });
+      }).catch(() => {});
     } catch (e) {
       setErr(String(e));
       throw e;

@@ -632,12 +632,8 @@ impl GixEngine {
     /// Canonical common git directory shared by every worktree in a repository
     /// family. This is the durable family id from ADR-0012.
     pub fn repository_family_id(&self, id: &RepoId) -> Result<RepositoryFamilyId> {
-        let wd = self.workdir(id)?;
-        let out = run_git(
-            &wd,
-            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-        )?;
-        let raw = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+        let repo = self.repo(id)?;
+        let raw = repo.common_dir().to_path_buf();
         let path = raw.canonicalize().unwrap_or(raw);
         Ok(RepositoryFamilyId::from(path.to_string_lossy().to_string()))
     }
