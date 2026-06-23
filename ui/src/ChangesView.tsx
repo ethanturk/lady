@@ -61,6 +61,56 @@ const accentFill = "color-mix(in srgb, var(--accent) 16%, transparent)";
 /** Scale a px padding by the global density step (--pad-scale). */
 const ps = (px: number) => `calc(${px}px * var(--pad-scale))`;
 
+const splitPath = (path: string) => {
+  const idx = path.lastIndexOf("/");
+  return idx === -1 ? { dir: "", base: path } : { dir: path.slice(0, idx + 1), base: path.slice(idx + 1) };
+};
+
+const pathLabelBase: JSX.CSSProperties = {
+  flex: "1",
+  display: "flex",
+  "align-items": "baseline",
+  "min-width": "0",
+  overflow: "hidden",
+  "white-space": "nowrap",
+  "font-family": "ui-monospace, monospace",
+};
+
+const pathPrefixStyle: JSX.CSSProperties = {
+  "min-width": "0",
+  overflow: "hidden",
+  "text-overflow": "ellipsis",
+  "white-space": "nowrap",
+  direction: "rtl",
+  "text-align": "left",
+  color: "var(--tx3)",
+};
+
+const FilePathLabel: Component<{ path: string; oldPath?: string | null; leaf?: string }> = (props) => {
+  const parts = () => splitPath(props.path);
+  const title = () => (props.oldPath ? `${props.oldPath} -> ${props.path}` : props.path);
+  return (
+    <span style={pathLabelBase} title={title()}>
+      <Show when={props.leaf} fallback={
+        <>
+          <Show when={props.oldPath}>
+            <span style={{ ...pathPrefixStyle, flex: "0 1 35%", "max-width": "35%" }}>{props.oldPath}</span>
+            <span style={{ color: "var(--tx3)", "flex-shrink": 0 }}>&nbsp;→&nbsp;</span>
+          </Show>
+          <Show when={parts().dir}>
+            <span style={{ ...pathPrefixStyle, flex: "1 1 auto" }}>{parts().dir}</span>
+          </Show>
+          <span style={{ "flex-shrink": 0, overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>
+            {parts().base}
+          </span>
+        </>
+      }>
+        {props.leaf}
+      </Show>
+    </span>
+  );
+};
+
 /** Which file + side the diff pane is showing. */
 interface Selection {
   path: string;
@@ -503,18 +553,7 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
       }}
     >
       <Badge kind={f.kind} />
-      <span style={{ flex: "1", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap", "font-family": "ui-monospace, monospace" }} title={f.path}>
-        <Show when={leaf} fallback={
-          <>
-            <Show when={f.old_path}>
-              <span style={{ color: "var(--tx3)" }}>{f.old_path} → </span>
-            </Show>
-            {f.path}
-          </>
-        }>
-          {leaf}
-        </Show>
-      </span>
+      <FilePathLabel path={f.path} oldPath={f.old_path} leaf={leaf} />
       <button
         style={{ ...subBtn, padding: "2px 8px", "font-size": "11px" }}
         onClick={(e) => {
