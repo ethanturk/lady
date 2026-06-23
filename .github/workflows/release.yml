@@ -54,9 +54,25 @@ jobs:
           command: check
 
   # ── Cross-platform bundle + sign/notarize + publish ─────────────────────────
+  release-preflight:
+    name: release preflight
+    needs: gate
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      - name: Refuse to publish into an existing release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "::error::Release $GITHUB_REF_NAME already exists. Delete it before re-publishing this tag, or bump the patch version and publish a new tag."
+            exit 1
+          fi
+
   release:
     name: bundle / ${{ matrix.os }} ${{ matrix.target }}
-    needs: gate
+    needs: [gate, release-preflight]
     strategy:
       fail-fast: false
       matrix:
