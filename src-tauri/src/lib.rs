@@ -428,6 +428,32 @@ fn repository_family(repo: RepoId, engine: State<GixEngine>) -> Result<Repositor
     engine.repository_family(&repo).map_err(|e| e.to_string())
 }
 
+#[derive(Serialize)]
+pub struct RepositoryFamilyIdentity {
+    pub id: String,
+    pub main_path: String,
+}
+
+/// Cheap family identity for opening/switching: avoids full worktree status
+/// enrichment so the UI can activate the selected checkout quickly.
+#[tauri::command]
+fn repository_family_identity(
+    repo: RepoId,
+    engine: State<GixEngine>,
+) -> Result<RepositoryFamilyIdentity, String> {
+    let id = engine
+        .repository_family_id(&repo)
+        .map_err(|e| e.to_string())?;
+    let main_path = std::path::Path::new(id.as_str())
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| id.as_str().to_string());
+    Ok(RepositoryFamilyIdentity {
+        id: id.as_str().to_string(),
+        main_path,
+    })
+}
+
 /// Add a worktree at `path`; create branch `branch` there when `new_branch`.
 #[tauri::command]
 fn add_worktree(
@@ -2456,6 +2482,7 @@ pub fn run() {
             signature_statuses,
             list_worktrees,
             repository_family,
+            repository_family_identity,
             add_worktree,
             remove_worktree,
             prune_worktrees,

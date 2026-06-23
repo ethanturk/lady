@@ -90,7 +90,9 @@ interface SidebarProps {
   /** Open the full Stashes management view. */
   onOpenStashes?: () => void;
   /** Switch to/open a worktree from the active repository family. */
-  onOpenWorktree?: (path: string) => void;
+  onOpenWorktree?: (path: string) => Promise<void> | void;
+  /** Worktree path currently being opened. */
+  switchingWorktreePath?: string | null;
   /** Open the detailed worktree management surface. */
   onManageWorktrees?: () => void;
   /** Fill the container width (used when hosted inside the mobile drawer). */
@@ -154,8 +156,9 @@ const safeWorktreeName = (name: string): string =>
 const WorktreeSwitcher: Component<{
   repoId: RepoId | null;
   refreshNonce?: number;
-  onOpen?: (path: string) => void;
+  onOpen?: (path: string) => Promise<void> | void;
   onManage?: () => void;
+  switchingPath?: string | null;
 }> = (props) => {
   const [family, setFamily] = createSignal<RepositoryFamily | null>(null);
   const [err, setErr] = createSignal<string | null>(null);
@@ -163,6 +166,7 @@ const WorktreeSwitcher: Component<{
   const [branch, setBranch] = createSignal("");
   const [path, setPath] = createSignal("");
   const [existing, setExisting] = createSignal(false);
+  const [localSwitching, setLocalSwitching] = createSignal<string | null>(null);
 
   createEffect(() => {
     const repo = props.repoId;
@@ -209,19 +213,24 @@ const WorktreeSwitcher: Component<{
     })
       .then(() => {
         resetCreate();
-        props.onOpen?.(wtPath);
+        setLocalSwitching(wtPath);
+        Promise.resolve(props.onOpen?.(wtPath)).finally(() => setLocalSwitching(null));
       })
       .catch((e) => setErr(String(e)));
   };
 
   const row = (wt: Worktree) => {
-    const disabled = wt.selected || wt.missing || wt.prunable;
+    const switching = () => props.switchingPath === wt.path || localSwitching() === wt.path;
+    const disabled = wt.selected || wt.missing || wt.prunable || switching();
     const status = wt.missing ? "missing" : wt.prunable ? "stale" : wt.locked ? "locked" : wt.dirty ? "dirty" : "";
     return (
       <button
         class="hov"
         disabled={disabled}
-        onClick={() => props.onOpen?.(wt.path)}
+        onClick={() => {
+          setLocalSwitching(wt.path);
+          Promise.resolve(props.onOpen?.(wt.path)).finally(() => setLocalSwitching(null));
+        }}
         title={`${wt.path}${status ? ` (${status})` : ""}`}
         style={{
           display: "grid",
@@ -246,9 +255,9 @@ const WorktreeSwitcher: Component<{
         <span style={{ overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap", "font-weight": wt.selected ? 600 : 400 }}>
           {wt.display_name}
         </span>
-        <Show when={status || wt.branch}>
+        <Show when={switching() || status || wt.branch}>
           <span style={{ "font-size": "10.5px", color: status ? "var(--warning)" : "var(--tx4)", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap", "max-width": "78px" }}>
-            {status || wt.branch}
+            {switching() ? "opening..." : status || wt.branch}
           </span>
         </Show>
       </button>
@@ -655,6 +664,7 @@ const Sidebar: Component<SidebarProps> = (props) => {
         refreshNonce={props.refreshNonce}
         onOpen={props.onOpenWorktree}
         onManage={props.onManageWorktrees}
+        switchingPath={props.switchingWorktreePath}
       />
 
       {/* Primary nav */}

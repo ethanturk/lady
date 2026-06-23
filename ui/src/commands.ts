@@ -338,6 +338,12 @@ export interface RepositoryFamily {
   worktrees: Worktree[];
 }
 
+/** Cheap identity returned while opening/switching a repository family. */
+export interface RepositoryFamilyIdentity {
+  id: string;
+  main_path: string;
+}
+
 /** Mirrors lady_proto::ReflogEntry. */
 export interface ReflogEntry {
   oid: string;

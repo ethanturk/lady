@@ -108,8 +108,9 @@ const App: Component = () => {
   // Recent repositories (from RepoBar) shown in the Launch palette.
   const [recents, setRecents] = createSignal<RecentRepo[]>([]);
   // Openers handed up from RepoBar: open a known path (worktrees) + native picker.
-  let openRepoPath: ((path: string) => void) | null = null;
+  let openRepoPath: ((path: string) => Promise<void>) | null = null;
   let repoPicker: (() => void) | null = null;
+  const [switchingWorktreePath, setSwitchingWorktreePath] = createSignal<string | null>(null);
   // Bumped after any mutation so status/refs/graph views reload (PLAN §3.2).
   const [refreshNonce, setRefreshNonce] = createSignal(0);
   // Off-canvas sidebar drawer (phone/narrow only). Auto-closes when the layout
@@ -121,6 +122,18 @@ const App: Component = () => {
 
   const repoId = () => active()?.id ?? null;
   const repoName = () => (active() ? baseName(active()!.path) : null);
+
+  const openWorktreePath = async (path: string) => {
+    setSwitchingWorktreePath(path);
+    setErr(null);
+    try {
+      await openRepoPath?.(path);
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setSwitchingWorktreePath(null);
+    }
+  };
 
   // Confirm-once GitHub account suggestion: when a repo with no auth override is
   // opened and its remote owner matches a known account, offer to pin it.
@@ -400,7 +413,7 @@ const App: Component = () => {
     const repos: PaletteEntry[] = recents().map((r) => ({
       kind: "repo",
       label: `${r.family_name ?? baseName(r.path)}   ${r.path}`,
-      run: () => openRepoPath?.(r.path),
+      run: () => void openRepoPath?.(r.path).catch((e) => setErr(String(e))),
     }));
     const actions: PaletteEntry[] = [
       { kind: "action", label: "Go to Local Changes", run: () => goPrimary("changes") },
@@ -416,7 +429,7 @@ const App: Component = () => {
       .map((wt) => ({
         kind: "action",
         label: `Switch Worktree: ${wt.display_name}`,
-        run: () => openRepoPath?.(wt.path),
+        run: () => void openWorktreePath(wt.path),
       }));
     const branches: PaletteEntry[] = refs()
       .filter((r) => r.kind === "Branch" || r.kind === "Remote")
@@ -701,6 +714,11 @@ const App: Component = () => {
           <button style={{ "margin-left": "0.5rem" }} onClick={abortSequencer}>Abort</button>
         </div>
       </Show>
+      <Show when={switchingWorktreePath()}>
+        <div role="status" style={{ ...bar, background: "var(--surface-2)", color: "var(--tx2)", border: "1px solid var(--border)" }}>
+          Opening worktree...
+        </div>
+      </Show>
       <Show when={acctSuggestion()}>
         <div role="status" style={{ ...bar, border: "1px solid var(--border)", background: "var(--surface-2)" }}>
           <span>
@@ -751,7 +769,8 @@ const App: Component = () => {
               onSelectRef={showRef}
               onBranchKey={onBranchKey}
               onOpenStashes={() => setOverlay("stashes")}
-              onOpenWorktree={(path) => openRepoPath?.(path)}
+              onOpenWorktree={openWorktreePath}
+              switchingWorktreePath={switchingWorktreePath()}
               onManageWorktrees={() => setOverlay("worktrees")}
             />
 
@@ -844,7 +863,8 @@ const App: Component = () => {
                 onSelectRef={showRef}
                 onBranchKey={onBranchKey}
                 onOpenStashes={() => { setDrawerOpen(false); setOverlay("stashes"); }}
-                onOpenWorktree={(path) => { setDrawerOpen(false); openRepoPath?.(path); }}
+                onOpenWorktree={(path) => { setDrawerOpen(false); return openWorktreePath(path); }}
+                switchingWorktreePath={switchingWorktreePath()}
                 onManageWorktrees={() => { setDrawerOpen(false); setOverlay("worktrees"); }}
               />
             </div>
@@ -1137,7 +1157,7 @@ const App: Component = () => {
           <FileHistory repoId={id} initialPath={navFile()} />
         </Show>
         <Show when={overlay() === "worktrees"}>
-          <WorktreesView repoId={id} refreshNonce={refreshNonce()} onChanged={refresh} onOpen={(path) => openRepoPath?.(path)} />
+          <WorktreesView repoId={id} refreshNonce={refreshNonce()} onChanged={refresh} onOpen={(path) => void openWorktreePath(path)} />
         </Show>
         <Show when={overlay() === "reflog"}>
           <ReflogView repoId={id} refreshNonce={refreshNonce()} onChanged={refresh} />
@@ -1155,7 +1175,7 @@ const App: Component = () => {
           <GitFlowView repoId={id} refreshNonce={refreshNonce()} onChanged={refresh} />
         </Show>
         <Show when={overlay() === "submodules"}>
-          <SubmodulesView repoId={id} repoPath={active()!.path} refreshNonce={refreshNonce()} onChanged={refresh} onOpen={(path) => openRepoPath?.(path)} />
+          <SubmodulesView repoId={id} repoPath={active()!.path} refreshNonce={refreshNonce()} onChanged={refresh} onOpen={(path) => void openRepoPath?.(path).catch((e) => setErr(String(e)))} />
         </Show>
         <Show when={overlay() === "stashes"}>
           <StashView repoId={id} refreshNonce={refreshNonce()} onChanged={refresh} />

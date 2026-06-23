@@ -3,7 +3,7 @@ import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import type { CustomCommand, OpenRepo, RecentRepo, RepoId, RepositoryFamily, Settings } from "./commands";
+import type { CustomCommand, OpenRepo, RecentRepo, RepoId, RepositoryFamily, RepositoryFamilyIdentity, Settings } from "./commands";
 
 /** Last path segment, for a compact tab label. */
 function baseName(path: string): string {
@@ -13,7 +13,7 @@ function baseName(path: string): string {
 
 /** API handed up to App: open a known path, or pop the native repo picker. */
 export interface RepoBarApi {
-  open: (path: string) => void;
+  open: (path: string) => Promise<void>;
   pick: () => void;
 }
 
@@ -42,7 +42,7 @@ const RepoBar: Component<{
     try {
       const dir = await openDialog({ directory: true, multiple: false, title: "Open a Git repository" });
       if (typeof dir === "string") {
-        openPath(dir, group().trim() || null);
+        await openPath(dir, group().trim() || null);
         setPanelOpen(false);
         setGroup("");
       }
@@ -125,20 +125,19 @@ const RepoBar: Component<{
     }
   };
 
-  /** Open `p` (existing repo), de-duping by path; refresh its dirty flag. */
+  /** Open `p` (existing repo), de-duping by family; refresh slow metadata later. */
   const openPath = async (p: string, g: string | null) => {
     setErr(null);
     try {
       const id = await invoke<RepoId>("open_repo", { path: p });
-      const family = await invoke<RepositoryFamily>("repository_family", { repo: id });
-      const dirty = await invoke<boolean>("repo_dirty", { repo: id }).catch(() => false);
+      const identity = await invoke<RepositoryFamilyIdentity>("repository_family_identity", { repo: id });
       const repo: OpenRepo = {
-        path: family.worktrees.find((wt) => wt.selected)?.path ?? p,
+        path: p,
         id,
-        family_id: family.id,
-        family_name: baseName(family.main.path),
+        family_id: identity.id,
+        family_name: baseName(identity.main_path),
         group: g,
-        dirty,
+        dirty: false,
       };
       setOpened((prev) => {
         const without = prev.filter((r) => r.family_id !== repo.family_id);
@@ -146,8 +145,27 @@ const RepoBar: Component<{
       });
       rememberRecent(repo);
       activate(repo);
+
+      Promise.all([
+        invoke<RepositoryFamily>("repository_family", { repo: id }).catch(() => null),
+        invoke<boolean>("repo_dirty", { repo: id }).catch(() => false),
+      ]).then(([family, dirty]) => {
+        setOpened((prev) =>
+          prev.map((r) =>
+            r.id === id
+              ? {
+                  ...r,
+                  path: family?.worktrees.find((wt) => wt.selected)?.path ?? r.path,
+                  family_name: family ? baseName(family.main.path) : r.family_name,
+                  dirty,
+                }
+              : r,
+          ),
+        );
+      });
     } catch (e) {
       setErr(String(e));
+      throw e;
     }
   };
 
