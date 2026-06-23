@@ -57,7 +57,7 @@ import {
   setRepoOverride,
 } from "./repoSettings";
 
-type SettingsTab = "general" | "git" | "accounts" | "ai";
+type SettingsTab = "general" | "git" | "accounts" | "ai" | "repository";
 
 /**
  * Settings panel (PH3-011 / PH4): connect/disconnect the active repo's forge
@@ -325,6 +325,7 @@ const SettingsView: Component<{ repoId: RepoId | null }> = (props) => {
   // stay mounted across repo switches, and opens with no repo at all).
   createEffect(() => {
     void props.repoId;
+    if (!props.repoId && tab() === "repository") setTab("general");
     loadStatus();
     loadRepoSettings();
   });
@@ -350,24 +351,36 @@ const SettingsView: Component<{ repoId: RepoId | null }> = (props) => {
       .finally(() => setBusy(false));
   };
 
-  const tabs: { id: SettingsTab; label: string; hint: string }[] = [
+  const globalTabs: { id: SettingsTab; label: string; hint: string }[] = [
     { id: "general", label: "General", hint: "Appearance, updates, license" },
-    { id: "git", label: "Git", hint: "Defaults and repository overrides" },
+    { id: "git", label: "Git", hint: "Defaults for all repositories" },
     { id: "accounts", label: "Accounts", hint: "GitHub, hosting, remote repos" },
     { id: "ai", label: "AI", hint: "Providers, models, consent" },
   ];
-  const tabButton = (id: SettingsTab) => ({
+  const repositoryTabs: { id: SettingsTab; label: string; hint: string }[] = [
+    { id: "repository", label: "Git", hint: "Overrides, identity, credentials" },
+  ];
+  const tabButton = (id: SettingsTab, disabled = false) => ({
     width: "100%",
     border: "none",
     "border-radius": "6px",
     padding: "8px 10px",
     background: tab() === id ? "var(--tabact)" : "transparent",
-    color: tab() === id ? "var(--tx)" : "var(--tx2)",
+    color: disabled ? "var(--tx3)" : tab() === id ? "var(--tx)" : "var(--tx2)",
     "text-align": "left" as const,
-    cursor: "pointer",
+    cursor: disabled ? "default" : "pointer",
     "font-size": "12.5px",
     "box-shadow": tab() === id ? "inset 2px 0 0 var(--accent)" : "none",
+    opacity: disabled ? 0.7 : 1,
   });
+  const sectionLabel = {
+    color: "var(--tx3)",
+    "font-size": "11px",
+    "font-weight": 700,
+    "letter-spacing": "0",
+    "text-transform": "uppercase",
+    "margin": "6px 10px 2px",
+  } as const;
 
   return (
     <div style={{ height: "100%", width: "100%", "box-sizing": "border-box", display: "flex", overflow: "hidden" }}>
@@ -387,7 +400,8 @@ const SettingsView: Component<{ repoId: RepoId | null }> = (props) => {
           gap: "4px",
         }}
       >
-        <For each={tabs}>
+        <div style={sectionLabel}>Global</div>
+        <For each={globalTabs}>
           {(t) => (
             <button
               type="button"
@@ -402,6 +416,28 @@ const SettingsView: Component<{ repoId: RepoId | null }> = (props) => {
               </div>
             </button>
           )}
+        </For>
+
+        <div style={{ ...sectionLabel, "margin-top": "14px" }}>Repository</div>
+        <For each={repositoryTabs}>
+          {(t) => {
+            const disabled = !props.repoId;
+            return (
+              <button
+                type="button"
+                aria-selected={tab() === t.id}
+                disabled={disabled}
+                title={disabled ? "Open a repository to configure repository-specific settings" : t.hint}
+                onClick={() => !disabled && setTab(t.id)}
+                style={tabButton(t.id, disabled)}
+              >
+                <div style={{ "font-weight": 700 }}>{t.label}</div>
+                <div style={{ color: "var(--tx3)", "font-size": "11px", "line-height": 1.25, "margin-top": "2px" }}>
+                  {disabled ? "Open a repo first" : t.hint}
+                </div>
+              </button>
+            );
+          }}
         </For>
       </nav>
 
@@ -476,9 +512,9 @@ const SettingsView: Component<{ repoId: RepoId | null }> = (props) => {
       </Show>
 
       <Show when={tab() === "git"}>
-      <h3 style={{ margin: "1.2rem 0 0.4rem", "font-size": "0.95rem" }}>Git defaults</h3>
+      <h3 style={{ margin: "0 0 0.4rem", "font-size": "0.95rem" }}>Git defaults</h3>
       <p style={{ "font-size": "0.8rem", color: "var(--fg-muted)", margin: "0 0 0.5rem" }}>
-        Used for every repository unless overridden below.
+        Used for every repository unless overridden in the Repository section.
       </p>
       <Show when={rsErr()}>
         <p role="alert" style={{ color: "var(--error)", "font-size": "0.82rem" }}>{rsErr()}</p>
@@ -514,12 +550,17 @@ const SettingsView: Component<{ repoId: RepoId | null }> = (props) => {
           />
         </label>
       </div>
+      </Show>
 
+      <Show when={tab() === "repository"}>
       <Show when={props.repoId}>
-      <h3 style={{ margin: "1.2rem 0 0.4rem", "font-size": "0.95rem" }}>This repository</h3>
+      <h3 style={{ margin: "0 0 0.4rem", "font-size": "0.95rem" }}>Repository Git settings</h3>
       <p style={{ "font-size": "0.8rem", color: "var(--fg-muted)", margin: "0 0 0.5rem" }}>
-        Overrides apply only to this repo; unchecked rows inherit the global default.
+        Overrides apply only to this repo; unchecked rows inherit the global Git defaults.
       </p>
+      <Show when={rsErr()}>
+        <p role="alert" style={{ color: "var(--error)", "font-size": "0.82rem" }}>{rsErr()}</p>
+      </Show>
       <div style={{ display: "flex", "flex-direction": "column", gap: "0.6rem", "max-width": "30rem" }}>
         {/* Commit signing override */}
         <div style={{ display: "flex", "align-items": "center", gap: "0.5rem", "font-size": "0.85rem" }}>

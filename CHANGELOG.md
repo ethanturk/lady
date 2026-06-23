@@ -3,6 +3,14 @@
 All notable changes to Lady. Format follows [Keep a Changelog](https://keepachangelog.com);
 this project uses semantic-ish version lines per phase.
 
+## [0.0.10] — Settings organization
+
+### Changed
+- Split the Settings dialog navigation into **Global** and **Repository**
+  sections.
+- Moved repository-specific Git overrides, identity, and credential controls out
+  of the global Git defaults pane.
+
 ## [1.3.0] — GA ship (Phase 6 — Polish & ship)
 
 The general-availability release: the feature-complete app (Core Parity + Fast-follow
@@ -73,6 +81,7 @@ The general-availability release: the feature-complete app (Core Parity + Fast-f
   offline signed-key verification, ADR-0007).
 
 [1.3.0]: https://github.com/ethanturk/lady/releases/tag/v1.3.0
+[0.0.10]: https://github.com/ethanturk/lady/releases/tag/v0.0.10
 [1.2.0]: https://github.com/ethanturk/lady/releases/tag/v1.2.0
 [1.1.0]: https://github.com/ethanturk/lady/releases/tag/v1.1.0
 [1.0.0]: https://github.com/ethanturk/lady/releases/tag/v1.0.0
