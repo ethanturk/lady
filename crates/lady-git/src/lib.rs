@@ -15,8 +15,9 @@ use lady_proto::{
     AheadBehind, ApplyOutcome, BisectState, Blame, BlameLine, ChangeKind, CommandOutput,
     CommitMeta, ConflictSides, ConflictState, FfMode, FileDiff, FileDiffKind, FileStatus,
     FlowConfig, FlowKind, GitIdentity, LfsFile, LfsStatus, MergeOutcome, Oid, ParsedConflict,
-    RebaseOutcome, RebaseStep, RefInfo, RefKind, ReflogEntry, RepoId, ResetMode, Signature,
-    SignatureStatus, StashEntry, Submodule, WorkingTree, Worktree,
+    RebaseOutcome, RebaseStep, RefInfo, RefKind, ReflogEntry, RepoId, RepositoryFamily,
+    RepositoryFamilyId, ResetMode, Signature, SignatureStatus, StashEntry, Submodule, WorkingTree,
+    Worktree,
 };
 
 /// Whether `git-lfs` is installed and usable (`git lfs version`). Free function
@@ -456,6 +457,10 @@ pub trait GitEngine: Send + Sync {
     /// List the repository's worktrees (`git worktree list --porcelain`).
     fn list_worktrees(&self, repo: &RepoId) -> Result<Vec<Worktree>>;
 
+    /// Describe the selected repository's family: stable common-git-dir id,
+    /// main worktree, and every worktree Git reports for the family.
+    fn repository_family(&self, repo: &RepoId) -> Result<RepositoryFamily>;
+
     /// Add a worktree at `path`. With `new_branch`, create branch `branch`
     /// there (`-b`); otherwise check out the existing `branch` (or a detached
     /// HEAD when `branch` is `None`).
@@ -622,6 +627,19 @@ impl GixEngine {
     /// key per-repo state by path, e.g. the AI per-repo toggle, PH5-002).
     pub fn workdir_path(&self, id: &RepoId) -> Result<PathBuf> {
         self.workdir(id)
+    }
+
+    /// Canonical common git directory shared by every worktree in a repository
+    /// family. This is the durable family id from ADR-0012.
+    pub fn repository_family_id(&self, id: &RepoId) -> Result<RepositoryFamilyId> {
+        let wd = self.workdir(id)?;
+        let out = run_git(
+            &wd,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        )?;
+        let raw = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+        let path = raw.canonicalize().unwrap_or(raw);
+        Ok(RepositoryFamilyId::from(path.to_string_lossy().to_string()))
     }
 
     /// Fetch URL for remote `name` (`git remote get-url`).
@@ -2172,7 +2190,26 @@ exit 0\n";
     fn list_worktrees(&self, repo: &RepoId) -> Result<Vec<Worktree>> {
         let wd = self.workdir(repo)?;
         let out = run_git(&wd, &["worktree", "list", "--porcelain"])?;
-        Ok(parse_worktrees(&String::from_utf8_lossy(&out.stdout)))
+        Ok(enrich_worktrees(
+            parse_worktrees(&String::from_utf8_lossy(&out.stdout)),
+            &wd,
+        ))
+    }
+
+    fn repository_family(&self, repo: &RepoId) -> Result<RepositoryFamily> {
+        let id = self.repository_family_id(repo)?;
+        let worktrees = self.list_worktrees(repo)?;
+        let main = worktrees
+            .iter()
+            .find(|wt| wt.is_main)
+            .or_else(|| worktrees.first())
+            .cloned()
+            .ok_or_else(|| Error::Git("git reported no worktrees".to_string()))?;
+        Ok(RepositoryFamily {
+            id,
+            main,
+            worktrees,
+        })
     }
 
     fn add_worktree(
@@ -2728,9 +2765,15 @@ fn parse_worktrees(text: &str) -> Vec<Worktree> {
             }
             current = Some(Worktree {
                 path: path.to_string(),
+                display_name: String::new(),
                 branch: None,
                 head: None,
+                is_main: false,
+                selected: false,
+                dirty: false,
                 locked: false,
+                prunable: false,
+                missing: false,
             });
         } else if let Some(wt) = current.as_mut() {
             if let Some(sha) = line.strip_prefix("HEAD ") {
@@ -2745,6 +2788,8 @@ fn parse_worktrees(text: &str) -> Vec<Worktree> {
                 );
             } else if line == "locked" || line.starts_with("locked ") {
                 wt.locked = true;
+            } else if line == "prunable" || line.starts_with("prunable ") {
+                wt.prunable = true;
             }
         }
     }
@@ -2752,6 +2797,68 @@ fn parse_worktrees(text: &str) -> Vec<Worktree> {
         out.push(wt);
     }
     out
+}
+
+fn path_identity(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn display_base(wt: &Worktree) -> String {
+    wt.branch
+        .clone()
+        .or_else(|| {
+            Path::new(&wt.path)
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+        })
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| wt.path.clone())
+}
+
+fn worktree_dirty(path: &Path) -> bool {
+    run_git_raw(path, &["status", "--porcelain=v1", "-z"])
+        .map(|out| out.status.success() && !out.stdout.is_empty())
+        .unwrap_or(false)
+}
+
+fn enrich_worktrees(mut worktrees: Vec<Worktree>, selected_workdir: &Path) -> Vec<Worktree> {
+    let selected = path_identity(selected_workdir);
+
+    for (index, wt) in worktrees.iter_mut().enumerate() {
+        let path = Path::new(&wt.path);
+        wt.is_main = index == 0;
+        wt.missing = !path.exists();
+        wt.selected = path_identity(path) == selected;
+        wt.dirty = !wt.missing && !wt.prunable && worktree_dirty(path);
+    }
+
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for wt in &worktrees {
+        let base = if wt.is_main {
+            "main".to_string()
+        } else {
+            display_base(wt)
+        };
+        *counts.entry(base).or_insert(0) += 1;
+    }
+
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    for wt in &mut worktrees {
+        let base = if wt.is_main {
+            "main".to_string()
+        } else {
+            display_base(wt)
+        };
+        let index = seen.entry(base.clone()).or_insert(0);
+        *index += 1;
+        wt.display_name = if counts.get(&base).copied().unwrap_or(0) > 1 {
+            format!("{base} {}", *index)
+        } else {
+            base
+        };
+    }
+
+    worktrees
 }
 
 // ── Status parsing ────────────────────────────────────────────────────────────
@@ -5278,6 +5385,9 @@ mod tests {
         // Initially only the main worktree is listed.
         let before = engine.list_worktrees(&id).expect("list before");
         assert_eq!(before.len(), 1, "only the main worktree exists: {before:?}");
+        assert_eq!(before[0].display_name, "main");
+        assert!(before[0].is_main);
+        assert!(before[0].selected);
 
         // Add a worktree on a new branch and confirm it lists.
         engine
@@ -5285,6 +5395,14 @@ mod tests {
             .expect("add worktree");
         let listed = engine.list_worktrees(&id).expect("list after add");
         assert_eq!(listed.len(), 2, "main + new worktree: {listed:?}");
+        let family = engine.repository_family(&id).expect("repository family");
+        assert_eq!(family.worktrees.len(), 2);
+        assert_eq!(family.main.display_name, "main");
+        assert!(
+            family.id.as_str().ends_with(".git"),
+            "family id is the common git dir: {:?}",
+            family.id
+        );
         let added = listed
             .iter()
             .find(|w| w.path == wt_path.canonicalize().unwrap().to_string_lossy())
@@ -5294,8 +5412,11 @@ mod tests {
                     .find(|w| w.branch.as_deref() == Some("feature"))
             })
             .expect("added worktree present");
+        assert_eq!(added.display_name, "feature");
         assert_eq!(added.branch.as_deref(), Some("feature"));
         assert!(added.head.is_some(), "worktree HEAD resolved");
+        assert!(!added.is_main);
+        assert!(!added.missing);
 
         // Remove it; back to just the main worktree.
         engine

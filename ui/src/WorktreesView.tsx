@@ -82,7 +82,7 @@ const WorktreesView: Component<{
 
   return (
     <div style={{ height: "100%", "overflow-y": "auto", padding: "0.75rem 1rem" }}>
-      <h3 style={{ margin: "0 0 0.5rem", "font-size": "0.95rem" }}>Worktrees</h3>
+      <h3 style={{ margin: "0 0 0.5rem", "font-size": "0.95rem" }}>Manage Worktrees</h3>
 
       <div style={{ display: "flex", gap: "0.4rem", "flex-wrap": "wrap", "align-items": "center", "margin-bottom": "0.6rem" }}>
         <input

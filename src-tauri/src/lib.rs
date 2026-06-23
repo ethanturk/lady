@@ -2,7 +2,8 @@ use lady_git::{CommitOpts, DiffSpec, GitAuth, GitEngine, GixEngine, GraphQuery, 
 use lady_graph::layout_continuation;
 use lady_proto::{
     ApplyOutcome, Blame, CommitMeta, FfMode, FileDiff, GitHubAccount, GitIdentity, MergeOutcome,
-    Oid, RebaseOutcome, RefInfo, RepoAuth, RepoId, RepoSettings, ResetMode, WorkingTree,
+    Oid, RebaseOutcome, RefInfo, RepoAuth, RepoId, RepoSettings, RepositoryFamily, ResetMode,
+    WorkingTree,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -419,6 +420,12 @@ fn list_worktrees(
     engine: State<GixEngine>,
 ) -> Result<Vec<lady_proto::Worktree>, String> {
     engine.list_worktrees(&repo).map_err(|e| e.to_string())
+}
+
+/// Backend-owned repository-family summary (ADR-0012).
+#[tauri::command]
+fn repository_family(repo: RepoId, engine: State<GixEngine>) -> Result<RepositoryFamily, String> {
+    engine.repository_family(&repo).map_err(|e| e.to_string())
 }
 
 /// Add a worktree at `path`; create branch `branch` there when `new_branch`.
@@ -1208,6 +1215,10 @@ pub struct RecentRepo {
     pub path: String,
     #[serde(default)]
     pub group: Option<String>,
+    #[serde(default)]
+    pub family_id: Option<String>,
+    #[serde(default)]
+    pub family_name: Option<String>,
 }
 
 /// Persisted user settings (recent repos + their groups + custom commands +
@@ -1225,14 +1236,15 @@ pub struct Settings {
     /// never here (ADR-0008). Owned by the `ai_*` commands.
     #[serde(default)]
     pub ai: lady_ai::AiConfig,
-    /// Absolute repo paths with AI explicitly enabled. Default off (ADR-0009).
+    /// Repository family ids with AI explicitly enabled. Default off (ADR-0009).
     #[serde(default)]
     pub ai_repos: Vec<String>,
     /// Global defaults for the overridable settings (sign / ff / base / ai model).
     #[serde(default)]
     pub defaults: RepoSettings,
-    /// Per-repo overrides keyed by workdir path (same key as `ai_repos`). A field
-    /// left `None` inherits from `defaults`, then the built-in fallback.
+    /// Repository-family overrides keyed by common git directory path (same key
+    /// as `ai_repos`). A field left `None` inherits from `defaults`, then the
+    /// built-in fallback.
     #[serde(default)]
     pub repo_overrides: BTreeMap<String, RepoSettings>,
     /// Registered GitHub accounts (metadata only; PATs live in the keychain under
@@ -1240,8 +1252,8 @@ pub struct Settings {
     /// confirm-once auto-suggest.
     #[serde(default)]
     pub github_accounts: Vec<GitHubAccount>,
-    /// Repo workdir paths where the user dismissed the account suggestion, so it
-    /// is never offered again for that repo.
+    /// Repository-family ids where the user dismissed the account suggestion, so
+    /// it is never offered again for that repo.
     #[serde(default)]
     pub auth_suggest_dismissed: Vec<String>,
 }
@@ -1293,14 +1305,35 @@ fn save_settings(mut settings: Settings) -> Result<(), String> {
     write_settings(&settings)
 }
 
-/// Resolve a repo's workdir path — the per-repo key used by `repo_overrides`
-/// (and `ai_repos`), so the override and the AI toggle always agree.
-fn repo_settings_key(repo: &RepoId, engine: &GixEngine) -> Result<String, String> {
+/// Resolve a repo's family id — the repository-scoped key used by
+/// `repo_overrides` and `ai_repos`, so linked worktrees share settings.
+pub(crate) fn repo_settings_key(repo: &RepoId, engine: &GixEngine) -> Result<String, String> {
+    Ok(engine
+        .repository_family_id(repo)
+        .map_err(|e| e.to_string())?
+        .as_str()
+        .to_string())
+}
+
+fn legacy_repo_settings_key(repo: &RepoId, engine: &GixEngine) -> Result<String, String> {
     Ok(engine
         .workdir_path(repo)
         .map_err(|e| e.to_string())?
         .to_string_lossy()
         .to_string())
+}
+
+fn repo_override_for(
+    repo: &RepoId,
+    engine: &GixEngine,
+    settings: &Settings,
+) -> Option<RepoSettings> {
+    let key = repo_settings_key(repo, engine).ok()?;
+    settings.repo_overrides.get(&key).cloned().or_else(|| {
+        legacy_repo_settings_key(repo, engine)
+            .ok()
+            .and_then(|legacy| settings.repo_overrides.get(&legacy).cloned())
+    })
 }
 
 /// One field's effective value: repo override, else global default, else `None`.
@@ -1324,9 +1357,8 @@ pub struct ResolvedRepoSettings {
 /// Read the effective + override + global settings for `repo`.
 #[tauri::command]
 fn repo_settings(repo: RepoId, engine: State<GixEngine>) -> Result<ResolvedRepoSettings, String> {
-    let key = repo_settings_key(&repo, &engine)?;
     let s = load_settings_inner();
-    let over = s.repo_overrides.get(&key).cloned().unwrap_or_default();
+    let over = repo_override_for(&repo, &engine, &s).unwrap_or_default();
     let global = s.defaults.clone();
     let effective = RepoSettings {
         sign: pick(&over.sign, &global.sign),
@@ -1356,6 +1388,9 @@ fn set_repo_override(
     if settings == RepoSettings::default() {
         s.repo_overrides.remove(&key);
     } else {
+        if let Ok(legacy_key) = legacy_repo_settings_key(&repo, &engine) {
+            s.repo_overrides.remove(&legacy_key);
+        }
         s.repo_overrides.insert(key, settings);
     }
     write_settings(&s)
@@ -1433,11 +1468,8 @@ fn shell_single_quote(s: &str) -> String {
 /// Returns [`GitAuth::none`] (today's behavior — system git / `gh`) when no
 /// override is set, so default repos are unaffected.
 fn git_auth_for_repo(repo: &RepoId, engine: &GixEngine) -> GitAuth {
-    let Ok(key) = repo_settings_key(repo, engine) else {
-        return GitAuth::none();
-    };
     let settings = load_settings_inner();
-    let Some(over) = settings.repo_overrides.get(&key) else {
+    let Some(over) = repo_override_for(repo, engine, &settings) else {
         return GitAuth::none();
     };
     match &over.auth {
@@ -1564,12 +1596,10 @@ fn suggest_repo_account(
     engine: State<GixEngine>,
     hosting: State<Hosting>,
 ) -> Result<Option<AccountSuggestion>, String> {
-    let key = repo_settings_key(&repo, &engine)?;
     let s = load_settings_inner();
-    let already_pinned = s
-        .repo_overrides
-        .get(&key)
-        .and_then(|o| o.auth.as_ref())
+    let key = repo_settings_key(&repo, &engine)?;
+    let already_pinned = repo_override_for(&repo, &engine, &s)
+        .and_then(|o| o.auth)
         .is_some();
     if already_pinned || s.auth_suggest_dismissed.iter().any(|d| d == &key) {
         return Ok(None);
@@ -1776,18 +1806,16 @@ fn repo_forge_token(
     hosting: &Hosting,
 ) -> Result<Option<String>, String> {
     if provider.kind() == lady_hosting::ForgeKind::GitHub {
-        if let Ok(key) = repo_settings_key(repo, engine) {
-            let s = load_settings_inner();
-            if let Some(RepoAuth::Account(id)) =
-                s.repo_overrides.get(&key).and_then(|o| o.auth.clone())
+        let s = load_settings_inner();
+        if let Some(RepoAuth::Account(id)) =
+            repo_override_for(repo, engine, &s).and_then(|o| o.auth)
+        {
+            if let Some(tok) = hosting
+                .store
+                .get(&lady_hosting::github_account_token_key(&id))
+                .map_err(|e| e.to_string())?
             {
-                if let Some(tok) = hosting
-                    .store
-                    .get(&lady_hosting::github_account_token_key(&id))
-                    .map_err(|e| e.to_string())?
-                {
-                    return Ok(Some(tok));
-                }
+                return Ok(Some(tok));
             }
         }
     }
@@ -2427,6 +2455,7 @@ pub fn run() {
             rebase_range,
             signature_statuses,
             list_worktrees,
+            repository_family,
             add_worktree,
             remove_worktree,
             prune_worktrees,

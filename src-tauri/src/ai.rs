@@ -11,7 +11,7 @@ use lady_ai::{AiConfig, AiRequest, AiTask, CancelToken, ProviderKind, StreamSink
 use lady_proto::RepoId;
 use tauri::{AppHandle, Emitter, State};
 
-use crate::{load_settings_inner, write_settings, GixEngine};
+use crate::{load_settings_inner, repo_settings_key, write_settings, GixEngine};
 use lady_git::{CommitOpts, DiffSpec, GitEngine};
 
 /// Managed AI state: the keychain-backed key store + in-flight cancel tokens.
@@ -129,14 +129,8 @@ pub fn ai_revoke_consent(provider: ProviderKind) -> Result<(), String> {
     write_settings(&settings)
 }
 
-/// Resolve a repo's workdir path as the per-repo AI toggle key, so the toggle
-/// and the gate ([`require_repo_enabled`]) always agree.
 fn repo_key(repo: &RepoId, engine: &GixEngine) -> Result<String, String> {
-    Ok(engine
-        .workdir_path(repo)
-        .map_err(|e| e.to_string())?
-        .to_string_lossy()
-        .to_string())
+    repo_settings_key(repo, engine)
 }
 
 /// Enable or disable AI for a repo (default off, ADR-0009).
@@ -198,15 +192,16 @@ pub fn ai_cancel(req_id: String, ai: State<'_, AiState>) -> Result<(), String> {
 
 // ── Shared task runner ──────────────────────────────────────────────────────────
 
-/// Confirm AI is enabled for `repo` (its workdir is in `ai_repos`); returns the
-/// resolved workdir path.
+/// Confirm AI is enabled for `repo` (its family id is in `ai_repos`); returns
+/// the selected workdir path for context collection.
 fn require_repo_enabled(repo: &RepoId, engine: &GixEngine) -> Result<String, String> {
     let wd = engine
         .workdir_path(repo)
         .map_err(|e| e.to_string())?
         .to_string_lossy()
         .to_string();
-    if !load_settings_inner().ai_repos.contains(&wd) {
+    let key = repo_key(repo, engine)?;
+    if !load_settings_inner().ai_repos.contains(&key) {
         return Err("AI is off for this repository — enable it in Settings.".to_string());
     }
     Ok(wd)

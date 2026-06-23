@@ -48,6 +48,24 @@ impl From<String> for RepoId {
     }
 }
 
+/// Stable identity for a repository family: the canonical common git directory
+/// shared by the main worktree and any linked worktrees.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct RepositoryFamilyId(pub String);
+
+impl RepositoryFamilyId {
+    /// Borrow the underlying identity string.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for RepositoryFamilyId {
+    fn from(s: String) -> Self {
+        RepositoryFamilyId(s)
+    }
+}
+
 /// The category of a git reference.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum RefKind {
@@ -626,12 +644,36 @@ pub struct ReflogEntry {
 pub struct Worktree {
     /// Absolute path to the worktree directory.
     pub path: String,
+    /// Backend-provided display name for switchers and command palette entries.
+    pub display_name: String,
     /// Checked-out branch (short name), or `None` when detached/bare.
     pub branch: Option<String>,
     /// The worktree's `HEAD` commit, or `None` for a bare entry.
     pub head: Option<Oid>,
+    /// Whether this is the main worktree for the repository family.
+    pub is_main: bool,
+    /// Whether this worktree is the selected/opened checkout for this request.
+    pub selected: bool,
+    /// Whether the worktree has local changes.
+    pub dirty: bool,
     /// Whether the worktree is locked.
     pub locked: bool,
+    /// Whether Git reports this entry as prunable/stale.
+    pub prunable: bool,
+    /// Whether the worktree path is missing from disk.
+    pub missing: bool,
+}
+
+/// Backend-owned summary of a repository family and its linked worktrees.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepositoryFamily {
+    /// Stable family id shared by all linked worktrees.
+    pub id: RepositoryFamilyId,
+    /// The main worktree.
+    pub main: Worktree,
+    /// All worktrees reported by Git, including the main worktree and any stale
+    /// entries.
+    pub worktrees: Vec<Worktree>,
 }
 
 /// What mid-operation state a repository is in, used to drive conflict

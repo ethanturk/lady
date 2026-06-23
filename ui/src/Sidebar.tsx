@@ -1,8 +1,8 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import type { Component, JSX } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
-import type { AheadBehind, ForgeItem, RefInfo, RepoId, StashEntry } from "./commands";
-import { IconChanges, IconCheck, IconChevron, IconCommits, IconBranch, IconMore, IconSearch } from "./icons";
+import type { AheadBehind, ForgeItem, RefInfo, RepoId, RepositoryFamily, StashEntry, Worktree } from "./commands";
+import { IconChanges, IconCheck, IconChevron, IconCommits, IconBranch, IconMore, IconPlus, IconSearch } from "./icons";
 import { sidebarWidth } from "./prefs";
 
 export type PrimaryView = "changes" | "commits";
@@ -89,6 +89,10 @@ interface SidebarProps {
   onBranchKey?: (branch: string, action: "new-branch" | "new-tag" | "delete") => void;
   /** Open the full Stashes management view. */
   onOpenStashes?: () => void;
+  /** Switch to/open a worktree from the active repository family. */
+  onOpenWorktree?: (path: string) => void;
+  /** Open the detailed worktree management surface. */
+  onManageWorktrees?: () => void;
   /** Fill the container width (used when hosted inside the mobile drawer). */
   fullWidth?: boolean;
 }
@@ -137,6 +141,163 @@ const AccordionPanel: Component<{
 const Note: Component<{ children: JSX.Element }> = (props) => (
   <div style={{ padding: "4px 10px 8px 26px", "font-size": "12px", color: "var(--tx3)" }}>{props.children}</div>
 );
+
+const dirname = (path: string): string => path.replace(/[/\\]+$/, "").replace(/[/\\][^/\\]*$/, "") || path;
+const safeWorktreeName = (name: string): string =>
+  name
+    .trim()
+    .replace(/^refs\/heads\//, "")
+    .replace(/[^A-Za-z0-9._/-]+/g, "-")
+    .replace(/^[-/]+|[-/]+$/g, "")
+    .replace(/\//g, "-");
+
+const WorktreeSwitcher: Component<{
+  repoId: RepoId | null;
+  refreshNonce?: number;
+  onOpen?: (path: string) => void;
+  onManage?: () => void;
+}> = (props) => {
+  const [family, setFamily] = createSignal<RepositoryFamily | null>(null);
+  const [err, setErr] = createSignal<string | null>(null);
+  const [creating, setCreating] = createSignal(false);
+  const [branch, setBranch] = createSignal("");
+  const [path, setPath] = createSignal("");
+  const [existing, setExisting] = createSignal(false);
+
+  createEffect(() => {
+    const repo = props.repoId;
+    void props.refreshNonce;
+    if (!repo) {
+      setFamily(null);
+      return;
+    }
+    invoke<RepositoryFamily>("repository_family", { repo })
+      .then((next) => {
+        setFamily(next);
+        setErr(null);
+      })
+      .catch((e) => {
+        setFamily(null);
+        setErr(String(e));
+      });
+  });
+
+  createEffect(() => {
+    const fam = family();
+    const name = safeWorktreeName(branch());
+    if (!fam || !name || path()) return;
+    setPath(`${dirname(fam.main.path)}/${name}`);
+  });
+
+  const resetCreate = () => {
+    setCreating(false);
+    setBranch("");
+    setPath("");
+    setExisting(false);
+  };
+
+  const createWorktree = () => {
+    const repo = props.repoId;
+    const wtPath = path().trim();
+    const name = branch().trim();
+    if (!repo || !wtPath) return;
+    invoke("add_worktree", {
+      repo,
+      path: wtPath,
+      branch: name || null,
+      newBranch: !existing(),
+    })
+      .then(() => {
+        resetCreate();
+        props.onOpen?.(wtPath);
+      })
+      .catch((e) => setErr(String(e)));
+  };
+
+  const row = (wt: Worktree) => {
+    const disabled = wt.selected || wt.missing || wt.prunable;
+    const status = wt.missing ? "missing" : wt.prunable ? "stale" : wt.locked ? "locked" : wt.dirty ? "dirty" : "";
+    return (
+      <button
+        class="hov"
+        disabled={disabled}
+        onClick={() => props.onOpen?.(wt.path)}
+        title={`${wt.path}${status ? ` (${status})` : ""}`}
+        style={{
+          display: "grid",
+          "grid-template-columns": "14px minmax(0, 1fr) auto",
+          "align-items": "center",
+          gap: "7px",
+          width: "100%",
+          padding: `${ps(5)} 8px ${ps(5)} 10px`,
+          border: "none",
+          "border-radius": "6px",
+          background: wt.selected ? accentFill : "transparent",
+          color: wt.selected ? "var(--tx)" : disabled ? "var(--tx4)" : "var(--tx2)",
+          "box-shadow": wt.selected ? "inset 2px 0 0 var(--accent)" : "none",
+          "font-size": "12.5px",
+          cursor: disabled ? "default" : "pointer",
+          "text-align": "left",
+        }}
+      >
+        <Show when={wt.selected} fallback={<IconBranch size={13} style={{ color: "var(--tx4)" }} />}>
+          <IconCheck size={13} style={{ color: "#46b06a" }} />
+        </Show>
+        <span style={{ overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap", "font-weight": wt.selected ? 600 : 400 }}>
+          {wt.display_name}
+        </span>
+        <Show when={status || wt.branch}>
+          <span style={{ "font-size": "10.5px", color: status ? "var(--warning)" : "var(--tx4)", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap", "max-width": "78px" }}>
+            {status || wt.branch}
+          </span>
+        </Show>
+      </button>
+    );
+  };
+
+  return (
+    <div style={{ padding: "0 8px 10px" }}>
+      <div style={{ display: "flex", "align-items": "center", gap: "6px", padding: "4px 2px 6px", color: "var(--tx2)", "font-size": "11px", "font-weight": 600, "text-transform": "uppercase", "letter-spacing": "0.05em" }}>
+        <span style={{ flex: "1" }}>Worktrees</span>
+        <Show when={family()}>
+          <span style={{ color: "var(--tx4)" }}>{family()!.worktrees.length}</span>
+        </Show>
+        <button aria-label="Create worktree" title="Create Worktree" onClick={() => setCreating((v) => !v)} style={{ border: "none", background: "transparent", color: "var(--tx4)", display: "flex", padding: "1px", cursor: "pointer" }}>
+          <IconPlus size={13} />
+        </button>
+      </div>
+
+      <Show when={family()} fallback={<Show when={err()}><Note>{err()}</Note></Show>}>
+        <For each={family()!.worktrees}>{row}</For>
+        <Show when={creating()}>
+          <div style={{ display: "flex", "flex-direction": "column", gap: "6px", padding: "7px 2px" }}>
+            <input value={branch()} onInput={(e) => { setBranch(e.currentTarget.value); setPath(""); }} placeholder={existing() ? "existing-branch" : "new-branch-name"} style={{ background: "var(--input)", border: "1px solid var(--bd)", "border-radius": "6px", color: "var(--tx)", "font-size": "12px", padding: "6px 8px" }} />
+            <input value={path()} onInput={(e) => setPath(e.currentTarget.value)} placeholder="worktree path" style={{ background: "var(--input)", border: "1px solid var(--bd)", "border-radius": "6px", color: "var(--tx)", "font-size": "12px", padding: "6px 8px" }} />
+            <label style={{ display: "flex", "align-items": "center", gap: "6px", color: "var(--tx3)", "font-size": "11.5px" }}>
+              <input type="checkbox" checked={existing()} onChange={() => setExisting((v) => !v)} />
+              existing branch
+            </label>
+            <div style={{ display: "flex", gap: "6px" }}>
+              <button onClick={createWorktree} disabled={!path().trim()} style={{ flex: "1", border: "none", background: path().trim() ? "var(--accent)" : "var(--btn)", color: path().trim() ? "var(--on-accent-strong)" : "var(--tx3)", "border-radius": "6px", padding: "6px 8px", "font-size": "12px", cursor: path().trim() ? "pointer" : "not-allowed" }}>
+                Create
+              </button>
+              <button onClick={resetCreate} style={{ border: "1px solid var(--bd)", background: "var(--btn)", color: "var(--tx)", "border-radius": "6px", padding: "6px 8px", "font-size": "12px", cursor: "pointer" }}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </Show>
+        <button onClick={() => props.onManage?.()} style={{ border: "none", background: "transparent", color: "var(--accent)", padding: "5px 2px 0", "font-size": "11.5px", cursor: "pointer" }}>
+          Manage Worktrees
+        </button>
+      </Show>
+
+      <Show when={err()}>
+        <div style={{ color: "var(--error)", "font-size": "11.5px", padding: "5px 2px 0" }}>{err()}</div>
+      </Show>
+    </div>
+  );
+};
 
 /**
  * Left sidebar (248px): repo header, the two primary nav items (Local Changes /
@@ -488,6 +649,13 @@ const Sidebar: Component<SidebarProps> = (props) => {
       <div style={{ padding: "14px 16px 8px", "font-size": "14px", "font-weight": 600, color: "var(--tx)" }}>
         {props.repoName ?? "No repository"}
       </div>
+
+      <WorktreeSwitcher
+        repoId={props.repoId}
+        refreshNonce={props.refreshNonce}
+        onOpen={props.onOpenWorktree}
+        onManage={props.onManageWorktrees}
+      />
 
       {/* Primary nav */}
       <div style={{ padding: "0 8px", display: "flex", "flex-direction": "column", gap: "2px" }}>

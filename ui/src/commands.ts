@@ -320,9 +320,22 @@ export const FORGE_KINDS: ForgeKind[] = ["GitHub", "GitLab", "Bitbucket", "Azure
 /** Mirrors lady_proto::Worktree. */
 export interface Worktree {
   path: string;
+  display_name: string;
   branch: string | null;
   head: string | null;
+  is_main: boolean;
+  selected: boolean;
+  dirty: boolean;
   locked: boolean;
+  prunable: boolean;
+  missing: boolean;
+}
+
+/** Mirrors lady_proto::RepositoryFamily. */
+export interface RepositoryFamily {
+  id: string;
+  main: Worktree;
+  worktrees: Worktree[];
 }
 
 /** Mirrors lady_proto::ReflogEntry. */
@@ -411,6 +424,8 @@ export interface ParsedConflict {
 export interface RecentRepo {
   path: string;
   group: string | null;
+  family_id?: string | null;
+  family_name?: string | null;
 }
 
 /** Mirrors lady_proto::PlaceholderKind. */
@@ -446,6 +461,8 @@ export interface Settings {
 export interface OpenRepo {
   path: string;
   id: RepoId;
+  family_id: string;
+  family_name: string;
   group: string | null;
   dirty: boolean;
 }

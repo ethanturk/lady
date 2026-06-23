@@ -1,7 +1,7 @@
 import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
 import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
-import type { AccountSuggestion, ApplyOutcome, ConflictState, OpenRepo, RebaseOutcome, RecentRepo, RefInfo, WorkingTree } from "./commands";
+import type { AccountSuggestion, ApplyOutcome, ConflictState, OpenRepo, RebaseOutcome, RecentRepo, RefInfo, RepositoryFamily, WorkingTree } from "./commands";
 import { assignRepoAccount, dismissRepoAccountSuggestion, suggestRepoAccount } from "./accounts";
 import AllCommitsView from "./AllCommitsView";
 import BlameView from "./BlameView";
@@ -71,6 +71,7 @@ const App: Component = () => {
   const [unread, setUnread] = createSignal(0);
   const [active, setActive] = createSignal<OpenRepo | null>(null);
   const [refs, setRefs] = createSignal<RefInfo[]>([]);
+  const [repositoryFamily, setRepositoryFamily] = createSignal<RepositoryFamily | null>(null);
   // Primary nav (sidebar) vs. an overlaid advanced view (toolbar "More").
   const [view, setView] = createSignal<PrimaryView>("changes");
   const [overlay, setOverlay] = createSignal<Overlay | null>(null);
@@ -209,6 +210,9 @@ const App: Component = () => {
     invoke<RefInfo[]>("list_refs", { repo: repo.id })
       .then(setRefs)
       .catch((e) => setErr(String(e)));
+    invoke<RepositoryFamily>("repository_family", { repo: repo.id })
+      .then(setRepositoryFamily)
+      .catch(() => setRepositoryFamily(null));
     loadChangeCount(repo.id);
     updateConflictState(repo);
   };
@@ -370,6 +374,7 @@ const App: Component = () => {
     setSelectedCommits([]);
     setPrimaryCommit(null);
     setRefs([]);
+    setRepositoryFamily(null);
     setFiles([]);
     setView("changes");
     setOverlay(null);
@@ -378,6 +383,9 @@ const App: Component = () => {
     invoke<RefInfo[]>("list_refs", { repo: repo.id })
       .then(setRefs)
       .catch((e) => setErr(String(e)));
+    invoke<RepositoryFamily>("repository_family", { repo: repo.id })
+      .then(setRepositoryFamily)
+      .catch(() => setRepositoryFamily(null));
     invoke<string[]>("list_files", { repo: repo.id })
       .then(setFiles)
       .catch(() => setFiles([]));
@@ -391,7 +399,7 @@ const App: Component = () => {
   const paletteEntries = (): PaletteEntry[] => {
     const repos: PaletteEntry[] = recents().map((r) => ({
       kind: "repo",
-      label: `${baseName(r.path)}   ${r.path}`,
+      label: `${r.family_name ?? baseName(r.path)}   ${r.path}`,
       run: () => openRepoPath?.(r.path),
     }));
     const actions: PaletteEntry[] = [
@@ -400,8 +408,16 @@ const App: Component = () => {
       { kind: "action", label: "Refs / Pull Requests", run: () => setOverlay("refs") },
       { kind: "action", label: "Blame", run: () => setOverlay("blame") },
       { kind: "action", label: "File History", run: () => setOverlay("history") },
+      { kind: "action", label: "Create Worktree...", run: () => setOverlay("worktrees") },
       { kind: "action", label: "Settings", run: () => setOverlay("settings") },
     ];
+    const worktrees: PaletteEntry[] = (repositoryFamily()?.worktrees ?? [])
+      .filter((wt) => !wt.selected && !wt.missing && !wt.prunable)
+      .map((wt) => ({
+        kind: "action",
+        label: `Switch Worktree: ${wt.display_name}`,
+        run: () => openRepoPath?.(wt.path),
+      }));
     const branches: PaletteEntry[] = refs()
       .filter((r) => r.kind === "Branch" || r.kind === "Remote")
       .map((r) => ({ kind: "branch", label: r.name, run: () => setOverlay("refs") }));
@@ -413,7 +429,7 @@ const App: Component = () => {
         setOverlay("blame");
       },
     }));
-    return [...repos, ...actions, ...branches, ...fileEntries];
+    return [...repos, ...actions, ...worktrees, ...branches, ...fileEntries];
   };
 
   const goPrimary = (v: PrimaryView) => {
@@ -434,7 +450,7 @@ const App: Component = () => {
     { key: "refs", label: "Refs / Pull Requests" },
     { key: "blame", label: "Blame" },
     { key: "history", label: "File History" },
-    { key: "worktrees", label: "Worktrees" },
+    { key: "worktrees", label: "Manage Worktrees" },
     { key: "submodules", label: "Submodules" },
     { key: "stashes", label: "Stashes" },
     { key: "reflog", label: "Reflog" },
@@ -735,6 +751,8 @@ const App: Component = () => {
               onSelectRef={showRef}
               onBranchKey={onBranchKey}
               onOpenStashes={() => setOverlay("stashes")}
+              onOpenWorktree={(path) => openRepoPath?.(path)}
+              onManageWorktrees={() => setOverlay("worktrees")}
             />
 
             {/* Drag handle: resize the sidebar (col-resize). Hidden on touch. */}
@@ -826,6 +844,8 @@ const App: Component = () => {
                 onSelectRef={showRef}
                 onBranchKey={onBranchKey}
                 onOpenStashes={() => { setDrawerOpen(false); setOverlay("stashes"); }}
+                onOpenWorktree={(path) => { setDrawerOpen(false); openRepoPath?.(path); }}
+                onManageWorktrees={() => { setDrawerOpen(false); setOverlay("worktrees"); }}
               />
             </div>
           </Show>

@@ -3,7 +3,7 @@ import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import type { CustomCommand, OpenRepo, RecentRepo, RepoId, Settings } from "./commands";
+import type { CustomCommand, OpenRepo, RecentRepo, RepoId, RepositoryFamily, Settings } from "./commands";
 
 /** Last path segment, for a compact tab label. */
 function baseName(path: string): string {
@@ -104,8 +104,11 @@ const RepoBar: Component<{
     }).catch((e) => setErr(String(e)));
   };
 
-  const rememberRecent = (p: string, g: string | null) => {
-    const next = [{ path: p, group: g }, ...recent().filter((r) => r.path !== p)].slice(0, 20);
+  const rememberRecent = (repo: OpenRepo) => {
+    const next = [
+      { path: repo.path, group: repo.group, family_id: repo.family_id, family_name: repo.family_name },
+      ...recent().filter((r) => (r.family_id ?? r.path) !== repo.family_id && r.path !== repo.path),
+    ].slice(0, 20);
     persistRecent(next);
   };
 
@@ -127,13 +130,21 @@ const RepoBar: Component<{
     setErr(null);
     try {
       const id = await invoke<RepoId>("open_repo", { path: p });
+      const family = await invoke<RepositoryFamily>("repository_family", { repo: id });
       const dirty = await invoke<boolean>("repo_dirty", { repo: id }).catch(() => false);
-      const repo: OpenRepo = { path: p, id, group: g, dirty };
+      const repo: OpenRepo = {
+        path: family.worktrees.find((wt) => wt.selected)?.path ?? p,
+        id,
+        family_id: family.id,
+        family_name: baseName(family.main.path),
+        group: g,
+        dirty,
+      };
       setOpened((prev) => {
-        const without = prev.filter((r) => r.path !== p);
+        const without = prev.filter((r) => r.family_id !== repo.family_id);
         return [...without, repo];
       });
-      rememberRecent(p, g);
+      rememberRecent(repo);
       activate(repo);
     } catch (e) {
       setErr(String(e));
@@ -164,7 +175,7 @@ const RepoBar: Component<{
 
   // Flat tab label: "group: name" when grouped, else the repo's base name.
   const tabLabel = (repo: OpenRepo) =>
-    repo.group ? `${repo.group}: ${baseName(repo.path)}` : baseName(repo.path);
+    repo.group ? `${repo.group}: ${repo.family_name}` : repo.family_name;
 
   const tabStyle = (repo: OpenRepo) => {
     const on = props.active === repo.id;
