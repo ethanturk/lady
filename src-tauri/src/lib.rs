@@ -58,10 +58,10 @@ fn list_refs(repo: RepoId, engine: State<GixEngine>) -> Result<Vec<RefInfo>, Str
 }
 
 #[tauri::command]
-fn walk_log(
+async fn walk_log(
     repo: RepoId,
     query: WalkLogQuery,
-    engine: State<GixEngine>,
+    engine: State<'_, GixEngine>,
 ) -> Result<Vec<CommitMeta>, String> {
     let gq = GraphQuery {
         start: query.start.map(Oid::from),
@@ -100,11 +100,11 @@ pub struct WalkLogGraphResult {
 }
 
 #[tauri::command]
-fn walk_log_graph(
+async fn walk_log_graph(
     repo: RepoId,
     query: WalkLogQuery,
     layout_state: Option<Vec<Option<String>>>,
-    engine: State<GixEngine>,
+    engine: State<'_, GixEngine>,
 ) -> Result<WalkLogGraphResult, String> {
     let gq = GraphQuery {
         start: query.start.map(Oid::from),
@@ -185,7 +185,11 @@ fn walk_log_graph(
 }
 
 #[tauri::command]
-fn diff(repo: RepoId, commit: String, engine: State<GixEngine>) -> Result<Vec<FileDiff>, String> {
+async fn diff(
+    repo: RepoId,
+    commit: String,
+    engine: State<'_, GixEngine>,
+) -> Result<Vec<FileDiff>, String> {
     let oid = Oid::from(commit);
     engine.diff_commit(&repo, &oid).map_err(|e| e.to_string())
 }
@@ -199,10 +203,10 @@ pub struct DiffSpecArg {
 }
 
 #[tauri::command]
-fn diff_spec(
+async fn diff_spec(
     repo: RepoId,
     spec: DiffSpecArg,
-    engine: State<GixEngine>,
+    engine: State<'_, GixEngine>,
 ) -> Result<Vec<FileDiff>, String> {
     let spec = match spec.kind.as_str() {
         "Commit" => DiffSpec::Commit(Oid::from(spec.value)),
@@ -214,11 +218,11 @@ fn diff_spec(
 }
 
 #[tauri::command]
-fn blame(
+async fn blame(
     repo: RepoId,
     path: String,
     at: Option<String>,
-    engine: State<GixEngine>,
+    engine: State<'_, GixEngine>,
 ) -> Result<Blame, String> {
     let at = at.map(Oid::from);
     engine
@@ -227,10 +231,10 @@ fn blame(
 }
 
 #[tauri::command]
-fn file_history(
+async fn file_history(
     repo: RepoId,
     path: String,
-    engine: State<GixEngine>,
+    engine: State<'_, GixEngine>,
 ) -> Result<Vec<CommitMeta>, String> {
     engine.file_history(&repo, &path).map_err(|e| e.to_string())
 }
@@ -249,7 +253,7 @@ fn list_files(repo: RepoId, engine: State<GixEngine>) -> Result<Vec<String>, Str
 
 /// Working-tree status (staged / unstaged / untracked) for the Changes view.
 #[tauri::command]
-fn status(repo: RepoId, engine: State<GixEngine>) -> Result<WorkingTree, String> {
+async fn status(repo: RepoId, engine: State<'_, GixEngine>) -> Result<WorkingTree, String> {
     engine.status(&repo).map_err(|e| e.to_string())
 }
 
@@ -405,10 +409,10 @@ fn commit(
 
 /// Signature verification status for each commit oid (PH3-005 badge data).
 #[tauri::command]
-fn signature_statuses(
+async fn signature_statuses(
     repo: RepoId,
     oids: Vec<String>,
-    engine: State<GixEngine>,
+    engine: State<'_, GixEngine>,
 ) -> Result<Vec<lady_proto::SignatureStatus>, String> {
     let oids: Vec<Oid> = oids.into_iter().map(Oid::from).collect();
     engine
@@ -589,10 +593,10 @@ fn lfs_track(repo: RepoId, pattern: String, engine: State<GixEngine>) -> Result<
 
 /// The reflog for `refname` (default HEAD), newest first (PH3-007).
 #[tauri::command]
-fn reflog(
+async fn reflog(
     repo: RepoId,
     refname: Option<String>,
-    engine: State<GixEngine>,
+    engine: State<'_, GixEngine>,
 ) -> Result<Vec<lady_proto::ReflogEntry>, String> {
     let refname = refname.unwrap_or_else(|| "HEAD".to_string());
     engine.reflog(&repo, &refname).map_err(|e| e.to_string())
