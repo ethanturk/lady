@@ -135,7 +135,20 @@ interface ChangesViewProps {
   onOpenHistory?: (path: string) => void;
   /** Open the AI "Explain changes" overlay for an ai_explain target. */
   onExplain?: (target: Record<string, unknown>, title: string, subtitle?: string) => void;
+  /** Hand a pre-commit/hook failure (or `null` to clear) up to the app shell,
+   * which surfaces it in the centered hook-error dialog. */
+  onHookError?: (text: string | null) => void;
 }
+
+/**
+ * Heuristic: does a failed-commit message look like git-hook output (pre-commit,
+ * husky, …) rather than a one-line git error? Hook reports are multi-line and/or
+ * carry the framework's status markers. These get routed to the dedicated
+ * dialog instead of the cramped inline error line.
+ */
+const looksLikeHookError = (msg: string): boolean =>
+  /hook id:|pre-commit|husky/i.test(msg) ||
+  (msg.includes("\n") && /\b(Passed|Failed|Skipped)\b/.test(msg));
 
 /**
  * The Local Changes view (design): a 308px file-lists column (Unstaged / Staged
@@ -491,6 +504,8 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
     setErr(null);
     try {
       await invoke<string>("commit", { repo: props.repoId, message: message(), amend: amend(), sign: sign() });
+      // A clean commit clears any lingering hook failure from a prior attempt.
+      props.onHookError?.(null);
       setSubject("");
       setBody("");
       setAmend(false);
@@ -501,7 +516,14 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
       }
       afterMutation();
     } catch (e) {
-      setErr(String(e));
+      const msg = String(e);
+      // Hook failures (verbose, multi-line) go to the centered dialog so they
+      // don't overflow the Changes column; plain git errors stay inline.
+      if (looksLikeHookError(msg) && props.onHookError) {
+        props.onHookError(msg);
+      } else {
+        setErr(msg);
+      }
     }
   };
 

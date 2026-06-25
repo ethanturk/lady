@@ -933,11 +933,22 @@ async fn pull(
     repo: RepoId,
     remote: Option<String>,
     branch: Option<String>,
+    strategy: Option<String>,
+    remember: Option<bool>,
     app: tauri::AppHandle,
     engine: State<'_, GixEngine>,
     hosting: State<'_, Hosting>,
 ) -> Result<(), String> {
     use tauri::Emitter;
+    // Persist the chosen reconcile strategy first when asked, so the user isn't
+    // re-prompted on every diverged pull.
+    if remember.unwrap_or(false) {
+        if let Some(s) = strategy.as_deref() {
+            engine
+                .set_pull_reconcile(&repo, s)
+                .map_err(friendly_git_err)?;
+        }
+    }
     let mut auth = git_auth_for_repo(&repo, &engine);
     if auth.is_empty() {
         if let Some(token) = http_bearer_for_remote(&repo, remote.as_deref(), &engine, &hosting) {
@@ -952,6 +963,7 @@ async fn pull(
             &repo,
             remote.as_deref(),
             branch.as_deref(),
+            strategy.as_deref(),
             &auth,
             &mut emit,
         )

@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { AheadBehind, RepoId } from "./commands";
 import {
+  IconAlert,
   IconBranch,
   IconFetch,
   IconLaunch,
@@ -15,6 +16,8 @@ import {
   IconStash,
 } from "./icons";
 import { isNarrow } from "./prefs";
+import PullReconcileDialog from "./PullReconcileDialog";
+import type { PullStrategy } from "./PullReconcileDialog";
 
 /** One entry in the toolbar's "More" overflow menu (an advanced view). */
 export interface OverflowItem {
@@ -45,6 +48,11 @@ interface ToolbarProps {
   onSettings: () => void;
   /** Open the push confirmation dialog (required for all push operations). */
   onPush: () => void;
+  /** True when an unresolved pre-commit/hook failure exists — reveals the
+   * alert icon that toggles the hook-error dialog. */
+  hasHookError?: boolean;
+  /** Toggle the centered hook-error dialog (alert icon). */
+  onToggleHookDialog?: () => void;
 }
 
 /** Vertical icon-over-label quick action (design toolbar left group). */
@@ -129,9 +137,42 @@ const Toolbar: Component<ToolbarProps> = (props) => {
   };
 
   const fetch = () => run("Fetching", "fetch", { remote: null });
-  const pull = () => run("Pulling", "pull", { remote: null, branch: null });
   const stash = () =>
     run("Stashing", "stash_save", { message: null, includeUntracked: false });
+
+  // Pull gets bespoke handling: a diverged pull (no configured reconcile
+  // strategy) is recoverable, so instead of dumping git's fatal hint we open a
+  // dialog letting the user pick merge / rebase / fast-forward-only.
+  const [divergent, setDivergent] = createSignal(false);
+  const isDivergent = (m: string) =>
+    /divergent branch|need to specify how to reconcile/i.test(m);
+
+  const doPull = async (strategy?: PullStrategy, remember?: boolean) => {
+    const id = props.repoId;
+    if (!id) return;
+    setErr(null);
+    setProgress("");
+    setBusy("Pulling");
+    try {
+      await invoke("pull", {
+        repo: id,
+        remote: null,
+        branch: null,
+        strategy: strategy ?? null,
+        remember: remember ?? false,
+      });
+      setDivergent(false);
+      props.onChanged();
+      loadAheadBehind();
+    } catch (e) {
+      const msg = String(e);
+      if (isDivergent(msg)) setDivergent(true);
+      else setErr(msg);
+    } finally {
+      setBusy(null);
+    }
+  };
+  const pull = () => doPull();
 
   return (
     <div
@@ -208,8 +249,18 @@ const Toolbar: Component<ToolbarProps> = (props) => {
 
       <span style={{ flex: "1" }} />
 
-      {/* Right group: Branch menu · More overflow · theme toggle */}
+      {/* Right group: Hook alert · Branch menu · More overflow · theme toggle */}
       <div style={{ display: "flex", "align-items": "center", gap: "6px" }}>
+        {/* Pre-commit hook failure: only present while unresolved; toggles the
+            centered hook-error dialog. */}
+        <Show when={props.hasHookError}>
+          <QuickAction
+            icon={<IconAlert style={{ color: "var(--error)" }} />}
+            label="Hooks"
+            title="Pre-commit hook errors — click to view"
+            onClick={() => props.onToggleHookDialog?.()}
+          />
+        </Show>
         <QuickAction
           icon={<IconBranch />}
           label="Branch"
@@ -334,6 +385,14 @@ const Toolbar: Component<ToolbarProps> = (props) => {
           onClick={() => props.onSettings()}
         />
       </div>
+
+      {/* Diverged-pull reconcile chooser (merge / rebase / fast-forward only). */}
+      <Show when={divergent()}>
+        <PullReconcileDialog
+          onChoose={(strategy, remember) => doPull(strategy, remember)}
+          onCancel={() => setDivergent(false)}
+        />
+      </Show>
     </div>
   );
 };

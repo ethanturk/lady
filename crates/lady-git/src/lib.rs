@@ -304,14 +304,25 @@ pub trait GitEngine: Send + Sync {
 
     /// Pull (`fetch` + integrate) from `remote`/`branch`, or the configured
     /// upstream when either is `None`. Progress streams to `on_progress`.
+    ///
+    /// `strategy` selects how divergent branches are reconciled — `"merge"`,
+    /// `"rebase"`, or `"ff-only"`. When `None`, git's configured default is used
+    /// (which errors out asking for a strategy when the branches have diverged
+    /// and no `pull.rebase`/`pull.ff` is set); the UI surfaces that as a choice.
     fn pull(
         &self,
         repo: &RepoId,
         remote: Option<&str>,
         branch: Option<&str>,
+        strategy: Option<&str>,
         auth: &GitAuth,
         on_progress: &mut dyn FnMut(&str),
     ) -> Result<()>;
+
+    /// Persist a default reconcile strategy for future pulls in this repo
+    /// (`pull.rebase false|true` or `pull.ff only`). `strategy` is `"merge"`,
+    /// `"rebase"`, or `"ff-only"`.
+    fn set_pull_reconcile(&self, repo: &RepoId, strategy: &str) -> Result<()>;
 
     /// Push the current branch to `remote`/`branch`. When either is omitted and
     /// the branch has no upstream (or `set_upstream` is true), both are inferred
@@ -880,12 +891,24 @@ pub(crate) fn run_git_stdin(workdir: &Path, args: &[&str], input: &[u8]) -> Resu
         .wait_with_output()
         .map_err(|e| Error::Git(e.to_string()))?;
     if !out.status.success() {
+        // Hook failures (e.g. the pre-commit framework) write their report to
+        // stdout, while git writes its own note to stderr. Combine both so the
+        // full hook output survives to the UI's pre-commit dialog.
         let stderr = String::from_utf8_lossy(&out.stderr);
-        let msg = stderr.trim();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let mut msg = stderr.trim().to_string();
+        let report = stdout.trim();
+        if !report.is_empty() {
+            msg = if msg.is_empty() {
+                report.to_string()
+            } else {
+                format!("{report}\n{msg}")
+            };
+        }
         return Err(Error::Git(if msg.is_empty() {
             format!("git {args:?} failed ({})", out.status)
         } else {
-            msg.to_string()
+            msg
         }));
     }
     Ok(())
@@ -1647,11 +1670,17 @@ impl GitEngine for GixEngine {
         repo: &RepoId,
         remote: Option<&str>,
         branch: Option<&str>,
+        strategy: Option<&str>,
         auth: &GitAuth,
         on_progress: &mut dyn FnMut(&str),
     ) -> Result<()> {
         let wd = self.workdir(repo)?;
         let mut args: Vec<&str> = vec!["pull", "--progress"];
+        // Map the chosen reconcile strategy onto git's per-invocation flag, so a
+        // diverged pull can proceed without mutating repo config.
+        if let Some(flag) = pull_strategy_flag(strategy) {
+            args.push(flag);
+        }
         // A branch can only be named alongside its remote.
         if let Some(r) = remote {
             args.push(r);
@@ -1660,6 +1689,26 @@ impl GitEngine for GixEngine {
             }
         }
         run_git_streaming(&wd, &args, auth, on_progress)
+    }
+
+    fn set_pull_reconcile(&self, repo: &RepoId, strategy: &str) -> Result<()> {
+        let wd = self.workdir(repo)?;
+        // `pull.ff = only` and `pull.rebase = false|true` are mutually exclusive
+        // in effect; set the matching pair so the choice fully takes hold.
+        let kv: [(&str, &str); 2] = match strategy {
+            "rebase" => [("pull.rebase", "true"), ("pull.ff", "")],
+            "ff-only" => [("pull.ff", "only"), ("pull.rebase", "false")],
+            _ => [("pull.rebase", "false"), ("pull.ff", "")],
+        };
+        for (k, v) in kv {
+            if v.is_empty() {
+                // Clear a stale opposing key; ignore "not found" (exit 5).
+                let _ = run_git_raw(&wd, &["config", "--unset", k]);
+            } else {
+                run_git(&wd, &["config", k, v])?;
+            }
+        }
+        Ok(())
     }
 
     fn push(
@@ -2706,6 +2755,17 @@ fn submodule_urls(workdir: &Path) -> HashMap<String, String> {
         .into_iter()
         .filter_map(|(name, path)| name_url.get(&name).map(|url| (path, url.clone())))
         .collect()
+}
+
+/// Map a pull reconcile strategy name to git's per-invocation flag. Unknown or
+/// absent strategies yield `None` (git's configured default applies).
+fn pull_strategy_flag(strategy: Option<&str>) -> Option<&'static str> {
+    match strategy {
+        Some("merge") => Some("--no-rebase"),
+        Some("rebase") => Some("--rebase"),
+        Some("ff-only") => Some("--ff-only"),
+        _ => None,
+    }
 }
 
 /// Read a single git config value, or `None` when unset.

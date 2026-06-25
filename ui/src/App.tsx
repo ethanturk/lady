@@ -22,6 +22,7 @@ import RemoteMenu from "./RemoteMenu";
 import type { RemoteMenuState } from "./RemoteMenu";
 import PushDialog from "./PushDialog";
 import type { PushDialogState } from "./PushDialog";
+import HookErrorDialog from "./HookErrorDialog";
 import { addWorktreeFor, checkoutBranch, createBranchAt, createTagAt, deleteBranch } from "./branchActions";
 import { autoUpdateCheck, hideResizers, isNarrow, setSettingsWidth, setSidebarWidth, settingsWidth, sidebarWidth } from "./prefs";
 import {
@@ -112,6 +113,11 @@ const App: Component = () => {
   const [explainSpec, setExplainSpec] = createSignal<{ target: Record<string, unknown>; title: string; subtitle?: string } | null>(null);
   // Push confirmation dialog (shown for every push operation).
   const [pushDialog, setPushDialog] = createSignal<PushDialogState | null>(null);
+  // Last unresolved pre-commit/hook failure + whether its dialog is visible.
+  // The error persists (toolbar alert icon) until the next clean commit; the
+  // dialog auto-opens on a new failure and can be hidden/reshown via the icon.
+  const [hookError, setHookError] = createSignal<string | null>(null);
+  const [showHookDialog, setShowHookDialog] = createSignal(false);
   // Recent repositories (from RepoBar) shown in the Launch palette.
   const [recents, setRecents] = createSignal<RecentRepo[]>([]);
   // Openers handed up from RepoBar: open a known path (worktrees) + native picker.
@@ -622,6 +628,14 @@ const App: Component = () => {
     });
   };
 
+  // Record (or clear) a pre-commit/hook failure. A new failure auto-opens the
+  // centered dialog; clearing it (clean commit) closes the dialog and hides the
+  // toolbar alert icon.
+  const reportHookError = (text: string | null) => {
+    setHookError(text);
+    setShowHookDialog(!!text);
+  };
+
   // Open the generalized name prompt (Rename, New Tag, …).
   const openPrompt = (spec: PromptSpec) => {
     setPromptValue(spec.initial ?? "");
@@ -758,6 +772,8 @@ const App: Component = () => {
           const b = currentBranchName();
           if (b) openPushDialog({ repo: repoId()!, refspec: b, remote: "origin", isTag: false });
         }}
+        hasHookError={!!hookError()}
+        onToggleHookDialog={() => setShowHookDialog((v) => !v)}
       />
 
       {/* Licensing gate: blocks the UI when the trial has expired (ADR-0007). */}
@@ -894,6 +910,7 @@ const App: Component = () => {
                   onOpenBlame={openBlameFor}
                   onOpenHistory={openHistoryFor}
                   onExplain={openExplain}
+                  onHookError={reportHookError}
                 />
               </Show>
               <Show when={view() === "commits"}>
@@ -1183,6 +1200,12 @@ const App: Component = () => {
           state={pushDialog()!}
           onClose={() => setPushDialog(null)}
         />
+      </Show>
+
+      {/* Centered pre-commit/hook error dialog — auto-opens on a new failure,
+          toggled from the toolbar alert icon. */}
+      <Show when={showHookDialog() && hookError()}>
+        <HookErrorDialog text={hookError()!} onClose={() => setShowHookDialog(false)} />
       </Show>
 
       {/* Interactive-rebase editor (PH3-004) */}

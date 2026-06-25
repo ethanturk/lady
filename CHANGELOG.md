@@ -1,8 +1,25 @@
 # Changelog
 
 All notable changes to Lady. Format follows [Keep a Changelog](https://keepachangelog.com).
-The current shipped app/UI release is `v0.0.11`; later semantic version sections
+The current shipped app/UI release is `v0.0.12`; later semantic version sections
 below are roadmap history, not published release tags.
+
+## [0.0.12] — Pre-commit hook error dialog & diverged-pull reconcile
+
+### Added
+- A diverged `git pull` (local and remote both have new commits, no configured
+  reconcile strategy) now opens a centered dialog to pick merge, rebase, or
+  fast-forward-only — instead of failing with git's "Need to specify how to
+  reconcile divergent branches" hint. The choice can be remembered per repo
+  (persists `pull.rebase` / `pull.ff`).
+
+### Changed
+- Pre-commit (and other git hook) failures now surface in a dedicated, centered,
+  scrollable dialog instead of being dumped inline into the Changes column,
+  where the verbose multi-line output overflowed the file list. The dialog
+  auto-opens on a new failure, is toggled from a top-bar alert icon, and clears
+  on the next clean commit. The commit error path now also captures hook stdout
+  (where the pre-commit framework writes its report) so the full output is kept.
 
 ## [0.0.11] — Responsive UI during git operations
 
