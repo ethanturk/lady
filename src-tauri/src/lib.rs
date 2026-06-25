@@ -646,11 +646,11 @@ fn parse_placeholders(template: String) -> Vec<lady_proto::Placeholder> {
 /// Run a custom command: substitute `values` into `template` to build a safe
 /// argv, then execute it against the repo. Returns stdout/stderr/exit code.
 #[tauri::command]
-fn run_custom_command(
+async fn run_custom_command(
     repo: RepoId,
     template: String,
     values: std::collections::HashMap<String, String>,
-    engine: State<GixEngine>,
+    engine: State<'_, GixEngine>,
 ) -> Result<lady_proto::CommandOutput, String> {
     let argv = lady_git::custom::build_argv(&template, &values);
     engine.run_custom(&repo, &argv).map_err(|e| e.to_string())
@@ -1087,12 +1087,12 @@ fn stash_drop(repo: RepoId, index: usize, engine: State<GixEngine>) -> Result<()
 }
 
 #[tauri::command]
-fn merge(
+async fn merge(
     repo: RepoId,
     source: String,
     fast_forward: String,
     commit_message: Option<String>,
-    engine: State<GixEngine>,
+    engine: State<'_, GixEngine>,
 ) -> Result<MergeOutcome, String> {
     let fast_forward = match fast_forward.as_str() {
         "Auto" => FfMode::Auto,
@@ -1115,10 +1115,10 @@ fn merge_abort(repo: RepoId, engine: State<GixEngine>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn cherry_pick(
+async fn cherry_pick(
     repo: RepoId,
     oid: String,
-    engine: State<GixEngine>,
+    engine: State<'_, GixEngine>,
 ) -> Result<ApplyOutcome, String> {
     engine
         .cherry_pick(&repo, &Oid::from(oid))
@@ -1126,7 +1126,11 @@ fn cherry_pick(
 }
 
 #[tauri::command]
-fn revert(repo: RepoId, oid: String, engine: State<GixEngine>) -> Result<ApplyOutcome, String> {
+async fn revert(
+    repo: RepoId,
+    oid: String,
+    engine: State<'_, GixEngine>,
+) -> Result<ApplyOutcome, String> {
     engine
         .revert(&repo, &Oid::from(oid))
         .map_err(|e| e.to_string())
@@ -1138,11 +1142,11 @@ fn sequencer_abort(repo: RepoId, engine: State<GixEngine>) -> Result<(), String>
 }
 
 #[tauri::command]
-fn rebase(
+async fn rebase(
     repo: RepoId,
     branch: String,
     onto: String,
-    engine: State<GixEngine>,
+    engine: State<'_, GixEngine>,
 ) -> Result<RebaseOutcome, String> {
     engine
         .rebase(&repo, &branch, &onto)
