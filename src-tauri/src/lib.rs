@@ -509,19 +509,19 @@ fn add_submodule(
 
 /// Initialize + check out all submodules.
 #[tauri::command]
-fn init_submodules(repo: RepoId, engine: State<GixEngine>) -> Result<(), String> {
+async fn init_submodules(repo: RepoId, engine: State<'_, GixEngine>) -> Result<(), String> {
     engine.init_submodules(&repo).map_err(|e| e.to_string())
 }
 
 /// Update submodules to their pinned commits.
 #[tauri::command]
-fn update_submodules(repo: RepoId, engine: State<GixEngine>) -> Result<(), String> {
+async fn update_submodules(repo: RepoId, engine: State<'_, GixEngine>) -> Result<(), String> {
     engine.update_submodules(&repo).map_err(|e| e.to_string())
 }
 
 /// Sync submodule URLs from `.gitmodules`.
 #[tauri::command]
-fn sync_submodules(repo: RepoId, engine: State<GixEngine>) -> Result<(), String> {
+async fn sync_submodules(repo: RepoId, engine: State<'_, GixEngine>) -> Result<(), String> {
     engine.sync_submodules(&repo).map_err(|e| e.to_string())
 }
 
@@ -783,12 +783,12 @@ fn reset(
 /// git's progress lines to the frontend as `clone-progress` events, and open
 /// the result.
 #[tauri::command]
-fn clone_repo(
+async fn clone_repo(
     url: String,
     dest: String,
     account: Option<String>,
     app: tauri::AppHandle,
-    engine: State<GixEngine>,
+    engine: State<'_, GixEngine>,
 ) -> Result<RepoId, String> {
     use std::io::{BufRead, BufReader};
     use std::process::{Command, Stdio};
@@ -848,11 +848,11 @@ fn clone_repo(
 /// frontend as `fetch-progress` events. Uses the hosting PAT for HTTPS when
 /// connected in Settings; otherwise falls back to system git credentials.
 #[tauri::command]
-fn fetch(
+async fn fetch(
     repo: RepoId,
     remote: Option<String>,
     app: tauri::AppHandle,
-    engine: State<GixEngine>,
+    engine: State<'_, GixEngine>,
     hosting: State<'_, Hosting>,
 ) -> Result<(), String> {
     use tauri::Emitter;
@@ -874,9 +874,9 @@ fn fetch(
 /// credential resolution as the explicit Fetch action but does not emit progress
 /// events, so periodic refreshes do not disturb the toolbar status line.
 #[tauri::command]
-fn fetch_background(
+async fn fetch_background(
     repo: RepoId,
-    engine: State<GixEngine>,
+    engine: State<'_, GixEngine>,
     hosting: State<'_, Hosting>,
 ) -> Result<(), String> {
     let mut auth = git_auth_for_repo(&repo, &engine);
@@ -925,12 +925,12 @@ async fn unwatch_repo(
 /// Pull (fetch + integrate) from `remote`/`branch`, or the configured upstream.
 /// Progress streams as `fetch-progress` events.
 #[tauri::command]
-fn pull(
+async fn pull(
     repo: RepoId,
     remote: Option<String>,
     branch: Option<String>,
     app: tauri::AppHandle,
-    engine: State<GixEngine>,
+    engine: State<'_, GixEngine>,
     hosting: State<'_, Hosting>,
 ) -> Result<(), String> {
     use tauri::Emitter;
@@ -959,14 +959,14 @@ fn pull(
 /// `push-progress` events; rejections surface git's message verbatim.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-fn push(
+async fn push(
     repo: RepoId,
     remote: Option<String>,
     branch: Option<String>,
     set_upstream: bool,
     force: bool,
     app: tauri::AppHandle,
-    engine: State<GixEngine>,
+    engine: State<'_, GixEngine>,
     hosting: State<'_, Hosting>,
 ) -> Result<(), String> {
     use tauri::Emitter;
