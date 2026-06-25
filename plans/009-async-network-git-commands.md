@@ -6,7 +6,7 @@
 > report — do not improvise. When done, update the status row for this plan
 > in `plans/README.md`.
 >
-> **Drift check (run first)**: `git diff --stat 9666d42..HEAD -- src-tauri/src/lib.rs`
+> **Drift check (run first)**: `git diff --stat 1e3100f..HEAD -- src-tauri/src/lib.rs`
 > If `src-tauri/src/lib.rs` changed since this plan was written, compare the
 > "Current state" excerpts against the live code before proceeding; on a
 > mismatch, treat it as a STOP condition.
@@ -18,7 +18,7 @@
 - **Risk**: LOW
 - **Depends on**: none
 - **Category**: perf
-- **Planned at**: commit `9666d42`, 2026-06-25
+- **Planned at**: commit `1e3100f`, 2026-06-25
 
 ## Why this matters
 
@@ -275,7 +275,7 @@ ALL must hold:
 
 Stop and report back (do not improvise) if:
 
-- The drift check shows `src-tauri/src/lib.rs` changed since `9666d42` and a
+- The drift check shows `src-tauri/src/lib.rs` changed since `1e3100f` and a
   target command no longer matches the excerpt above.
 - After adding `async` and the `State<'_, …>` lifetimes, the build fails with an
   error you cannot resolve by adding a missing `'_` to a `State` param (e.g. an

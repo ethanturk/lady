@@ -35,7 +35,7 @@ maintenance work, unless product discovery is more urgent.
 | 006 | Add a Tauri CSP for the packaged app | P2 | M | 004 | DONE |
 | 007 | Serialize settings writes through one backend path | P2 | M | - | DONE |
 | 008 | Spike semantic commit search | P3 | M | - | DONE |
-| 009 | Run network git commands off the main thread | P1 | S | - | TODO |
+| 009 | Run network git commands off the main thread | P1 | S | - | DONE (executor branch worktree-agent-ae0472a3240106d67, commit 1e11b09; APPROVED — build/clippy/fmt/test green; land via cherry-pick onto main, see note) |
 | 010 | Run heavy local read commands off the main thread | P2 | S | - | TODO |
 | 011 | Run mutating & custom commands off the main thread | P2 | S | - | TODO |
 
