@@ -929,6 +929,7 @@ async fn unwatch_repo(
 /// Pull (fetch + integrate) from `remote`/`branch`, or the configured upstream.
 /// Progress streams as `fetch-progress` events.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn pull(
     repo: RepoId,
     remote: Option<String>,
