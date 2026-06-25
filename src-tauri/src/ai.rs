@@ -11,7 +11,7 @@ use lady_ai::{AiConfig, AiRequest, AiTask, CancelToken, ProviderKind, StreamSink
 use lady_proto::RepoId;
 use tauri::{AppHandle, Emitter, State};
 
-use crate::{load_settings_inner, repo_settings_key, write_settings, GixEngine};
+use crate::{load_settings_inner, repo_settings_key, update_settings_inner, GixEngine};
 use lady_git::{CommitOpts, DiffSpec, GitEngine};
 
 /// Managed AI state: the keychain-backed key store + in-flight cancel tokens.
@@ -65,15 +65,16 @@ pub fn ai_get_config() -> Result<AiConfig, String> {
 /// so saving provider/model settings never disables AI for a repo.
 #[tauri::command]
 pub fn ai_set_config(config: AiConfig) -> Result<(), String> {
-    let mut settings = load_settings_inner();
-    let consented = settings.ai.consented.clone();
-    let ai_repos = settings.ai_repos.clone();
-    let repo_overrides = settings.repo_overrides.clone();
-    settings.ai = config;
-    settings.ai.consented = consented;
-    settings.ai_repos = ai_repos;
-    settings.repo_overrides = repo_overrides;
-    write_settings(&settings)
+    update_settings_inner(|settings| {
+        let consented = settings.ai.consented.clone();
+        let ai_disabled_repos = settings.ai_disabled_repos.clone();
+        let repo_overrides = settings.repo_overrides.clone();
+        settings.ai = config;
+        settings.ai.consented = consented;
+        settings.ai_disabled_repos = ai_disabled_repos;
+        settings.repo_overrides = repo_overrides;
+        Ok(())
+    })
 }
 
 /// Store an API key for `provider` in the OS keychain. Never written to disk
@@ -113,27 +114,32 @@ pub fn ai_has_key(provider: ProviderKind, ai: State<'_, AiState>) -> Result<bool
 /// action that would call a remote provider is blocked until this is called.
 #[tauri::command]
 pub fn ai_grant_consent(provider: ProviderKind) -> Result<(), String> {
-    let mut settings = load_settings_inner();
-    if provider.is_remote() && !settings.ai.consented.contains(&provider) {
-        settings.ai.consented.push(provider);
-        write_settings(&settings)?;
+    if !provider.is_remote() {
+        return Ok(());
     }
-    Ok(())
+    update_settings_inner(|settings| {
+        if !settings.ai.consented.contains(&provider) {
+            settings.ai.consented.push(provider);
+        }
+        Ok(())
+    })
 }
 
 /// Revoke consent for `provider`.
 #[tauri::command]
 pub fn ai_revoke_consent(provider: ProviderKind) -> Result<(), String> {
-    let mut settings = load_settings_inner();
-    settings.ai.consented.retain(|p| *p != provider);
-    write_settings(&settings)
+    update_settings_inner(|settings| {
+        settings.ai.consented.retain(|p| *p != provider);
+        Ok(())
+    })
 }
 
 fn repo_key(repo: &RepoId, engine: &GixEngine) -> Result<String, String> {
     repo_settings_key(repo, engine)
 }
 
-/// Enable or disable AI for a repo (default off, ADR-0009).
+/// Enable or disable AI for a repo. AI is on by default (ADR-0009); this records
+/// an explicit opt-out in `ai_disabled_repos`.
 #[tauri::command]
 pub fn ai_set_repo_enabled(
     repo: RepoId,
@@ -141,15 +147,16 @@ pub fn ai_set_repo_enabled(
     engine: State<'_, GixEngine>,
 ) -> Result<(), String> {
     let key = repo_key(&repo, &engine)?;
-    let mut settings = load_settings_inner();
-    settings.ai_repos.retain(|p| *p != key);
-    if enabled {
-        settings.ai_repos.push(key);
-    }
-    write_settings(&settings)
+    update_settings_inner(|settings| {
+        settings.ai_disabled_repos.retain(|p| p != &key);
+        if !enabled {
+            settings.ai_disabled_repos.push(key);
+        }
+        Ok(())
+    })
 }
 
-/// The per-repo AI model override for `repo`, if any (keyed like `ai_repos`).
+/// The per-repo AI model override for `repo`, if any (keyed like `ai_disabled_repos`).
 /// Used to steer model selection in [`run_task`] before the global default.
 fn repo_ai_model(repo: &RepoId, engine: &GixEngine) -> Option<String> {
     let key = repo_key(repo, engine).ok()?;
@@ -159,11 +166,11 @@ fn repo_ai_model(repo: &RepoId, engine: &GixEngine) -> Option<String> {
         .and_then(|o| o.ai_model.clone())
 }
 
-/// Whether AI is enabled for `repo`.
+/// Whether AI is enabled for `repo`. On by default unless explicitly opted out.
 #[tauri::command]
 pub fn ai_repo_enabled(repo: RepoId, engine: State<'_, GixEngine>) -> Result<bool, String> {
     let key = repo_key(&repo, &engine)?;
-    Ok(load_settings_inner().ai_repos.contains(&key))
+    Ok(!load_settings_inner().ai_disabled_repos.contains(&key))
 }
 
 /// List models from the configured OpenAI-compatible server (`/models`). The
@@ -192,8 +199,9 @@ pub fn ai_cancel(req_id: String, ai: State<'_, AiState>) -> Result<(), String> {
 
 // ── Shared task runner ──────────────────────────────────────────────────────────
 
-/// Confirm AI is enabled for `repo` (its family id is in `ai_repos`); returns
-/// the selected workdir path for context collection.
+/// Confirm AI is enabled for `repo` (its family id is NOT in `ai_disabled_repos`,
+/// the opt-out list — AI is on by default); returns the selected workdir path for
+/// context collection.
 fn require_repo_enabled(repo: &RepoId, engine: &GixEngine) -> Result<String, String> {
     let wd = engine
         .workdir_path(repo)
@@ -201,7 +209,7 @@ fn require_repo_enabled(repo: &RepoId, engine: &GixEngine) -> Result<String, Str
         .to_string_lossy()
         .to_string();
     let key = repo_key(repo, engine)?;
-    if !load_settings_inner().ai_repos.contains(&key) {
+    if load_settings_inner().ai_disabled_repos.contains(&key) {
         return Err("AI is off for this repository — enable it in Settings.".to_string());
     }
     Ok(wd)

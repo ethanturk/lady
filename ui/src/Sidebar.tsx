@@ -2,6 +2,8 @@ import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "so
 import type { Component, JSX } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import type { AheadBehind, ForgeItem, RefInfo, RepoId, RepositoryFamily, StashEntry, Worktree } from "./commands";
+import ContextMenu from "./ContextMenu";
+import type { MenuEntry } from "./ContextMenu";
 import { IconChanges, IconCheck, IconChevron, IconCommits, IconBranch, IconMore, IconPlus, IconSearch } from "./icons";
 import { sidebarWidth } from "./prefs";
 
@@ -81,6 +83,8 @@ interface SidebarProps {
   onBranchMenu: (branch: string, at: { x: number; y: number }) => void;
   /** Open the tag context menu for `tag` at the pointer location. */
   onTagMenu?: (tag: string, at: { x: number; y: number }) => void;
+  /** Open the remote-tracking branch context menu at the pointer location. */
+  onRemoteMenu?: (remoteRef: string, at: { x: number; y: number }) => void;
   /** Check out `branch` (double-click on a branch/remote row). */
   onCheckout: (branch: string) => void;
   /** Single-click a ref row → show that branch/tag in All Commits (its tip). */
@@ -97,6 +101,8 @@ interface SidebarProps {
   switchingWorktreePath?: string | null;
   /** Open the detailed worktree management surface. */
   onManageWorktrees?: () => void;
+  /** Called after a worktree mutation from the sidebar context menu. */
+  onWorktreesChanged?: () => void;
   /** Fill the container width (used when hosted inside the mobile drawer). */
   fullWidth?: boolean;
 }
@@ -161,6 +167,7 @@ const WorktreeSwitcher: Component<{
   refreshNonce?: number;
   onOpen?: (path: string) => Promise<void> | void;
   onManage?: () => void;
+  onChanged?: () => void;
   switchingPath?: string | null;
 }> = (props) => {
   const [err, setErr] = createSignal<string | null>(null);
@@ -169,8 +176,10 @@ const WorktreeSwitcher: Component<{
   const [path, setPath] = createSignal("");
   const [existing, setExisting] = createSignal(false);
   const [localSwitching, setLocalSwitching] = createSignal<string | null>(null);
+  const [menu, setMenu] = createSignal<{ x: number; y: number; wt: Worktree } | null>(null);
 
   const family = () => props.family ?? null;
+  const hasStaleWorktrees = () => (family()?.worktrees ?? []).some((wt) => wt.prunable || wt.missing);
 
   createEffect(() => {
     const fam = family();
@@ -199,10 +208,58 @@ const WorktreeSwitcher: Component<{
     })
       .then(() => {
         resetCreate();
+        props.onChanged?.();
         setLocalSwitching(wtPath);
         Promise.resolve(props.onOpen?.(wtPath)).finally(() => setLocalSwitching(null));
       })
       .catch((e) => setErr(String(e)));
+  };
+
+  const openWorktree = (wt: Worktree) => {
+    if (wt.selected || wt.missing || wt.prunable) return;
+    setLocalSwitching(wt.path);
+    Promise.resolve(props.onOpen?.(wt.path)).finally(() => setLocalSwitching(null));
+  };
+
+  const copyWorktreePath = async (wtPath: string) => {
+    try {
+      await navigator.clipboard.writeText(wtPath);
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
+
+  const removeWorktree = (wt: Worktree) => {
+    const repo = props.repoId;
+    if (!repo) return;
+    if (!confirm(`Remove worktree at ${wt.path}?`)) return;
+    setErr(null);
+    invoke("remove_worktree", { repo, path: wt.path })
+      .then(() => props.onChanged?.())
+      .catch((e) => setErr(String(e)));
+  };
+
+  const pruneWorktrees = () => {
+    const repo = props.repoId;
+    if (!repo) return;
+    setErr(null);
+    invoke("prune_worktrees", { repo })
+      .then(() => props.onChanged?.())
+      .catch((e) => setErr(String(e)));
+  };
+
+  const worktreeMenuItems = (wt: Worktree): MenuEntry[] => {
+    const canOpen = !wt.selected && !wt.missing && !wt.prunable;
+    const canRemove = !wt.is_main && !wt.selected && !wt.dirty && !wt.locked;
+    return [
+      { label: "Open Worktree", disabled: !canOpen, run: () => openWorktree(wt) },
+      { label: "Manage Worktrees...", run: () => props.onManage?.() },
+      "divider",
+      { label: "Copy Path", shortcut: "⌘C", run: () => copyWorktreePath(wt.path) },
+      { label: "Prune Stale Worktrees", disabled: !hasStaleWorktrees(), run: pruneWorktrees },
+      "divider",
+      { label: "Remove Worktree...", danger: true, disabled: !canRemove, run: () => removeWorktree(wt) },
+    ];
   };
 
   const row = (wt: Worktree) => {
@@ -212,10 +269,12 @@ const WorktreeSwitcher: Component<{
     return (
       <button
         class="hov"
-        disabled={disabled}
-        onClick={() => {
-          setLocalSwitching(wt.path);
-          Promise.resolve(props.onOpen?.(wt.path)).finally(() => setLocalSwitching(null));
+        aria-disabled={disabled}
+        onClick={() => openWorktree(wt)}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setMenu({ x: e.clientX, y: e.clientY, wt });
         }}
         title={`${wt.path}${status ? ` (${status})` : ""}`}
         style={{
@@ -289,6 +348,14 @@ const WorktreeSwitcher: Component<{
 
       <Show when={err()}>
         <div style={{ color: "var(--error)", "font-size": "11.5px", padding: "5px 2px 0" }}>{err()}</div>
+      </Show>
+      <Show when={menu()}>
+        <ContextMenu
+          x={menu()!.x}
+          y={menu()!.y}
+          items={worktreeMenuItems(menu()!.wt)}
+          onClose={() => setMenu(null)}
+        />
       </Show>
     </div>
   );
@@ -472,6 +539,9 @@ const Sidebar: Component<SidebarProps> = (props) => {
         if (kind === "Branch") {
           e.preventDefault();
           props.onBranchMenu(r.name, { x: e.clientX, y: e.clientY });
+        } else if (kind === "Remote" && props.onRemoteMenu) {
+          e.preventDefault();
+          props.onRemoteMenu(r.name, { x: e.clientX, y: e.clientY });
         } else if (kind === "Tag" && props.onTagMenu) {
           e.preventDefault();
           props.onTagMenu(r.name, { x: e.clientX, y: e.clientY });
@@ -548,13 +618,14 @@ const Sidebar: Component<SidebarProps> = (props) => {
           );
         })()}
       </Show>
-      <Show when={kind === "Branch" || (kind === "Tag" && props.onTagMenu)}>
+      <Show when={kind === "Branch" || (kind === "Remote" && props.onRemoteMenu) || (kind === "Tag" && props.onTagMenu)}>
         <button
           aria-label={`Actions for ${r.name}`}
           onClick={(e) => {
             e.stopPropagation();
             const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
             if (kind === "Tag") props.onTagMenu?.(r.name, { x: box.left, y: box.bottom });
+            else if (kind === "Remote") props.onRemoteMenu?.(r.name, { x: box.left, y: box.bottom });
             else props.onBranchMenu(r.name, { x: box.left, y: box.bottom });
           }}
           style={{
@@ -651,6 +722,7 @@ const Sidebar: Component<SidebarProps> = (props) => {
         refreshNonce={props.refreshNonce}
         onOpen={props.onOpenWorktree}
         onManage={props.onManageWorktrees}
+        onChanged={props.onWorktreesChanged}
         switchingPath={props.switchingWorktreePath}
       />
 

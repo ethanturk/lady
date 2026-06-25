@@ -1,13 +1,11 @@
 import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
 import type { Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type { AccountSuggestion, ApplyOutcome, ConflictState, OpenRepo, RebaseOutcome, RecentRepo, RefInfo, RepositoryFamily, WorkingTree } from "./commands";
 import { assignRepoAccount, dismissRepoAccountSuggestion, suggestRepoAccount } from "./accounts";
 import AllCommitsView from "./AllCommitsView";
-import BlameView from "./BlameView";
-import FileHistory from "./FileHistory";
 import ChangesView from "./ChangesView";
-import RefsView from "./RefsView";
 import RepoBar from "./RepoBar";
 import Toolbar from "./Toolbar";
 import type { OverflowItem } from "./Toolbar";
@@ -20,25 +18,33 @@ import CommitMenu from "./CommitMenu";
 import type { CommitMenuState } from "./CommitMenu";
 import TagMenu from "./TagMenu";
 import type { TagMenuState } from "./TagMenu";
+import RemoteMenu from "./RemoteMenu";
+import type { RemoteMenuState } from "./RemoteMenu";
 import PushDialog from "./PushDialog";
 import type { PushDialogState } from "./PushDialog";
 import { addWorktreeFor, checkoutBranch, createBranchAt, createTagAt, deleteBranch } from "./branchActions";
 import { autoUpdateCheck, hideResizers, isNarrow, setSettingsWidth, setSidebarWidth, settingsWidth, sidebarWidth } from "./prefs";
-import ConflictResolver from "./ConflictResolver";
-import InteractiveRebase from "./InteractiveRebase";
-import RecomposeView from "./RecomposeView";
-import ExplainPanel from "./ExplainPanel";
-import WorktreesView from "./WorktreesView";
-import ReflogView from "./ReflogView";
-import BisectView from "./BisectView";
-import CustomCommandsView from "./CustomCommandsView";
-import SettingsView from "./SettingsView";
-import NotificationsView from "./NotificationsView";
-import LfsView from "./LfsView";
-import GitFlowView from "./GitFlowView";
-import SubmodulesView from "./SubmodulesView";
-import StashView from "./StashView";
-import AiView from "./AiView";
+import {
+  AiView,
+  BisectView,
+  BlameView,
+  ConflictResolver,
+  CustomCommandsView,
+  ExplainPanel,
+  FileHistory,
+  GitFlowView,
+  InteractiveRebase,
+  LazyViewBoundary,
+  LfsView,
+  NotificationsView,
+  RecomposeView,
+  ReflogView,
+  RefsView,
+  SettingsView,
+  StashView,
+  SubmodulesView,
+  WorktreesView,
+} from "./lazyViews";
 import LicenseGate from "./LicenseGate";
 import type { LicenseStatus, SignatureStatus } from "./commands";
 import CommandPalette from "./CommandPalette";
@@ -79,6 +85,7 @@ const App: Component = () => {
   const [branchMenu, setBranchMenu] = createSignal<BranchMenuState | null>(null);
   const [commitMenu, setCommitMenu] = createSignal<CommitMenuState | null>(null);
   const [tagMenu, setTagMenu] = createSignal<TagMenuState | null>(null);
+  const [remoteMenu, setRemoteMenu] = createSignal<RemoteMenuState | null>(null);
   // "New branch from <startPoint>" modal (replaces the unsupported window.prompt).
   const [newBranchFrom, setNewBranchFrom] = createSignal<string | null>(null);
   const [newBranchName, setNewBranchName] = createSignal("");
@@ -265,24 +272,54 @@ const App: Component = () => {
     loadChangeCount(repoId);
     updateConflictState(repo);
   };
+  const refreshWorktrees = () => {
+    refresh();
+    refreshRepositoryFamily();
+  };
 
-  // Poll local repo state so edits made outside Lady (editor, terminal) show up
-  // without clicking Fetch. Pauses while the window is hidden.
+  // Pick up edits made outside Lady (editor, terminal) without clicking Fetch.
+  // A native filesystem watcher drives the refresh; on platforms without one
+  // (mobile) we fall back to interval polling. Either way it pauses while hidden
+  // and refreshes once on becoming visible (a backstop for missed events).
   const REPO_POLL_MS = 2_000;
   const REMOTE_FETCH_MS = 60_000;
   createEffect(() => {
-    if (!active()) return;
-    const tick = () => {
-      if (document.visibilityState !== "hidden") refresh();
-    };
-    const id = window.setInterval(tick, REPO_POLL_MS);
+    const repo = active();
+    if (!repo) return;
+    const repoId = repo.id;
+    let unlisten: (() => void) | undefined;
+    let pollId: number | undefined;
+    let disposed = false;
+
     const onVis = () => {
       if (document.visibilityState === "visible") refresh();
     };
     document.addEventListener("visibilitychange", onVis);
+
+    invoke("watch_repo", { repo: repoId })
+      .then(async () => {
+        // The effect may have been cleaned up while the watcher was starting.
+        if (disposed) {
+          void invoke("unwatch_repo", { repo: repoId }).catch(() => {});
+          return;
+        }
+        unlisten = await listen<string>("repo-fs-changed", (e) => {
+          if (e.payload === active()?.id && document.visibilityState !== "hidden") refresh();
+        });
+      })
+      .catch(() => {
+        // No watcher on this platform — fall back to the old poll.
+        pollId = window.setInterval(() => {
+          if (document.visibilityState !== "hidden") refresh();
+        }, REPO_POLL_MS);
+      });
+
     onCleanup(() => {
-      clearInterval(id);
+      disposed = true;
       document.removeEventListener("visibilitychange", onVis);
+      if (unlisten) unlisten();
+      if (pollId !== undefined) clearInterval(pollId);
+      void invoke("unwatch_repo", { repo: repoId }).catch(() => {});
     });
   });
 
@@ -527,6 +564,9 @@ const App: Component = () => {
   const openTagMenu = (tag: string, at: { x: number; y: number }) =>
     setTagMenu({ tag, x: at.x, y: at.y });
 
+  const openRemoteMenu = (remoteRef: string, at: { x: number; y: number }) =>
+    setRemoteMenu({ remoteRef, x: at.x, y: at.y });
+
   // Explain a single commit via the AI overlay (commit-menu / tag-menu target).
   const explainCommit = (oid: string) =>
     openExplain({ kind: "commit", oid }, `Explain ${oid.slice(0, 8)}`, oid.slice(0, 8));
@@ -570,6 +610,7 @@ const App: Component = () => {
       ...state,
       onSuccess: () => {
         setPushDialog(null);
+        setErr(null); // a successful push clears any prior (e.g. auth) error bar
         state.onSuccess?.();
         refresh();
       },
@@ -743,7 +784,17 @@ const App: Component = () => {
         </div>
       </Show>
       <Show when={err()}>
-        <p role="alert" style={{ ...bar, color: "var(--error)" }}>{err()}</p>
+        <div role="alert" style={{ ...bar, color: "var(--error)", display: "flex", "align-items": "flex-start", gap: "0.5rem" }}>
+          <span style={{ flex: "1", "white-space": "pre-wrap" }}>{err()}</span>
+          <button
+            title="Dismiss"
+            aria-label="Dismiss error"
+            onClick={() => setErr(null)}
+            style={{ flex: "0 0 auto", border: "none", background: "transparent", color: "inherit", cursor: "pointer", "font-size": "1rem", "line-height": 1, padding: "0 0.2rem" }}
+          >
+            ✕
+          </button>
+        </div>
       </Show>
       <Show when={opConflicts().length > 0}>
         <div role="alert" style={{ ...bar, border: "1px solid var(--warning-border)", background: "var(--warning-bg)" }}>
@@ -804,6 +855,7 @@ const App: Component = () => {
               refs={refs()}
               onBranchMenu={openBranchMenu}
               onTagMenu={openTagMenu}
+              onRemoteMenu={openRemoteMenu}
               onCheckout={checkoutByName}
               onSelectRef={showRef}
               onBranchKey={onBranchKey}
@@ -812,6 +864,7 @@ const App: Component = () => {
               onOpenWorktree={openWorktreePath}
               switchingWorktreePath={switchingWorktreePath()}
               onManageWorktrees={() => setOverlay("worktrees")}
+              onWorktreesChanged={refreshWorktrees}
             />
 
             {/* Drag handle: resize the sidebar (col-resize). Hidden on touch. */}
@@ -899,6 +952,7 @@ const App: Component = () => {
                 refs={refs()}
                 onBranchMenu={openBranchMenu}
                 onTagMenu={openTagMenu}
+                onRemoteMenu={openRemoteMenu}
                 onCheckout={checkoutByName}
                 onSelectRef={showRef}
                 onBranchKey={onBranchKey}
@@ -907,6 +961,7 @@ const App: Component = () => {
                 onOpenWorktree={(path) => { setDrawerOpen(false); return openWorktreePath(path); }}
                 switchingWorktreePath={switchingWorktreePath()}
                 onManageWorktrees={() => { setDrawerOpen(false); setOverlay("worktrees"); }}
+                onWorktreesChanged={refreshWorktrees}
               />
             </div>
           </Show>
@@ -980,6 +1035,25 @@ const App: Component = () => {
             const tagRef = refs().find((r) => r.kind === "Tag" && r.name === ontoTag);
             if (tagRef) setRebaseFrom(tagRef.target);
           }}
+        />
+      </Show>
+
+      {/* Remote-tracking branch context menu (right-click a row in the Remote panel) */}
+      <Show when={remoteMenu() && active()}>
+        <RemoteMenu
+          repoId={repoId()!}
+          currentBranch={currentBranchName()}
+          state={remoteMenu()!}
+          onClose={() => setRemoteMenu(null)}
+          onResult={showResult}
+          onMutate={refresh}
+          onCreateBranch={(startPoint) => {
+            setNewBranchName("");
+            setNewBranchFrom(startPoint);
+          }}
+          onPrompt={openPrompt}
+          onWorktree={pickWorktreeDir}
+          onAiExplain={explainBranch}
         />
       </Show>
 
@@ -1095,7 +1169,9 @@ const App: Component = () => {
               </button>
             </div>
             <div style={{ flex: "1", "min-height": "0", overflow: "hidden" }}>
-              <SettingsView repoId={repoId()} />
+              <LazyViewBoundary>
+                <SettingsView repoId={repoId()} />
+              </LazyViewBoundary>
             </div>
           </div>
         </div>
@@ -1111,33 +1187,39 @@ const App: Component = () => {
 
       {/* Interactive-rebase editor (PH3-004) */}
       <Show when={rebaseFrom() && active()}>
-        <InteractiveRebase
-          repoId={repoId()!}
-          fromOid={rebaseFrom()!}
-          onClose={() => setRebaseFrom(null)}
-          onComplete={onRebaseComplete}
-        />
+        <LazyViewBoundary>
+          <InteractiveRebase
+            repoId={repoId()!}
+            fromOid={rebaseFrom()!}
+            onClose={() => setRebaseFrom(null)}
+            onComplete={onRebaseComplete}
+          />
+        </LazyViewBoundary>
       </Show>
 
       {/* AI "Explain changes" overlay (file / branch / hunk) */}
       <Show when={explainSpec() && active()}>
-        <ExplainPanel
-          repoId={repoId()!}
-          target={explainSpec()!.target}
-          title={explainSpec()!.title}
-          subtitle={explainSpec()!.subtitle}
-          onClose={() => setExplainSpec(null)}
-        />
+        <LazyViewBoundary>
+          <ExplainPanel
+            repoId={repoId()!}
+            target={explainSpec()!.target}
+            title={explainSpec()!.title}
+            subtitle={explainSpec()!.subtitle}
+            onClose={() => setExplainSpec(null)}
+          />
+        </LazyViewBoundary>
       </Show>
 
       {/* AI recompose overlay (Plan 3) */}
       <Show when={recomposeFrom() && active()}>
-        <RecomposeView
-          repoId={repoId()!}
-          fromOid={recomposeFrom()!}
-          onClose={() => setRecomposeFrom(null)}
-          onComplete={refresh}
-        />
+        <LazyViewBoundary>
+          <RecomposeView
+            repoId={repoId()!}
+            fromOid={recomposeFrom()!}
+            onClose={() => setRecomposeFrom(null)}
+            onComplete={refresh}
+          />
+        </LazyViewBoundary>
       </Show>
 
       {/* Transient status toast (auto-fades; conflicts/errors stay as bars). */}
@@ -1187,7 +1269,7 @@ const App: Component = () => {
     const id = repoId();
     if (!id) return null;
     return (
-      <>
+      <LazyViewBoundary>
         <Show when={overlay() === "refs"}>
           <RefsView repoId={id} refs={refs()} onChanged={refresh} onInteractiveRebase={(oid) => setRebaseFrom(oid)} />
         </Show>
@@ -1202,8 +1284,7 @@ const App: Component = () => {
             repoId={id}
             refreshNonce={refreshNonce()}
             onChanged={() => {
-              refresh();
-              refreshRepositoryFamily();
+              refreshWorktrees();
             }}
             onOpen={(path) => void openWorktreePath(path)}
           />
@@ -1249,7 +1330,7 @@ const App: Component = () => {
             }}
           />
         </Show>
-      </>
+      </LazyViewBoundary>
     );
   }
 };

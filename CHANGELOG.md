@@ -1,7 +1,8 @@
 # Changelog
 
-All notable changes to Lady. Format follows [Keep a Changelog](https://keepachangelog.com);
-this project uses semantic-ish version lines per phase.
+All notable changes to Lady. Format follows [Keep a Changelog](https://keepachangelog.com).
+The current shipped app/UI release is `v0.0.10`; later semantic version sections
+below are roadmap history, not published release tags.
 
 ## [0.0.10] — Settings organization
 
@@ -11,10 +12,13 @@ this project uses semantic-ish version lines per phase.
 - Moved repository-specific Git overrides, identity, and credential controls out
   of the global Git defaults pane.
 
-## [1.3.0] — GA ship (Phase 6 — Polish & ship)
+## Roadmap history
 
-The general-availability release: the feature-complete app (Core Parity + Fast-follow
-+ AI) made into a signed, auto-updating, accessible, performance-budgeted product.
+### 1.3.0 target — GA ship (Phase 6 — Polish & ship)
+
+The general-availability target: the feature-complete app (Core Parity +
+Fast-follow + AI) made into a signed, auto-updating, accessible,
+performance-budgeted product.
 
 ### Added
 - **Packaging** via the Tauri bundler for macOS (`.app`/`.dmg`, Developer ID
@@ -41,7 +45,7 @@ The general-availability release: the feature-complete app (Core Parity + Fast-f
 - Replaced hard-coded UI colors with semantic theme tokens across all views (only
   the intentional commit-graph lane palette remains literal).
 
-## [1.2.0] — AI (Phase 5) — GitKraken Git AI parity + superset
+### 1.2.0 target — AI (Phase 5) — GitKraken Git AI parity + superset
 
 ### Added
 - BYOK provider abstraction + task model; local **Ollama** path; remote providers
@@ -55,7 +59,7 @@ The general-availability release: the feature-complete app (Core Parity + Fast-f
   assistants. See [docs/MCP.md](docs/MCP.md).
 - _Deferred:_ semantic commit search (optional stretch).
 
-## [1.1.0] — Fast-follow (Phase 4) — hosting + niche
+### 1.1.0 target — Fast-follow (Phase 4) — hosting + niche
 
 ### Added
 - Forge-agnostic hosting trait; **GitLab / Bitbucket / Azure DevOps** auth +
@@ -63,7 +67,7 @@ The general-availability release: the feature-complete app (Core Parity + Fast-f
   inbox.
 - **Git LFS**, **git-flow**, and submodule management (including nested).
 
-## [1.0.0] — Core Parity (Phases 1–3) — first public release
+### 1.0.0 target — Core Parity (Phases 1–3) — first public-release target
 
 ### Added
 - Commit **graph** (virtualized canvas), **diff viewer** (split/unified, syntax
@@ -80,8 +84,4 @@ The general-availability release: the feature-complete app (Core Parity + Fast-f
 - GitHub auth + **pull request creation**; **licensing gate** (30-day trial +
   offline signed-key verification, ADR-0007).
 
-[1.3.0]: https://github.com/ethanturk/lady/releases/tag/v1.3.0
 [0.0.10]: https://github.com/ethanturk/lady/releases/tag/v0.0.10
-[1.2.0]: https://github.com/ethanturk/lady/releases/tag/v1.2.0
-[1.1.0]: https://github.com/ethanturk/lady/releases/tag/v1.1.0
-[1.0.0]: https://github.com/ethanturk/lady/releases/tag/v1.0.0

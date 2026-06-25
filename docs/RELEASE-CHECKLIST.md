@@ -1,13 +1,14 @@
 # Lady — Core Parity + Fast-follow Release Checklist
 
 This maps every item of the Core Parity surface (CONTEXT.md) to its implementing
-story across Phases 1–3 (the v1.0 line, Phase 3 EXIT, PLAN.md §0/§9), plus the
-Fast-follow set shipped in Phase 4 (v1.1.0), the AI set (Phase 5, v1.2.0), and
-the **GA ship** (Phase 6, v1.3.0) — packaging, notarization, auto-update,
-accessibility, theming, perf, docs, and the release pipeline.
+story across Phases 1–3 (the v1.0 roadmap line, Phase 3 EXIT, PLAN.md §0/§9),
+plus the Fast-follow target in Phase 4 (v1.1.0), the AI target (Phase 5,
+v1.2.0), and the **GA ship** target (Phase 6, v1.3.0) — packaging,
+notarization, auto-update, accessibility, theming, perf, docs, and the release
+pipeline.
 
 Versions: Core Parity gate **1.0.0-rc**; Fast-follow gate **1.1.0**; AI gate
-**1.2.0**; **GA ship 1.3.0 (current)**.
+**1.2.0**; **GA ship 1.3.0**. Current shipped app/UI line: **v0.0.10**.
 
 ## Core Parity surface → implementing story
 
@@ -48,9 +49,9 @@ Versions: Core Parity gate **1.0.0-rc**; Fast-follow gate **1.1.0**; AI gate
 | Create GitHub pull request from a branch | ✅ | PH3-012 |
 | Licensing gate — 30-day trial + offline signed-key verify (ADR-0007) | ✅ | PH3-013 |
 
-## Fast-follow — shipped in Phase 4 (v1.1.0)
+## Fast-follow — Phase 4 target (v1.1.0)
 
-Committed post-v1.0 patches (CONTEXT.md), now implemented and green:
+Committed post-v1.0 roadmap patches (CONTEXT.md), now implemented and green:
 
 | Fast-follow item | Status | Implementing story |
 | --- | --- | --- |
@@ -64,7 +65,7 @@ Committed post-v1.0 patches (CONTEXT.md), now implemented and green:
 | git-flow support | ✅ | PH4-008 |
 | Submodule management (incl. nested) | ✅ | PH4-009 |
 
-## AI — GitKraken Git AI parity + superset, shipped in Phase 5 (v1.2.0)
+## AI — GitKraken Git AI parity + superset, Phase 5 target (v1.2.0)
 
 BYOK + local Ollama, no hosted backend (ADR-0008); explicit opt-in, per-repo
 toggle, best-effort redaction before any remote send (ADR-0009); thin
@@ -96,7 +97,7 @@ optional stretch and does not block the Phase 5 exit (PLAN.md §9; PRD PH5-013).
 A literal `search_commits` (message grep) ships via the MCP server and the
 engine; embedding-based semantic ranking is a Fast-follow/Phase 6 candidate.
 
-## GA ship — Phase 6 (v1.3.0)
+## GA ship — Phase 6 target (v1.3.0)
 
 The cross-platform distribution + quality pass that turns the feature-complete
 app into a signed, auto-updating, accessible, perf-budgeted product.
@@ -114,10 +115,11 @@ app into a signed, auto-updating, accessible, perf-budgeted product.
 | Documentation + release notes | ✅ | PH6-009 | [USER-GUIDE.md](USER-GUIDE.md), [AI-PRIVACY.md](AI-PRIVACY.md), [MCP.md](MCP.md), [../CHANGELOG.md](../CHANGELOG.md) |
 | Release CI pipeline | ✅ | PH6-010 | `.github/workflows/release.yml` |
 
-**GA ship line:** v1.3.0 — Core Parity + Fast-follow + AI, now signed,
-auto-updating, accessible (WCAG AA), and perf-budgeted across macOS / Windows /
-Linux. All signing/notarization/updater secrets are CI-only; only the updater
-public key is committed.
+**GA roadmap target:** Core Parity + Fast-follow + AI, signed, auto-updating,
+accessible (WCAG AA), and perf-budgeted across macOS / Windows / Linux. The
+current shipped app/UI line remains **v0.0.10**. All
+signing/notarization/updater secrets are CI-only; only the updater public key is
+committed.
 
 ### Post-GA (explicitly out of scope for the GA ship)
 

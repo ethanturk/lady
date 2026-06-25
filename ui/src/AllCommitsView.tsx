@@ -3,7 +3,7 @@ import type { Component } from "solid-js";
 import type { RefInfo, RepoId, SignatureStatus } from "./commands";
 import GraphView from "./GraphView";
 import CommitDetail from "./CommitDetail";
-import ExplainPanel from "./ExplainPanel";
+import { ExplainPanel, LazyViewBoundary } from "./lazyViews";
 import { commitDetailHeight, hideResizers, setCommitDetailHeight } from "./prefs";
 
 interface AllCommitsViewProps {
@@ -130,13 +130,15 @@ const AllCommitsView: Component<AllCommitsViewProps> = (props) => {
       </Show>
 
       <Show when={explainOpen()}>
-        <ExplainPanel
-          repoId={props.repoId}
-          target={{ kind: "commits", oids: props.selected }}
-          title={`Explain ${props.selected.length} commit${props.selected.length === 1 ? "" : "s"}`}
-          subtitle={props.selected.map((o) => o.slice(0, 8)).join(", ")}
-          onClose={() => setExplainOpen(false)}
-        />
+        <LazyViewBoundary>
+          <ExplainPanel
+            repoId={props.repoId}
+            target={{ kind: "commits", oids: props.selected }}
+            title={`Explain ${props.selected.length} commit${props.selected.length === 1 ? "" : "s"}`}
+            subtitle={props.selected.map((o) => o.slice(0, 8)).join(", ")}
+            onClose={() => setExplainOpen(false)}
+          />
+        </LazyViewBoundary>
       </Show>
     </div>
   );

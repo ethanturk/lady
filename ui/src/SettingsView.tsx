@@ -23,6 +23,7 @@ import {
   removeGitHubAccount,
 } from "./accounts";
 import AiSettings from "./AiSettings";
+import { repoEnabled, setRepoEnabled } from "./ai";
 import {
   accent,
   ACCENT_LABEL,
@@ -57,7 +58,7 @@ import {
   setRepoOverride,
 } from "./repoSettings";
 
-type SettingsTab = "general" | "git" | "accounts" | "ai" | "repository";
+type SettingsTab = "general" | "git" | "accounts" | "ai" | "repository" | "repo_ai";
 
 /**
  * Settings panel (PH3-011 / PH4): connect/disconnect the active repo's forge
@@ -288,6 +289,24 @@ const SettingsView: Component<{ repoId: RepoId | null }> = (props) => {
       .catch((e) => setRsErr(String(e)));
   };
 
+  // Per-repo AI enable flag (default off) — repo-specific override of the global
+  // AI config. Follows the active repo.
+  const [aiEnabled, setAiEnabled] = createSignal(false);
+  const loadAiEnabled = () => {
+    const repo = props.repoId;
+    if (!repo) {
+      setAiEnabled(false);
+      return;
+    }
+    repoEnabled(repo).then(setAiEnabled).catch((e) => setRsErr(String(e)));
+  };
+  const toggleAiEnabled = (on: boolean) => {
+    const repo = props.repoId;
+    if (!repo) return;
+    setAiEnabled(on);
+    setRepoEnabled(repo, on).catch((e) => setRsErr(String(e)));
+  };
+
   onMount(() => {
     invoke<LicenseStatus>("license_status").then(setLicense).catch(() => {});
     loadAccounts();
@@ -325,9 +344,10 @@ const SettingsView: Component<{ repoId: RepoId | null }> = (props) => {
   // stay mounted across repo switches, and opens with no repo at all).
   createEffect(() => {
     void props.repoId;
-    if (!props.repoId && tab() === "repository") setTab("general");
+    if (!props.repoId && (tab() === "repository" || tab() === "repo_ai")) setTab("general");
     loadStatus();
     loadRepoSettings();
+    loadAiEnabled();
   });
 
   const connect = () => {
@@ -359,6 +379,7 @@ const SettingsView: Component<{ repoId: RepoId | null }> = (props) => {
   ];
   const repositoryTabs: { id: SettingsTab; label: string; hint: string }[] = [
     { id: "repository", label: "Git", hint: "Overrides, identity, credentials" },
+    { id: "repo_ai", label: "AI", hint: "Enable & override for this repo" },
   ];
   const tabButton = (id: SettingsTab, disabled = false) => ({
     width: "100%",
@@ -623,29 +644,6 @@ const SettingsView: Component<{ repoId: RepoId | null }> = (props) => {
               style={{ flex: "1", padding: "0.3rem 0.5rem", "font-size": "0.85rem" }}
               value={override().base_branch ?? ""}
               onChange={(e) => saveOverride({ base_branch: e.currentTarget.value.trim() || null })}
-            />
-          </Show>
-        </div>
-
-        {/* AI model override */}
-        <div style={{ display: "flex", "align-items": "center", gap: "0.5rem", "font-size": "0.85rem" }}>
-          <label style={{ display: "flex", "align-items": "center", gap: "0.4rem", "min-width": "11rem" }}>
-            <input
-              type="checkbox"
-              checked={overridden("ai_model")}
-              onChange={(e) => toggleOverride("ai_model", e.currentTarget.checked, global().ai_model ?? "")}
-            />
-            Override AI model
-          </label>
-          <Show
-            when={overridden("ai_model")}
-            fallback={<span style={{ color: "var(--fg-muted)" }}>inherits: {global().ai_model || "provider default"}</span>}
-          >
-            <input
-              style={{ flex: "1", padding: "0.3rem 0.5rem", "font-size": "0.85rem" }}
-              placeholder="model id"
-              value={override().ai_model ?? ""}
-              onChange={(e) => saveOverride({ ai_model: e.currentTarget.value.trim() || null })}
             />
           </Show>
         </div>
@@ -924,9 +922,60 @@ const SettingsView: Component<{ repoId: RepoId | null }> = (props) => {
       </Show>
 
       <Show when={tab() === "ai"}>
-      {/* AI is global config (provider / keys / consent / model); the per-repo
-          enable toggle inside appears only when a repo is open. */}
-      <AiSettings repoId={props.repoId} />
+      {/* Global AI config only (provider / keys / consent / default model). The
+          per-repo enable + model override live under Repository → AI. */}
+      <AiSettings />
+      </Show>
+
+      <Show when={tab() === "repo_ai"}>
+      <Show when={props.repoId}>
+      <h3 style={{ margin: "0 0 0.4rem", "font-size": "0.95rem" }}>Repository AI</h3>
+      <p style={{ "font-size": "0.8rem", color: "var(--fg-muted)", margin: "0 0 0.6rem" }}>
+        AI is configured globally under <strong>Global → AI</strong> (provider, keys,
+        consent, default model). These settings apply only to this repo.
+      </p>
+      <Show when={rsErr()}>
+        <p role="alert" style={{ color: "var(--error)", "font-size": "0.82rem" }}>{rsErr()}</p>
+      </Show>
+      <div style={{ display: "flex", "flex-direction": "column", gap: "0.6rem", "max-width": "30rem" }}>
+        {/* Per-repo enable (off by default) */}
+        <label style={{ display: "flex", "align-items": "center", gap: "0.4rem", "font-size": "0.85rem" }}>
+          <input type="checkbox" checked={aiEnabled()} onChange={(e) => toggleAiEnabled(e.currentTarget.checked)} />
+          Enable AI for this repository
+        </label>
+
+        {/* AI model override */}
+        <div style={{ display: "flex", "align-items": "center", gap: "0.5rem", "font-size": "0.85rem" }}>
+          <label style={{ display: "flex", "align-items": "center", gap: "0.4rem", "min-width": "11rem" }}>
+            <input
+              type="checkbox"
+              checked={overridden("ai_model")}
+              onChange={(e) => toggleOverride("ai_model", e.currentTarget.checked, global().ai_model ?? "")}
+            />
+            Override AI model
+          </label>
+          <Show
+            when={overridden("ai_model")}
+            fallback={<span style={{ color: "var(--fg-muted)" }}>inherits: {global().ai_model || "provider default"}</span>}
+          >
+            <input
+              style={{ flex: "1", padding: "0.3rem 0.5rem", "font-size": "0.85rem" }}
+              placeholder="model id"
+              value={override().ai_model ?? ""}
+              onChange={(e) => saveOverride({ ai_model: e.currentTarget.value.trim() || null })}
+            />
+          </Show>
+        </div>
+      </div>
+
+      <h3 style={{ margin: "1.2rem 0 0.3rem", "font-size": "0.95rem" }}>MCP server</h3>
+      <p style={{ "font-size": "0.8rem", color: "var(--fg-muted)", margin: "0 0 0.6rem", "max-width": "34rem" }}>
+        Expose this repo's context (status, diff, log, file-at-rev, blame, commit
+        search) to an external assistant (Claude/Cursor) via the <code>lady-mcp</code>{" "}
+        server. It is read-only — no mutating tools. Add an MCP entry that runs{" "}
+        <code>lady-mcp &lt;repo-path&gt;</code>; remove it to disable.
+      </p>
+      </Show>
       </Show>
       </div>
     </div>

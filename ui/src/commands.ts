@@ -90,6 +90,7 @@ export interface FileDiff {
   old_path: string | null;
   kind: FileDiffKind;
   hunks: DiffHunk[];
+  has_null_bytes: boolean;
   old_image_b64: string | null;
   new_image_b64: string | null;
 }

@@ -629,6 +629,15 @@ impl GixEngine {
         self.workdir(id)
     }
 
+    /// The common git directory (`.git`, or the shared dir for linked
+    /// worktrees) for `id`. Watchers observe this for ref/index/HEAD changes
+    /// that live outside a linked worktree's own directory.
+    pub fn git_common_dir(&self, id: &RepoId) -> Result<PathBuf> {
+        let repo = self.repo(id)?;
+        let raw = repo.common_dir().to_path_buf();
+        Ok(raw.canonicalize().unwrap_or(raw))
+    }
+
     /// Canonical common git directory shared by every worktree in a repository
     /// family. This is the durable family id from ADR-0012.
     pub fn repository_family_id(&self, id: &RepoId) -> Result<RepositoryFamilyId> {
@@ -2985,6 +2994,7 @@ fn diff_trees(
             old_path: None,
             kind: bd.kind,
             hunks: bd.hunks,
+            has_null_bytes: bd.has_null_bytes,
             old_image_b64: bd.old_image_b64,
             new_image_b64: bd.new_image_b64,
         });
@@ -3059,6 +3069,7 @@ fn collect_tree_blobs(
 struct BlobDiff {
     kind: FileDiffKind,
     hunks: Vec<lady_proto::DiffHunk>,
+    has_null_bytes: bool,
     old_image_b64: Option<String>,
     new_image_b64: Option<String>,
 }
@@ -3095,6 +3106,7 @@ fn single_file_diff(old: Option<&[u8]>, new: Option<&[u8]>, path: &str) -> Vec<F
         old_path: None,
         kind: bd.kind,
         hunks: bd.hunks,
+        has_null_bytes: bd.has_null_bytes,
         old_image_b64: bd.old_image_b64,
         new_image_b64: bd.new_image_b64,
     }]
@@ -3150,14 +3162,17 @@ fn blob_diff_bytes(old: Option<&[u8]>, new: Option<&[u8]>, path: &str) -> BlobDi
         return BlobDiff {
             kind,
             hunks: Vec::new(),
+            has_null_bytes: false,
             old_image_b64: old.map(|b| B64.encode(b)),
             new_image_b64: new.map(|b| B64.encode(b)),
         };
     }
 
-    // Binary detection: look for null bytes on either side.
-    let is_binary = old.is_some_and(|b| b.contains(&0)) || new.is_some_and(|b| b.contains(&0));
-    if is_binary {
+    let has_null_bytes = old.is_some_and(|b| b.contains(&0)) || new.is_some_and(|b| b.contains(&0));
+    let null_text_is_utf8 = !has_null_bytes
+        || old.map(std::str::from_utf8).transpose().is_ok()
+            && new.map(std::str::from_utf8).transpose().is_ok();
+    if !null_text_is_utf8 {
         let kind = match (old, new) {
             (None, _) => FileDiffKind::Added,
             (_, None) => FileDiffKind::Deleted,
@@ -3166,6 +3181,7 @@ fn blob_diff_bytes(old: Option<&[u8]>, new: Option<&[u8]>, path: &str) -> BlobDi
         return BlobDiff {
             kind,
             hunks: Vec::new(),
+            has_null_bytes,
             old_image_b64: None,
             new_image_b64: None,
         };
@@ -3181,6 +3197,7 @@ fn blob_diff_bytes(old: Option<&[u8]>, new: Option<&[u8]>, path: &str) -> BlobDi
     BlobDiff {
         kind,
         hunks: text_diff(&old_text, &new_text),
+        has_null_bytes,
         old_image_b64: None,
         new_image_b64: None,
     }
@@ -3221,6 +3238,19 @@ mod tests {
     use super::*;
     use std::process::Command;
     use tempfile::TempDir;
+
+    #[test]
+    fn nul_bytes_in_utf8_text_still_get_text_hunks() {
+        let diff = blob_diff_bytes(
+            Some(b"let a = 1;\n"),
+            Some(b"let a = 1;\0\n"),
+            "src/main.ts",
+        );
+
+        assert_eq!(diff.kind, FileDiffKind::Modified);
+        assert!(diff.has_null_bytes);
+        assert!(!diff.hunks.is_empty());
+    }
 
     /// Run `git` in `dir`, asserting success. System git is permitted for
     /// test-fixture setup only (ADR-0003).

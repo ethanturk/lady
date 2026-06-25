@@ -4,9 +4,9 @@ A fast, friendly cross-platform **Git client** built in Rust — Fork-style dail
 workflow with GitKraken-style AI. Native desktop app via [Tauri](https://tauri.app)
 (Rust core + SolidJS WebView UI).
 
-**Status:** GA — **v1.3.0**. Core Parity + Fast-follow + AI, now signed,
-auto-updating, accessible (WCAG AA), and performance-budgeted across macOS,
-Windows, and Linux. See [CHANGELOG.md](CHANGELOG.md).
+**Status:** active pre-GA build — current app/UI release **v0.0.10**. The docs
+and checklist track the Core Parity, Fast-follow, AI, and GA roadmap. See
+[CHANGELOG.md](CHANGELOG.md).
 
 ## Features
 

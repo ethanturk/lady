@@ -42,7 +42,7 @@ function hunkToPatch(path: string, h: DiffHunk): string {
 }
 
 /** Map a file extension to a highlight.js language id (best-effort). */
-function langFromPath(path: string): string | undefined {
+export function langFromPath(path: string): string | undefined {
   const ext = path.split(".").pop()?.toLowerCase() ?? "";
   const map: Record<string, string> = {
     rs: "rust",
@@ -70,11 +70,11 @@ function langFromPath(path: string): string | undefined {
   return lang && hljs.getLanguage(lang) ? lang : undefined;
 }
 
-const escapeHtml = (s: string) =>
+export const escapeHtml = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 /** Highlighted HTML for one line of code (escaped fallback when no language). */
-function highlight(content: string, lang: string | undefined): string {
+export function highlight(content: string, lang: string | undefined): string {
   if (!content) return "&nbsp;";
   if (!lang) return escapeHtml(content);
   try {
@@ -360,6 +360,110 @@ const HunkBlock: Component<{
   );
 };
 
+/** One side's cell for a single split row (no per-cell scroller — the whole
+ * column scrolls as one). `nl` is undefined for the blank side of an add/del. */
+const SplitHalfCell: Component<{ nl: NumberedLine | undefined; side: "old" | "new"; lang: string | undefined }> = (props) => {
+  const kind = () => props.nl?.line.kind;
+  const sign = () => (kind() === "Added" ? "+" : kind() === "Deleted" ? "-" : kind() ? " " : "");
+  const bg = () => (props.nl ? rowBgFor(kind()!) : "var(--diffgut)");
+  return (
+    <div style={{ display: "flex", "min-height": "21px", background: bg() }}>
+      <Gutter n={props.nl ? (props.side === "old" ? props.nl.oldNo : props.nl.newNo) : null} bg={props.nl ? gutBgFor(kind()!) : "var(--diffgut)"} />
+      <span style={{ width: "18px", "flex-shrink": "0", "text-align": "center", color: codeColorFor(kind() ?? "Context"), "font-family": "ui-monospace, monospace", "font-size": "12px", "line-height": "21px", position: "sticky", left: "46px", "z-index": "1", background: bg() }}>{sign()}</span>
+      <span style={{ ...codeStyle(false), color: codeColorFor(kind() ?? "Context") }} innerHTML={props.nl ? highlight(props.nl.line.content, props.lang) : "&nbsp;"} />
+    </div>
+  );
+};
+
+/** A split hunk-header bar for one column. The colored bar spans the full
+ * (scrolled) width; its content is pinned to the left so the @@ range / action
+ * buttons stay visible while the column scrolls horizontally. */
+const SplitHeaderBar: Component<{ children?: JSX.Element }> = (props) => (
+  <div style={{ "min-width": "100%", height: "25px", display: "flex", "align-items": "center", background: "var(--hunk-bg)", color: "var(--hunk-tx)", "border-top": "1px solid var(--bd)" }}>
+    <div style={{ position: "sticky", left: "0", display: "flex", "align-items": "center", gap: "0.4rem", padding: "0 10px", "font-family": "ui-monospace, monospace", "font-size": "12px", "white-space": "nowrap" }}>
+      {props.children}
+    </div>
+  </div>
+);
+
+/**
+ * Split (side-by-side) diff for a whole file: two independently-scrolling
+ * columns (old | new), each a single horizontal scroller spanning every hunk —
+ * so there is exactly one scrollbar per side, not one per hunk/row. Hunk headers
+ * are split across the columns (range on the left, action buttons on the right)
+ * at a fixed height so the two columns stay vertically aligned. Used only when
+ * line-wrapping is off; with wrap on, the per-hunk paired {@link HunkSplit} keeps
+ * wrapped rows aligned and needs no horizontal scroll.
+ */
+const FileSplit: Component<{
+  file: DisplayFileDiff;
+  lang: string | undefined;
+  hunkActionLabel?: string;
+  onHunkAction?: (path: string, hunkIndex: number) => void;
+  onDiscardHunk?: (path: string, hunkIndex: number) => void;
+  onExplainHunk?: (path: string, patch: string) => void;
+}> = (props) => {
+  const hunkRows = createMemo(() =>
+    props.file.hunks.map((hunk) => ({ hunk, rows: splitRows(numberLines(hunk)) })),
+  );
+  const colStyle: JSX.CSSProperties = { "overflow-x": "auto", flex: "1", "min-width": "0" };
+  const sizerStyle: JSX.CSSProperties = { width: "max-content", "min-width": "100%" };
+  return (
+    <div style={{ display: "flex" }}>
+      {/* OLD side */}
+      <div style={{ ...colStyle, "border-right": "1px solid var(--bd)" }}>
+        <div style={sizerStyle}>
+          <For each={hunkRows()}>
+            {(hr) => (
+              <>
+                <SplitHeaderBar>
+                  @@ -{hr.hunk.old_start},{hr.hunk.old_lines} +{hr.hunk.new_start},{hr.hunk.new_lines} @@
+                </SplitHeaderBar>
+                <For each={hr.rows}>{(row) => <SplitHalfCell nl={row.left} side="old" lang={props.lang} />}</For>
+              </>
+            )}
+          </For>
+        </div>
+      </div>
+      {/* NEW side */}
+      <div style={colStyle}>
+        <div style={sizerStyle}>
+          <For each={hunkRows()}>
+            {(hr, hi) => (
+              <>
+                <SplitHeaderBar>
+                  <Show when={props.onHunkAction}>
+                    <button style={actionBtn} onClick={() => props.onHunkAction!(props.file.path, hi())}>
+                      {props.hunkActionLabel ?? "Stage hunk"}
+                    </button>
+                  </Show>
+                  <Show when={props.onDiscardHunk}>
+                    <button
+                      style={actionBtn}
+                      onClick={() => {
+                        if (!confirm("Discard this hunk? This cannot be undone.")) return;
+                        props.onDiscardHunk!(props.file.path, hi());
+                      }}
+                    >
+                      Discard hunk
+                    </button>
+                  </Show>
+                  <Show when={props.onExplainHunk}>
+                    <button style={actionBtn} title="Explain this hunk with AI" onClick={() => props.onExplainHunk!(props.file.path, hunkToPatch(props.file.path, hr.hunk))}>
+                      Explain changes
+                    </button>
+                  </Show>
+                </SplitHeaderBar>
+                <For each={hr.rows}>{(row) => <SplitHalfCell nl={row.right} side="new" lang={props.lang} />}</For>
+              </>
+            )}
+          </For>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const FileBlock: Component<{
   file: DisplayFileDiff;
   mode: Mode;
@@ -442,24 +546,45 @@ const FileBlock: Component<{
         <Show when={props.file.kind === "Binary"}>
           <div style={{ padding: "0.6rem", color: "var(--tx3)", "font-size": "0.8rem" }}>Binary file — no text diff.</div>
         </Show>
+        <Show when={props.file.has_null_bytes && props.file.kind !== "Binary" && props.file.kind !== "Image"}>
+          <div style={{ padding: "0.5rem 0.6rem", color: "var(--warning)", "background-color": "var(--warning-bg)", border: "1px solid var(--warning-border)", "font-size": "0.8rem" }}>
+            Contains NUL bytes; showing text diff because file content is valid UTF-8.
+          </div>
+        </Show>
         <Show when={props.file.hunks.length > 0}>
-          <For each={props.file.hunks}>
-            {(hunk, hunkIndex) => (
-              <HunkBlock
-                path={props.file.path}
-                hunk={hunk}
-                hunkIndex={hunkIndex()}
-                mode={props.mode}
-                lang={lang()}
-                hunkActionLabel={props.hunkActionLabel}
-                onHunkAction={props.onHunkAction}
-                onStageLines={props.onStageLines}
-                onDiscardLines={props.onDiscardLines}
-                onDiscardHunk={props.onDiscardHunk}
-                onExplainHunk={props.onExplainHunk}
-              />
-            )}
-          </For>
+          {/* Split + no-wrap renders the whole file as two columns with one
+              scrollbar per side; every other case keeps the per-hunk blocks. */}
+          <Show
+            when={props.mode === "split" && !wrapDiff()}
+            fallback={
+              <For each={props.file.hunks}>
+                {(hunk, hunkIndex) => (
+                  <HunkBlock
+                    path={props.file.path}
+                    hunk={hunk}
+                    hunkIndex={hunkIndex()}
+                    mode={props.mode}
+                    lang={lang()}
+                    hunkActionLabel={props.hunkActionLabel}
+                    onHunkAction={props.onHunkAction}
+                    onStageLines={props.onStageLines}
+                    onDiscardLines={props.onDiscardLines}
+                    onDiscardHunk={props.onDiscardHunk}
+                    onExplainHunk={props.onExplainHunk}
+                  />
+                )}
+              </For>
+            }
+          >
+            <FileSplit
+              file={props.file}
+              lang={lang()}
+              hunkActionLabel={props.hunkActionLabel}
+              onHunkAction={props.onHunkAction}
+              onDiscardHunk={props.onDiscardHunk}
+              onExplainHunk={props.onExplainHunk}
+            />
+          </Show>
         </Show>
       </Show>
     </div>

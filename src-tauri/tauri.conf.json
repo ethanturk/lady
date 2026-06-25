@@ -21,7 +21,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: http://asset.localhost https:; connect-src 'self' ipc: http://ipc.localhost http://localhost:* http://127.0.0.1:* https://github.com https://api.github.com https://gitlab.com https://api.bitbucket.org https://dev.azure.com https://*.openai.com https://api.anthropic.com https://generativelanguage.googleapis.com https://api.mistral.ai; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     }
   },
   "bundle": {

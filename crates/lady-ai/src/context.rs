@@ -282,6 +282,7 @@ mod tests {
                 new_lines: n as u32,
                 lines,
             }],
+            has_null_bytes: false,
             old_image_b64: None,
             new_image_b64: None,
         }

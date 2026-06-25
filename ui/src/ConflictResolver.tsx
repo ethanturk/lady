@@ -1,53 +1,74 @@
-import { createEffect, createSignal, For, Show } from "solid-js";
-import type { Component } from "solid-js";
+import { createEffect, createMemo, createSignal, onMount, For, Show } from "solid-js";
+import type { Component, JSX } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { cancelAi, isConsentError, runAiStream } from "./ai";
-import { isNarrow } from "./prefs";
+import { conflictCombinedHeight, hideResizers, isNarrow, setConflictCombinedHeight } from "./prefs";
 import type {
   ConflictRegion,
-  ConflictSegment,
-  ConflictSides,
   ConflictState,
   ParsedConflict,
   RebaseOutcome,
   RepoId,
 } from "./commands";
 
-/** One conflict region's working resolution: which side, and the edited text. */
+type Side = "theirs" | "ours";
+
+/**
+ * One conflict region's working resolution: the chosen sides in the order the
+ * user checked them (so "both" concatenates in click order, not a fixed
+ * theirs→ours), plus the editable assembled text.
+ */
 interface RegionState {
-  choice: "ours" | "theirs" | "both" | null;
+  sides: Side[];
   text: string;
 }
 
-const OURS_BG = "var(--diff-add-bg)";
-const THEIRS_BG = "var(--selection)";
-const BASE_BG = "var(--surface-2)";
+/** A flattened render row: a shared context line, or a whole conflict hunk. */
+type Row =
+  | { kind: "ctx"; theirsNo: number; oursNo: number; text: string }
+  | { kind: "conflict"; ri: number; region: ConflictRegion; theirsStart: number; oursStart: number };
 
-const pane = {
-  flex: "1",
-  "min-width": "0",
-  overflow: "auto",
-  "font-family": "monospace",
+const ADD_BG = "var(--diff-add-bg)";
+const DEL_BG = "var(--diff-del-bg)";
+// Combined-pane line tints by origin, matching the Theirs/Ours checkbox colors.
+const TINT_THEIRS = "color-mix(in srgb, var(--info) 16%, transparent)";
+const TINT_OURS = "color-mix(in srgb, var(--success) 16%, transparent)";
+
+const cell: JSX.CSSProperties = {
+  "font-family": "ui-monospace, SFMono-Regular, Menlo, monospace",
   "font-size": "0.78rem",
-  "white-space": "pre-wrap" as const,
-  padding: "0.4rem 0.6rem",
+  "line-height": "1.55",
+  "white-space": "pre",
+  overflow: "hidden",
+  "text-overflow": "clip",
+  padding: "0 0.5rem",
 };
 
-const sideText = (s: string | null) => (s == null ? "(absent)" : s);
+const gutterCell: JSX.CSSProperties = {
+  ...cell,
+  "text-align": "right",
+  color: "var(--fg-muted)",
+  "user-select": "none",
+  background: "var(--surface-2)",
+};
 
 /** Join the chosen lines of a region for an initial editable resolution. */
-function regionInitial(region: ConflictRegion, choice: RegionState["choice"]): string {
-  if (choice === "ours") return region.ours.join("\n");
-  if (choice === "theirs") return region.theirs.join("\n");
-  if (choice === "both") return [...region.ours, ...region.theirs].join("\n");
-  return "";
+function sideLines(region: ConflictRegion, side: Side): string[] {
+  return side === "theirs" ? region.theirs : region.ours;
+}
+
+/** Assemble a region's text from the chosen sides, in the given order. */
+function buildSideText(region: ConflictRegion, sides: Side[]): string {
+  return sides.flatMap((s) => sideLines(region, s)).join("\n");
 }
 
 /**
- * 3-pane merge conflict resolver (PH3-002). Walks the repo's conflicted files
- * one at a time: base | ours | theirs read-only panes plus an editable,
- * per-region result. Saving writes the resolution and marks the file resolved
- * (PH3-001 commands), then advances. Completing all files calls `onDone`.
+ * 2-pane merge conflict resolver (PH3-002). Walks the repo's conflicted files
+ * one at a time. The file is rendered as a single line-numbered grid: shared
+ * context lines plus, per conflict, a Theirs | Ours hunk you pick a side of via
+ * checkboxes (or edit by hand). Saving writes the resolution and marks the file
+ * resolved (PH3-001 commands), then advances. Completing all files calls
+ * `onDone`.
  */
 const ConflictResolver: Component<{
   repoId: RepoId;
@@ -58,9 +79,13 @@ const ConflictResolver: Component<{
 }> = (props) => {
   const [paths, setPaths] = createSignal<string[]>([]);
   const [idx, setIdx] = createSignal(0);
-  const [sides, setSides] = createSignal<ConflictSides>({ base: null, ours: null, theirs: null });
   const [parsed, setParsed] = createSignal<ParsedConflict | null>(null);
   const [regions, setRegions] = createSignal<RegionState[]>([]);
+  const [editing, setEditing] = createSignal<number[]>([]);
+  const [activeConflict, setActiveConflict] = createSignal(0);
+  // Combined result: by default derived live from the per-region picks; once the
+  // user edits the combined pane directly, that text takes over (override).
+  const [combinedOverride, setCombinedOverride] = createSignal<string | null>(null);
   const [err, setErr] = createSignal<string | null>(null);
   const [busy, setBusy] = createSignal(false);
   // AI suggestion (PH5-009) — review-gated; never written without an explicit
@@ -68,6 +93,106 @@ const ConflictResolver: Component<{
   const [aiSuggestion, setAiSuggestion] = createSignal<string | null>(null);
   const [aiBusy, setAiBusy] = createSignal(false);
   const [aiReq, setAiReq] = createSignal<string | null>(null);
+
+  let scrollHost: HTMLDivElement | undefined;
+  let rootEl: HTMLDivElement | undefined;
+  let combinedTa: HTMLTextAreaElement | undefined;
+  let combinedGutter: HTMLDivElement | undefined;
+  let combinedHl: HTMLDivElement | undefined;
+  // Identifies the file currently parsed/rendered. Background refreshes that
+  // re-emit the same path must NOT reparse (would drop edits) or re-jump.
+  let loadedKey: string | null = null;
+
+  // Resizable panes: Theirs/Ours width split (fraction for Theirs) and the
+  // Combined pane height (px). hostW tracks the editor width so the drag handle
+  // can sit on the column boundary.
+  const [theirsRatio, setTheirsRatio] = createSignal(0.5);
+  // Combined pane height: persisted px, or 1/3 of the view computed on mount
+  // when unset (pref 0). Dragging persists the new height.
+  const [combinedHeight, setCombinedHeightLocal] = createSignal(conflictCombinedHeight() || 176);
+  const setCombinedHeight = (px: number) => {
+    setCombinedHeightLocal(px);
+    setConflictCombinedHeight(px);
+  };
+  const [hostW, setHostW] = createSignal(0);
+  const gutterRem = () => (isNarrow() ? 2.6 : 3.6);
+  const gutterPx = () => gutterRem() * (parseFloat(getComputedStyle(document.documentElement).fontSize) || 16);
+  const syncHostW = () => setHostW(scrollHost?.clientWidth ?? 0);
+  // Resting x of the column drag handle (gutter + Theirs share of the text area).
+  const handleLeft = () => {
+    const w = hostW();
+    if (!w) return 0;
+    const g = gutterPx();
+    return g + theirsRatio() * Math.max(1, w - 2 * g);
+  };
+  onMount(() => {
+    syncHostW();
+    window.addEventListener("resize", syncHostW);
+    // Default the Combined pane to 1/3 of the view if the user hasn't set it.
+    if (!conflictCombinedHeight()) {
+      const h = rootEl?.clientHeight ?? 0;
+      if (h > 0) setCombinedHeightLocal(Math.round(h / 3));
+    }
+  });
+
+  const startColDrag = (e: PointerEvent) => {
+    e.preventDefault();
+    const host = scrollHost;
+    if (!host) return;
+    const rect = host.getBoundingClientRect();
+    setHostW(rect.width);
+    const g = gutterPx();
+    const tt = Math.max(1, rect.width - 2 * g);
+    const target = e.currentTarget as HTMLElement;
+    target.setPointerCapture(e.pointerId);
+    const move = (ev: PointerEvent) => {
+      const r = (ev.clientX - rect.left - g) / tt;
+      setTheirsRatio(Math.max(0.15, Math.min(0.85, r)));
+    };
+    const up = (ev: PointerEvent) => {
+      target.releasePointerCapture(ev.pointerId);
+      target.removeEventListener("pointermove", move);
+      target.removeEventListener("pointerup", up);
+    };
+    target.addEventListener("pointermove", move);
+    target.addEventListener("pointerup", up);
+  };
+
+  const startHeightDrag = (e: PointerEvent) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = combinedHeight();
+    const max = (rootEl?.clientHeight ?? window.innerHeight) - 200;
+    const target = e.currentTarget as HTMLElement;
+    target.setPointerCapture(e.pointerId);
+    const move = (ev: PointerEvent) => {
+      // Drag up grows Combined / shrinks the editor; clamp both.
+      const next = startH + (startY - ev.clientY);
+      setCombinedHeight(Math.max(72, Math.min(next, Math.max(120, max))));
+    };
+    const up = (ev: PointerEvent) => {
+      target.releasePointerCapture(ev.pointerId);
+      target.removeEventListener("pointermove", move);
+      target.removeEventListener("pointerup", up);
+    };
+    target.addEventListener("pointermove", move);
+    target.addEventListener("pointerup", up);
+  };
+  // Scrollbar minimap: one mark per conflict at its fractional offset.
+  const [markers, setMarkers] = createSignal<{ ri: number; pct: number }[]>([]);
+  const measureMarkers = () => {
+    const host = scrollHost;
+    if (!host) {
+      setMarkers([]);
+      return;
+    }
+    const total = host.scrollHeight || 1;
+    const out: { ri: number; pct: number }[] = [];
+    host.querySelectorAll<HTMLElement>("[data-conflict]").forEach((el) => {
+      out.push({ ri: Number(el.dataset.conflict), pct: (el.offsetTop / total) * 100 });
+    });
+    setMarkers(out);
+  };
 
   const autoResolveAi = async () => {
     const path = current();
@@ -127,46 +252,112 @@ const ConflictResolver: Component<{
       .catch((e) => setErr(String(e)));
   });
 
-  // Load the current file's sides + parsed regions.
+  // Load the current file's parsed regions. Only (re)parses + jumps when the
+  // file actually changes; a background refresh re-emitting the same path is a
+  // no-op so the user's picks, manual edits, and scroll position survive.
   createEffect(() => {
     const path = current();
     const repo = props.repoId;
     if (!path) {
       setParsed(null);
+      loadedKey = null;
       return;
     }
+    const key = `${JSON.stringify(repo)}\u0000${path}`;
+    if (key === loadedKey) return;
     setErr(null);
-    invoke<ConflictSides>("conflict_sides", { repo, path }).then(setSides).catch((e) => setErr(String(e)));
     invoke<ParsedConflict>("parse_conflict", { repo, path })
       .then((p) => {
+        loadedKey = key;
+        setEditing([]);
+        setActiveConflict(0);
+        setCombinedOverride(null);
         setParsed(p);
-        // One RegionState per conflict segment, defaulting to "ours".
+        // One RegionState per conflict segment — nothing chosen yet, so the
+        // combined result starts empty until the user picks a side.
         const rs: RegionState[] = [];
         for (const seg of p.segments) {
-          if (seg.kind === "Conflict") rs.push({ choice: "ours", text: regionInitial(seg.value, "ours") });
+          if (seg.kind === "Conflict") rs.push({ sides: [], text: "" });
         }
         setRegions(rs);
+        // After the grid renders, mark the scrollbar and jump to conflict #1.
+        requestAnimationFrame(() => {
+          measureMarkers();
+          syncHostW();
+          gotoConflict(0, false);
+        });
       })
       .catch((e) => setErr(String(e)));
   });
 
-  // Conflict-region positions among segments, for region indexing + minimap.
-  const conflictSegments = (): { seg: ConflictSegment; regionIndex: number }[] => {
-    const out: { seg: ConflictSegment; regionIndex: number }[] = [];
-    let r = 0;
-    for (const seg of parsed()?.segments ?? []) {
-      out.push({ seg, regionIndex: seg.kind === "Conflict" ? r++ : -1 });
+  // Re-measure scrollbar marks when layout-affecting state changes.
+  createEffect(() => {
+    parsed();
+    editing();
+    isNarrow();
+    requestAnimationFrame(measureMarkers);
+  });
+
+  // Flatten segments into line-numbered rows (memoized — only rebuilds when the
+  // parse changes, so toggling a side just recolors existing cells).
+  const rows = createMemo<Row[]>(() => {
+    const out: Row[] = [];
+    const p = parsed();
+    if (!p) return out;
+    let theirsNo = 1;
+    let oursNo = 1;
+    let ri = 0;
+    for (const seg of p.segments) {
+      if (seg.kind === "Context") {
+        for (const l of seg.value) out.push({ kind: "ctx", theirsNo: theirsNo++, oursNo: oursNo++, text: l });
+      } else {
+        const region = seg.value;
+        out.push({ kind: "conflict", ri, region, theirsStart: theirsNo, oursStart: oursNo });
+        theirsNo += region.theirs.length;
+        oursNo += region.ours.length;
+        ri++;
+      }
     }
     return out;
+  });
+
+  const conflictCount = () => regions().length;
+
+  const setRegion = (i: number, patch: Partial<RegionState>) => {
+    // A pick/edit re-derives the combined pane (discards any manual override).
+    setCombinedOverride(null);
+    setRegions((prev) => prev.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   };
 
-  const setRegion = (i: number, patch: Partial<RegionState>) =>
-    setRegions((prev) => prev.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const theirsChecked = (ri: number) => regions()[ri]?.sides.includes("theirs") ?? false;
+  const oursChecked = (ri: number) => regions()[ri]?.sides.includes("ours") ?? false;
 
-  const choose = (i: number, choice: RegionState["choice"], region: ConflictRegion) =>
-    setRegion(i, { choice, text: regionInitial(region, choice) });
+  // Toggle a side's checkbox. Checking appends (preserving click order so "both"
+  // concatenates in the order picked); unchecking removes. Text is rebuilt from
+  // the resulting ordered sides.
+  const toggleSide = (ri: number, side: Side, region: ConflictRegion) => {
+    const prev = regions()[ri]?.sides ?? [];
+    const sides = prev.includes(side) ? prev.filter((s) => s !== side) : [...prev, side];
+    setRegion(ri, { sides, text: buildSideText(region, sides) });
+    setActiveConflict(ri);
+    scrollCombinedToRegion(ri);
+  };
 
-  const allChosen = () => regions().every((r) => r.choice !== null);
+  const isEditing = (ri: number) => editing().includes(ri);
+  const toggleEdit = (ri: number) =>
+    setEditing((e) => (e.includes(ri) ? e.filter((x) => x !== ri) : [...e, ri]));
+
+  const gotoConflict = (n: number, smooth = true) => {
+    const total = conflictCount();
+    if (!total) return;
+    const t = ((n % total) + total) % total;
+    setActiveConflict(t);
+    scrollHost
+      ?.querySelector(`[data-conflict="${t}"]`)
+      ?.scrollIntoView({ block: "center", behavior: smooth ? "smooth" : "auto" });
+  };
+
+  const allChosen = () => regions().every((r) => r.sides.length > 0);
 
   /** Assemble the resolved file from context lines + per-region edited text. */
   const buildResolution = (): string => {
@@ -183,6 +374,99 @@ const ConflictResolver: Component<{
     }
     return lines.length ? lines.join("\n") + "\n" : "";
   };
+
+  // Live combined output (memoized) and the effective text to save: a manual
+  // override if present, else the picks-derived assembly.
+  const combinedAuto = createMemo(buildResolution);
+  const combined = () => combinedOverride() ?? combinedAuto();
+  // Per-line origin model for the combined pane's color overlay. A region whose
+  // text is unedited maps to its chosen sides (in order); a hand-edited region
+  // (text diverged from the assembled sides) is shown neutral since per-line
+  // origin is no longer known. When the whole pane is overridden, all neutral.
+  type CLine = { text: string; kind: "ctx" | Side };
+  const combinedModel = createMemo<CLine[]>(() => {
+    const out: CLine[] = [];
+    if (combinedOverride() !== null) {
+      for (const l of combinedOverride()!.replace(/\n$/, "").split("\n")) out.push({ text: l, kind: "ctx" });
+      return out;
+    }
+    let r = 0;
+    for (const seg of parsed()?.segments ?? []) {
+      if (seg.kind === "Context") {
+        for (const l of seg.value) out.push({ text: l, kind: "ctx" });
+      } else {
+        const st = regions()[r];
+        if (st) {
+          if (st.text === buildSideText(seg.value, st.sides)) {
+            for (const side of st.sides) for (const l of sideLines(seg.value, side)) out.push({ text: l, kind: side });
+          } else if (st.text.length > 0) {
+            for (const l of st.text.split("\n")) out.push({ text: l, kind: "ctx" });
+          }
+        }
+        r++;
+      }
+    }
+    return out;
+  });
+  // Line-number gutter for the combined pane.
+  const combinedLineNos = createMemo(() => {
+    const n = combined().split("\n").length;
+    let s = "";
+    for (let i = 1; i <= n; i++) s += (i > 1 ? "\n" : "") + i;
+    return s;
+  });
+  // Keep the gutter and color overlay aligned with the textarea on scroll.
+  const syncCombinedGutter = () => {
+    const ta = combinedTa;
+    if (!ta) return;
+    if (combinedGutter) combinedGutter.scrollTop = ta.scrollTop;
+    if (combinedHl) {
+      combinedHl.scrollTop = ta.scrollTop;
+      combinedHl.scrollLeft = ta.scrollLeft;
+    }
+  };
+  // The 0-based line in the combined output where conflict `ri` begins (mirrors
+  // buildResolution's assembly — empty picks contribute no lines).
+  const combinedLineStart = (ri: number) => {
+    let line = 0;
+    let r = 0;
+    for (const seg of parsed()?.segments ?? []) {
+      if (seg.kind === "Context") {
+        line += seg.value.length;
+      } else {
+        if (r === ri) return line;
+        const text = regions()[r]?.text ?? "";
+        if (text.length > 0) line += text.split("\n").length;
+        r++;
+      }
+    }
+    return line;
+  };
+  // After a pick changes, scroll the combined pane to that conflict's section.
+  const scrollCombinedToRegion = (ri: number) => {
+    requestAnimationFrame(() => {
+      const ta = combinedTa;
+      const hl = combinedHl;
+      if (!ta || !hl) return;
+      const start = combinedLineStart(ri);
+      // Use the overlay's real per-line layout (exact px) rather than parsing
+      // line-height, which WKWebView reports unitless for `line-height: 1.5`.
+      const child = hl.children[start] as HTMLElement | undefined;
+      if (!child) return;
+      const lineH = child.offsetHeight || 18;
+      // offsetTop is relative to the overlay's padding box, matching the
+      // textarea's; leave one line of context above the conflict.
+      ta.scrollTop = Math.max(0, child.offsetTop - lineH);
+      syncCombinedGutter();
+    });
+  };
+  // True if the combined text still has git conflict markers (only possible via
+  // a manual override that pasted/kept them).
+  const hasConflictMarkers = () => /^(<{7}|={7}|>{7})/m.test(combined());
+  // Save is blocked while any conflict is unresolved: every region must have a
+  // side picked (or a marker-free manual override).
+  const canSave = () =>
+    !hasConflictMarkers() && (combinedOverride() !== null ? true : allChosen());
 
   const advance = () => {
     setBusy(true);
@@ -207,7 +491,7 @@ const ConflictResolver: Component<{
     if (!path) return;
     setErr(null);
     setBusy(true);
-    const content = buildResolution();
+    const content = combined();
     invoke("write_resolution", { repo: props.repoId, path, content })
       .then(() => invoke("mark_resolved", { repo: props.repoId, path }))
       .then(advance)
@@ -267,7 +551,27 @@ const ConflictResolver: Component<{
       });
   };
 
-  const headerBtn = {
+  // Human label for the in-progress operation (Merge/Rebase/CherryPick/Revert).
+  const opLabel = () => {
+    switch (props.conflictState) {
+      case "Rebase":
+        return "rebase";
+      case "CherryPick":
+        return "cherry-pick";
+      case "Revert":
+        return "revert";
+      default:
+        return "merge";
+    }
+  };
+  // Abandon the whole operation (git --abort), restoring the pre-op state.
+  const abandonOp = () => {
+    if (busy()) return;
+    if (!confirm(`Abandon the ${opLabel()} and discard all in-progress conflict resolution? This restores the state from before the ${opLabel()}.`)) return;
+    abort();
+  };
+
+  const headerBtn: JSX.CSSProperties = {
     border: "1px solid var(--border)",
     background: "var(--surface)",
     "border-radius": "3px",
@@ -276,8 +580,149 @@ const ConflictResolver: Component<{
     padding: "0.2rem 0.5rem",
   };
 
+  const navBtn: JSX.CSSProperties = {
+    ...headerBtn,
+    padding: "0.2rem 0.45rem",
+    "line-height": 1,
+    "font-weight": 700,
+  };
+
+  const gridCols = () => {
+    const g = `${gutterRem()}rem`;
+    return `${g} minmax(0,${theirsRatio()}fr) ${g} minmax(0,${1 - theirsRatio()}fr)`;
+  };
+
+  /** A small inline checkbox + label used in a conflict's hunk header. */
+  const sideCheckbox = (label: string, checked: () => boolean, color: string, onClick: () => void) => (
+    <button
+      onClick={onClick}
+      style={{
+        display: "flex",
+        "align-items": "center",
+        gap: "0.3rem",
+        border: "none",
+        background: "transparent",
+        cursor: "pointer",
+        "font-size": "0.72rem",
+        "font-weight": 600,
+        color: "var(--fg)",
+        padding: "0",
+      }}
+    >
+      <span
+        style={{
+          width: "0.9rem",
+          height: "0.9rem",
+          "border-radius": "3px",
+          border: `1px solid ${checked() ? color : "var(--border)"}`,
+          background: checked() ? color : "transparent",
+          color: "var(--on-accent)",
+          display: "inline-flex",
+          "align-items": "center",
+          "justify-content": "center",
+          "font-size": "0.65rem",
+          "line-height": 1,
+        }}
+      >
+        {checked() ? "✓" : ""}
+      </span>
+      {label}
+    </button>
+  );
+
+  /** Render one conflict hunk as grid rows (header span + per-line cells). */
+  const conflictRows = (row: Extract<Row, { kind: "conflict" }>) => {
+    const { ri, region } = row;
+    const maxLen = Math.max(region.theirs.length, region.ours.length);
+    const lineIdx = Array.from({ length: maxLen }, (_, i) => i);
+    return (
+      <>
+        {/* Hunk header: spans both panes; pick a side or edit by hand. */}
+        <div
+          data-conflict={ri}
+          style={{
+            "grid-column": "1 / -1",
+            display: "flex",
+            "align-items": "center",
+            gap: "0.75rem",
+            padding: "0.25rem 0.6rem",
+            background: "var(--surface-2)",
+            "border-top": "1px solid var(--warning-border)",
+            "border-bottom": "1px solid var(--warning-border)",
+            outline: activeConflict() === ri ? "2px solid var(--accent)" : "none",
+            "outline-offset": "-2px",
+          }}
+        >
+          <span style={{ "font-size": "0.7rem", color: "var(--fg-muted)", "font-weight": 700 }}>
+            Conflict #{ri + 1}
+          </span>
+          {sideCheckbox("Theirs", () => theirsChecked(ri), "var(--info)", () => toggleSide(ri, "theirs", region))}
+          {sideCheckbox("Ours", () => oursChecked(ri), "var(--success)", () => toggleSide(ri, "ours", region))}
+          <span style={{ flex: "1" }} />
+          <button
+            onClick={() => toggleEdit(ri)}
+            style={{
+              ...headerBtn,
+              "font-size": "0.7rem",
+              padding: "0.1rem 0.4rem",
+              color: isEditing(ri) ? "var(--accent)" : "var(--fg-muted)",
+              "border-color": isEditing(ri) ? "var(--accent)" : "var(--border)",
+            }}
+          >
+            {isEditing(ri) ? "Done editing" : "Edit"}
+          </button>
+        </div>
+
+        <Show
+          when={!isEditing(ri)}
+          fallback={
+            <textarea
+              value={regions()[ri]?.text ?? ""}
+              onInput={(e) => setRegion(ri, { text: e.currentTarget.value })}
+              spellcheck={false}
+              style={{
+                "grid-column": "1 / -1",
+                width: "100%",
+                "box-sizing": "border-box",
+                "font-family": "ui-monospace, SFMono-Regular, Menlo, monospace",
+                "font-size": "0.78rem",
+                "line-height": "1.55",
+                border: "none",
+                "border-bottom": "1px solid var(--warning-border)",
+                background: "var(--surface)",
+                color: "var(--fg)",
+                padding: "0.4rem 0.6rem",
+                "min-height": "4rem",
+                resize: "vertical",
+              }}
+            />
+          }
+        >
+          <For each={lineIdx}>
+            {(i) => (
+              <>
+                <div style={{ ...gutterCell, background: theirsChecked(ri) ? ADD_BG : DEL_BG }}>
+                  {i < region.theirs.length ? row.theirsStart + i : ""}
+                </div>
+                <div style={{ ...cell, background: theirsChecked(ri) ? ADD_BG : DEL_BG }}>
+                  {region.theirs[i] ?? ""}
+                </div>
+                <div style={{ ...gutterCell, background: oursChecked(ri) ? ADD_BG : DEL_BG }}>
+                  {i < region.ours.length ? row.oursStart + i : ""}
+                </div>
+                <div style={{ ...cell, background: oursChecked(ri) ? ADD_BG : DEL_BG }}>
+                  {region.ours[i] ?? ""}
+                </div>
+              </>
+            )}
+          </For>
+        </Show>
+      </>
+    );
+  };
+
   return (
-    <div style={{ height: "100%", display: "flex", "flex-direction": "column" }}>
+    <div ref={rootEl} style={{ height: "100%", display: "flex", "flex-direction": "column" }}>
       <Show
         when={paths().length > 0}
         fallback={
@@ -291,7 +736,7 @@ const ConflictResolver: Component<{
           </p>
         }
       >
-        {/* Header: progress + file + whole-file actions */}
+        {/* Header: progress + file + conflict nav + whole-file actions */}
         <div
           style={{
             display: "flex",
@@ -309,6 +754,19 @@ const ConflictResolver: Component<{
           <span style={{ "font-family": "monospace", "font-size": "0.8rem", "font-weight": 600 }}>
             {current()}
           </span>
+          <Show when={conflictCount() > 0}>
+            <div style={{ display: "flex", "align-items": "center", gap: "0.25rem" }}>
+              <button style={navBtn} disabled={busy()} title="Previous conflict" onClick={() => gotoConflict(activeConflict() - 1)}>
+                ↑
+              </button>
+              <span style={{ "font-size": "0.72rem", color: "var(--fg-muted)", "min-width": "2.5rem", "text-align": "center" }}>
+                {activeConflict() + 1}/{conflictCount()}
+              </span>
+              <button style={navBtn} disabled={busy()} title="Next conflict" onClick={() => gotoConflict(activeConflict() + 1)}>
+                ↓
+              </button>
+            </div>
+          </Show>
           <span style={{ flex: "1" }} />
           <button style={headerBtn} disabled={busy()} onClick={() => takeWholeFile("take_ours")}>
             Use ours
@@ -324,6 +782,7 @@ const ConflictResolver: Component<{
               const path = current();
               if (!path) return;
               setErr(null);
+              loadedKey = null; // force a reparse to pick up the tool's edits
               invoke("launch_mergetool", { repo: props.repoId, path })
                 .then(() => props.onChanged())
                 .catch((e) => setErr(String(e)));
@@ -340,12 +799,23 @@ const ConflictResolver: Component<{
             {aiBusy() ? "Resolving…" : "✨ Auto-resolve with AI"}
           </button>
           <button
-            style={{ ...headerBtn, background: allChosen() ? "var(--success)" : "var(--border)", color: allChosen() ? "var(--on-accent)" : "var(--fg-muted)" }}
-            disabled={busy() || !allChosen()}
+            style={{ ...headerBtn, background: canSave() ? "var(--success)" : "var(--border)", color: canSave() ? "var(--on-accent)" : "var(--fg-muted)" }}
+            disabled={busy() || !canSave()}
+            title={canSave() ? "Write this file's resolution and continue" : "Resolve every conflict in this file first"}
             onClick={saveResolution}
           >
             Save &amp; next
           </button>
+          <Show when={props.conflictState !== "None"}>
+            <button
+              style={{ ...headerBtn, color: "var(--danger)", "border-color": "var(--danger)", "margin-left": "0.4rem" }}
+              disabled={busy()}
+              title={`Abort the ${opLabel()} and discard all conflict resolution`}
+              onClick={abandonOp}
+            >
+              Abandon {opLabel()}
+            </button>
+          </Show>
         </div>
 
         {/* AI suggestion panel (review-gated) — edit then Apply, or Dismiss. */}
@@ -380,148 +850,222 @@ const ConflictResolver: Component<{
           <p style={{ color: "var(--error)", margin: "0.25rem 0.6rem", "font-size": "0.85rem" }}>{err()}</p>
         </Show>
 
-        {/* Three read-only panes: base | ours | theirs. On narrow they stack
-            vertically (bottom borders) and the strip scrolls. */}
-        <div
-          style={{
-            display: "flex",
-            "flex-direction": isNarrow() ? "column" : "row",
-            height: isNarrow() ? "auto" : "32%",
-            "max-height": isNarrow() ? "55%" : undefined,
-            overflow: isNarrow() ? "auto" : undefined,
-            "border-bottom": "1px solid var(--border)",
-            "flex-shrink": 0,
-          }}
-        >
-          <div style={{ ...pane, flex: isNarrow() ? "0 0 auto" : "1", "min-height": isNarrow() ? "5rem" : undefined, background: BASE_BG, "border-right": isNarrow() ? undefined : "1px solid var(--border)", "border-bottom": isNarrow() ? "1px solid var(--border)" : undefined }}>
-            <div style={{ color: "var(--fg-muted)", "font-weight": 700, "margin-bottom": "0.25rem" }}>BASE</div>
-            {sideText(sides().base)}
+        {/* Unified 2-pane editor: line-numbered Theirs | Ours, one scroll
+            container so the columns stay aligned and scroll together. */}
+        <div style={{ flex: "1", "min-height": "0", position: "relative", display: "flex" }}>
+        <div ref={scrollHost} style={{ flex: "1", "min-height": "0", overflow: "auto", position: "relative" }}>
+          {/* Sticky column headers. */}
+          <div
+            style={{
+              position: "sticky",
+              top: "0",
+              "z-index": 2,
+              display: "grid",
+              "grid-template-columns": gridCols(),
+              background: "var(--surface)",
+              "border-bottom": "1px solid var(--border)",
+            }}
+          >
+            <div style={gutterCell} />
+            <div style={{ ...cell, color: "var(--info)", "font-weight": 700, padding: "0.3rem 0.5rem" }}>Theirs</div>
+            <div style={gutterCell} />
+            <div style={{ ...cell, color: "var(--success)", "font-weight": 700, padding: "0.3rem 0.5rem" }}>Ours</div>
           </div>
-          <div style={{ ...pane, flex: isNarrow() ? "0 0 auto" : "1", "min-height": isNarrow() ? "5rem" : undefined, background: OURS_BG, "border-right": isNarrow() ? undefined : "1px solid var(--border)", "border-bottom": isNarrow() ? "1px solid var(--border)" : undefined }}>
-            <div style={{ color: "var(--success)", "font-weight": 700, "margin-bottom": "0.25rem" }}>OURS</div>
-            {sideText(sides().ours)}
-          </div>
-          <div style={{ ...pane, flex: isNarrow() ? "0 0 auto" : "1", "min-height": isNarrow() ? "5rem" : undefined, background: THEIRS_BG }}>
-            <div style={{ color: "var(--info)", "font-weight": 700, "margin-bottom": "0.25rem" }}>THEIRS</div>
-            {sideText(sides().theirs)}
+
+          <div style={{ display: "grid", "grid-template-columns": gridCols() }}>
+            <For each={rows()}>
+              {(row) =>
+                row.kind === "ctx" ? (
+                  <>
+                    <div style={gutterCell}>{row.theirsNo}</div>
+                    <div style={cell}>{row.text}</div>
+                    <div style={gutterCell}>{row.oursNo}</div>
+                    <div style={cell}>{row.text}</div>
+                  </>
+                ) : (
+                  conflictRows(row)
+                )
+              }
+            </For>
           </div>
         </div>
 
-        {/* Editable result: context lines + per-region choose/edit. A minimap
-            strip on the right marks each conflict region. */}
-        <div style={{ flex: "1", display: "flex", "min-height": "0" }}>
-          <div style={{ flex: "1", overflow: "auto", padding: "0.5rem 0.6rem" }}>
-            <div style={{ color: "var(--fg-muted)", "font-size": "0.75rem", "margin-bottom": "0.4rem" }}>
-              RESULT — choose a side per conflict, then edit if needed
-            </div>
-            <For each={conflictSegments()}>
-              {(item) => (
-                <Show
-                  when={item.seg.kind === "Conflict"}
-                  fallback={
-                    <pre
-                      style={{
-                        margin: 0,
-                        "font-family": "monospace",
-                        "font-size": "0.78rem",
-                        color: "var(--fg)",
-                        "white-space": "pre-wrap",
-                      }}
-                    >
-                      {(item.seg as { value: string[] }).value.join("\n")}
-                    </pre>
-                  }
-                >
-                  {(() => {
-                    const region = (item.seg as { value: ConflictRegion }).value;
-                    const ri = item.regionIndex;
-                    const choiceBtn = (c: RegionState["choice"], label: string, bg: string) => (
-                      <button
-                        onClick={() => choose(ri, c, region)}
-                        style={{
-                          border: "1px solid var(--border)",
-                          "border-radius": "3px",
-                          "font-size": "0.7rem",
-                          cursor: "pointer",
-                          padding: "0.1rem 0.4rem",
-                          background: regions()[ri]?.choice === c ? bg : "var(--surface)",
-                          "font-weight": regions()[ri]?.choice === c ? 700 : 400,
-                        }}
-                      >
-                        {label}
-                      </button>
-                    );
-                    return (
-                      <div
-                        style={{
-                          border: "1px solid var(--warning-border)",
-                          "border-radius": "4px",
-                          margin: "0.3rem 0",
-                          background: "var(--surface-2)",
-                        }}
-                      >
-                        <div style={{ display: "flex", gap: "0.3rem", padding: "0.25rem 0.4rem" }}>
-                          <span style={{ "font-size": "0.7rem", color: "var(--fg-muted)", flex: "1" }}>
-                            conflict #{ri + 1}
-                          </span>
-                          {choiceBtn("ours", "Ours", OURS_BG)}
-                          {choiceBtn("theirs", "Theirs", THEIRS_BG)}
-                          {choiceBtn("both", "Both", "var(--surface-2)")}
-                        </div>
-                        <textarea
-                          value={regions()[ri]?.text ?? ""}
-                          onInput={(e) => setRegion(ri, { text: e.currentTarget.value })}
-                          spellcheck={false}
-                          style={{
-                            width: "100%",
-                            "box-sizing": "border-box",
-                            "font-family": "monospace",
-                            "font-size": "0.78rem",
-                            border: "none",
-                            "border-top": "1px solid var(--warning-border)",
-                            background: "transparent",
-                            padding: "0.3rem 0.4rem",
-                            "min-height": "3.2rem",
-                            resize: "vertical",
-                          }}
-                        />
-                      </div>
-                    );
-                  })()}
-                </Show>
-              )}
-            </For>
-          </div>
-
-          {/* Minimap markers on the scrollbar edge (hidden on narrow). */}
-          <Show when={!isNarrow()}>
-          <div
-            style={{
-              width: "10px",
-              "flex-shrink": 0,
-              background: "var(--surface-2)",
-              "border-left": "1px solid var(--border)",
-              position: "relative",
-            }}
-            title="conflict markers"
-          >
-            <For each={regions()}>
-              {(r, i) => (
+        {/* Scrollbar conflict markers (red = unresolved hunk position). */}
+        <Show when={markers().length > 0}>
+          <div style={{ position: "absolute", top: "0", right: "0", bottom: "0", width: "10px", "pointer-events": "none" }}>
+            <For each={markers()}>
+              {(m) => (
                 <div
+                  title={`Conflict #${m.ri + 1}`}
+                  onClick={() => gotoConflict(m.ri)}
                   style={{
                     position: "absolute",
-                    left: "1px",
+                    top: `${m.pct}%`,
+                    right: "1px",
                     width: "8px",
-                    height: "6px",
-                    top: `${regions().length ? (i() / regions().length) * 100 : 0}%`,
-                    background: r.choice ? "var(--success)" : "var(--danger)",
+                    height: "5px",
                     "border-radius": "2px",
+                    background: activeConflict() === m.ri ? "var(--accent)" : "var(--danger)",
+                    "pointer-events": "auto",
+                    cursor: "pointer",
                   }}
                 />
               )}
             </For>
           </div>
+        </Show>
+
+        {/* Drag handle: resize the Theirs / Ours panes (col-resize). */}
+        <Show when={!hideResizers()}>
+          <div
+            onPointerDown={startColDrag}
+            title="Drag to resize the Theirs / Ours panes"
+            style={{
+              position: "absolute",
+              top: "0",
+              bottom: "0",
+              left: `${handleLeft()}px`,
+              width: "7px",
+              "margin-left": "-3px",
+              cursor: "col-resize",
+              "z-index": 3,
+              "touch-action": "none",
+            }}
+          />
+        </Show>
+        </div>
+
+        {/* Combined result — the file as it will be written. Live-derived from
+            the picks above; edit here for a final manual merge. Height is
+            drag-resizable via the handle on its top border. */}
+        <div
+          style={{
+            "flex-shrink": 0,
+            height: `${combinedHeight()}px`,
+            display: "flex",
+            "flex-direction": "column",
+            "border-top": "1px solid var(--border)",
+            background: "var(--surface-2)",
+            position: "relative",
+          }}
+        >
+          {/* Drag handle: resize the Combined pane (row-resize). */}
+          <Show when={!hideResizers()}>
+            <div
+              onPointerDown={startHeightDrag}
+              title="Drag to resize the Combined pane"
+              style={{
+                position: "absolute",
+                top: "0",
+                left: "0",
+                right: "0",
+                height: "7px",
+                "margin-top": "-3px",
+                cursor: "row-resize",
+                "z-index": 3,
+                "touch-action": "none",
+              }}
+            />
           </Show>
+          <div style={{ display: "flex", "align-items": "center", gap: "0.5rem", padding: "0.3rem 0.6rem" }}>
+            <span style={{ "font-size": "0.72rem", "font-weight": 700, "letter-spacing": "0.04em", color: "var(--fg-muted)" }}>
+              COMBINED RESULT
+            </span>
+            <Show when={combinedOverride() !== null}>
+              <span style={{ "font-size": "0.7rem", color: "var(--accent)" }}>· edited</span>
+            </Show>
+            <span style={{ flex: "1" }} />
+            <Show when={combinedOverride() !== null}>
+              <button
+                style={{ ...headerBtn, "font-size": "0.7rem", padding: "0.1rem 0.4rem" }}
+                title="Discard manual edits and rebuild from the picks above"
+                onClick={() => setCombinedOverride(null)}
+              >
+                ↻ Rebuild from picks
+              </button>
+            </Show>
+          </div>
+          <div style={{ flex: "1", "min-height": "0", display: "flex", "border-top": "1px solid var(--border)" }}>
+            {/* Line-number gutter, scroll-synced to the textarea. */}
+            <div
+              ref={combinedGutter}
+              aria-hidden="true"
+              style={{
+                "flex-shrink": 0,
+                overflow: "hidden",
+                "text-align": "right",
+                "user-select": "none",
+                "white-space": "pre",
+                "font-family": "ui-monospace, SFMono-Regular, Menlo, monospace",
+                "font-size": "0.78rem",
+                "line-height": "1.5",
+                color: "var(--fg-muted)",
+                background: "var(--surface-2)",
+                "border-right": "1px solid var(--border)",
+                padding: "0.4rem 0.4rem",
+              }}
+            >
+              {combinedLineNos()}
+            </div>
+            {/* Editor area: color overlay behind a transparent textarea so the
+                per-origin tints show through under the editable text. */}
+            <div style={{ position: "relative", flex: "1", "min-width": "0", background: "var(--surface)" }}>
+              <div
+                ref={combinedHl}
+                aria-hidden="true"
+                style={{
+                  position: "absolute",
+                  inset: "0",
+                  overflow: "hidden",
+                  "pointer-events": "none",
+                  "white-space": "pre",
+                  "font-family": "ui-monospace, SFMono-Regular, Menlo, monospace",
+                  "font-size": "0.78rem",
+                  "line-height": "1.5",
+                  padding: "0.4rem 0.6rem",
+                  color: "transparent",
+                }}
+              >
+                <For each={combinedModel()}>
+                  {(l) => (
+                    <div
+                      style={{
+                        background: l.kind === "theirs" ? TINT_THEIRS : l.kind === "ours" ? TINT_OURS : "transparent",
+                        "min-width": "100%",
+                        width: "max-content",
+                      }}
+                    >
+                      {l.text === "" ? " " : l.text}
+                    </div>
+                  )}
+                </For>
+              </div>
+              <textarea
+                ref={combinedTa}
+                value={combined()}
+                onInput={(e) => setCombinedOverride(e.currentTarget.value)}
+                onScroll={syncCombinedGutter}
+                spellcheck={false}
+                style={{
+                  position: "absolute",
+                  inset: "0",
+                  width: "100%",
+                  height: "100%",
+                  "box-sizing": "border-box",
+                  resize: "none",
+                  "font-family": "ui-monospace, SFMono-Regular, Menlo, monospace",
+                  "font-size": "0.78rem",
+                  "line-height": "1.5",
+                  border: "none",
+                  background: "transparent",
+                  color: "var(--fg)",
+                  padding: "0.4rem 0.6rem",
+                  "white-space": "pre",
+                  "overflow-wrap": "normal",
+                }}
+              />
+            </div>
+          </div>
         </div>
       </Show>
 
@@ -552,9 +1096,10 @@ const ConflictResolver: Component<{
           <button
             style={{ ...headerBtn, color: "var(--danger)", "border-color": "var(--danger)" }}
             disabled={busy()}
-            onClick={abort}
+            title={`Abort the ${opLabel()} and discard all conflict resolution`}
+            onClick={abandonOp}
           >
-            Abort
+            Abandon {opLabel()}
           </button>
         </div>
       </Show>

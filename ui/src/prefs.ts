@@ -84,8 +84,12 @@ const [sidebarWidth, setSidebarWidth] = widthPref("lady-sidebar-width", 248);
 const [changesColWidth, setChangesColWidth] = widthPref("lady-changes-col-width", 308);
 const [settingsWidth, setSettingsWidth] = widthPref("lady-settings-width", 640);
 const [commitDetailHeight, setCommitDetailHeight] = widthPref("lady-commit-detail-height", 340);
+// Conflict resolver's Combined pane height. 0 ⇒ unset (default to 1/3 on mount).
+const [conflictCombinedHeight, setConflictCombinedHeight] = widthPref("lady-conflict-combined-height", 0);
 
 export {
+  conflictCombinedHeight,
+  setConflictCombinedHeight,
   sidebarWidth,
   setSidebarWidth,
   changesColWidth,

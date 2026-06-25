@@ -170,6 +170,10 @@ pub struct FileDiff {
     pub kind: FileDiffKind,
     /// Text hunks; empty for binary and image diffs.
     pub hunks: Vec<DiffHunk>,
+    /// True when either side contains a NUL byte. Text hunks may still be shown
+    /// when the bytes are valid UTF-8.
+    #[serde(default)]
+    pub has_null_bytes: bool,
     /// Base64-encoded old-version image bytes (image diffs only).
     pub old_image_b64: Option<String>,
     /// Base64-encoded new-version image bytes (image diffs only).

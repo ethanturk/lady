@@ -10,8 +10,10 @@ title/description, changelog, stash notes) are **bring-your-own-key (BYOK)** wit
 
 - **BYOK keys** live in your **OS keychain** (service `Lady-AI`) — never on disk
   in plaintext, never in logs. Manage them in **Settings → AI**.
-- **Per-repo toggle.** AI is **off for every repo until you enable it** for that
-  repo. No repo silently sends data.
+- **Per-repo toggle.** AI is **on by default**, with a per-repo opt-out for
+  sensitive repos (**Settings → Repository → AI**). This toggle is *not* what
+  keeps your code private — the remote-consent gate below is. Enabling a repo
+  never sends data anywhere by itself.
 - **First-use consent, per remote provider.** Before Lady ever calls a *remote*
   provider it requires a recorded, per-provider consent. Until then, remote calls
   are blocked.
@@ -46,7 +48,7 @@ written to your tree automatically.
 
 ## Turning it off
 
-- Disable AI for a repo: **Settings → AI → per-repo toggle**.
+- Disable AI for a repo: **Settings → Repository → AI → per-repo toggle**.
 - Revoke a provider's consent or delete its key: **Settings → AI**.
 
 See ADR-0008 (BYOK + local Ollama) and ADR-0009 (explicit opt-in + redaction)

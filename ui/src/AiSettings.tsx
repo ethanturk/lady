@@ -1,6 +1,5 @@
-import { createEffect, createSignal, onMount, For, Show } from "solid-js";
+import { createSignal, onMount, For, Show } from "solid-js";
 import type { Component } from "solid-js";
-import type { RepoId } from "./commands";
 import {
   type AiConfig,
   type ProviderKind,
@@ -12,24 +11,22 @@ import {
   hasAiKey,
   isRemote,
   listModels,
-  repoEnabled,
   revokeConsent,
   setAiConfig,
   setAiKey,
-  setRepoEnabled,
 } from "./ai";
 
 /**
- * AI settings (PH5-002): pick the active provider, store BYOK keys in the OS
- * keychain, grant/revoke per-provider remote-send consent, and toggle AI for
- * this repo (default off). Ollama is surfaced as the local-first option.
+ * Global AI settings (PH5-002): pick the active provider, store BYOK keys in the
+ * OS keychain, grant/revoke per-provider remote-send consent, and set the
+ * default model. These apply to every repo; the per-repo enable toggle and model
+ * override live in the Repository → AI section. Ollama is the local-first option.
  */
-const AiSettings: Component<{ repoId: RepoId | null }> = (props) => {
+const AiSettings: Component = () => {
   const [cfg, setCfg] = createSignal<AiConfig | null>(null);
   const [keyInput, setKeyInput] = createSignal("");
   const [keyStored, setKeyStored] = createSignal(false);
   const [models, setModels] = createSignal<string[]>([]);
-  const [enabled, setEnabled] = createSignal(false);
   const [notice, setNotice] = createSignal<string | null>(null);
   const [err, setErr] = createSignal<string | null>(null);
 
@@ -43,15 +40,6 @@ const AiSettings: Component<{ repoId: RepoId | null }> = (props) => {
     }
   };
   onMount(load);
-  // The per-repo enable flag follows the active repo (and is undefined with none).
-  createEffect(() => {
-    const repo = props.repoId;
-    if (!repo) {
-      setEnabled(false);
-      return;
-    }
-    repoEnabled(repo).then(setEnabled).catch((e) => setErr(String(e)));
-  });
 
   const active = () => cfg()?.active ?? null;
 
@@ -110,13 +98,6 @@ const AiSettings: Component<{ repoId: RepoId | null }> = (props) => {
     }
   };
 
-  const toggleRepo = async (on: boolean) => {
-    const repo = props.repoId;
-    if (!repo) return;
-    setEnabled(on);
-    await setRepoEnabled(repo, on).catch((e) => setErr(String(e)));
-  };
-
   const refreshModels = async () => {
     try {
       setModels(await listModels());
@@ -146,14 +127,6 @@ const AiSettings: Component<{ repoId: RepoId | null }> = (props) => {
       </p>
 
       <Show when={cfg()} fallback={<p style={{ "font-size": "0.82rem" }}>Loading…</p>}>
-        {/* Per-repo override: enable AI for the active repo (off by default). */}
-        <Show when={props.repoId}>
-          <label style={{ display: "flex", "align-items": "center", gap: "0.4rem", "font-size": "0.85rem", "margin-bottom": "0.6rem" }}>
-            <input type="checkbox" checked={enabled()} onChange={(e) => toggleRepo(e.currentTarget.checked)} />
-            Enable AI for this repository
-          </label>
-        </Show>
-
         {/* Active provider */}
         <div style={{ display: "flex", "align-items": "center", gap: "0.4rem", "margin-bottom": "0.5rem" }}>
           <span style={{ width: "6rem", "font-size": "0.82rem" }}>Provider</span>
@@ -329,15 +302,6 @@ const AiSettings: Component<{ repoId: RepoId | null }> = (props) => {
           </Show>
         </Show>
       </Show>
-
-      <h3 style={{ margin: "1.2rem 0 0.3rem", "font-size": "0.95rem" }}>MCP server</h3>
-      <p style={{ "font-size": "0.78rem", color: "var(--fg-muted, var(--fg-muted))", margin: "0 0 0.6rem" }}>
-        Expose this repo's context (status, diff, log, file-at-rev, blame,
-        commit search) to an external assistant (Claude/Cursor) via the{" "}
-        <code>lady-mcp</code> server. It is read-only — no mutating tools. Add an
-        MCP entry that runs <code>lady-mcp &lt;repo-path&gt;</code>; remove it to
-        disable.
-      </p>
 
       <Show when={notice()}>
         <p style={{ color: "var(--success)", "font-size": "0.8rem", margin: "0.2rem 0" }}>{notice()}</p>

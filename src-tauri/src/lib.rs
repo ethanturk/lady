@@ -7,6 +7,7 @@ use lady_proto::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::sync::Mutex;
 use tauri::State;
 
 mod ai;
@@ -14,11 +15,13 @@ mod ai;
 // implementation, so the whole module is gated off on iOS/Android.
 #[cfg(desktop)]
 mod updater;
+mod watcher;
 
 /// OS-keychain service name for all of Lady's hosting/transport tokens
 /// (single-account legacy keys and per-account `github-token:<id>` keys alike).
 /// The credential-helper subprocess uses the same service to read them back.
 const KEYCHAIN_SERVICE: &str = "Lady-Hosting";
+static SETTINGS_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Serialize)]
 pub struct AppInfo {
@@ -649,13 +652,15 @@ fn run_custom_command(
     engine.run_custom(&repo, &argv).map_err(|e| e.to_string())
 }
 
-/// Launch the configured external diff tool on `path` (PH3-010).
+/// Launch the configured external diff tool on `path` (PH3-010). Async because
+/// `git difftool` blocks until the external (GUI) tool is closed — running it on
+/// the main thread would freeze the whole app for the tool's lifetime.
 #[tauri::command]
-fn launch_difftool(
+async fn launch_difftool(
     repo: RepoId,
     path: String,
     commit: Option<String>,
-    engine: State<GixEngine>,
+    engine: State<'_, GixEngine>,
 ) -> Result<(), String> {
     engine
         .launch_difftool(&repo, &path, commit.as_deref())
@@ -663,8 +668,14 @@ fn launch_difftool(
 }
 
 /// Launch the configured external merge tool on a conflicted `path` (PH3-010).
+/// Async for the same reason as [`launch_difftool`] — `git mergetool` blocks
+/// until the tool exits.
 #[tauri::command]
-fn launch_mergetool(repo: RepoId, path: String, engine: State<GixEngine>) -> Result<(), String> {
+async fn launch_mergetool(
+    repo: RepoId,
+    path: String,
+    engine: State<'_, GixEngine>,
+) -> Result<(), String> {
     engine
         .launch_mergetool(&repo, &path)
         .map_err(|e| e.to_string())
@@ -878,6 +889,37 @@ fn fetch_background(
     engine
         .fetch(&repo, None, &auth, &mut ignore)
         .map_err(friendly_git_err)
+}
+
+/// Start watching `repo` so working-tree / `.git` changes emit `repo-fs-changed`
+/// (the live-refresh signal that replaces interval polling). Replaces any
+/// existing watcher for the repo; returns an error on platforms without a
+/// watcher so the frontend can fall back to polling.
+// Async so the watch registration (which can block while the OS walks the tree
+// to install per-directory watches) runs off the main thread — a synchronous
+// command would freeze the UI for seconds on a large repo.
+#[tauri::command]
+async fn watch_repo(
+    repo: RepoId,
+    app: tauri::AppHandle,
+    engine: State<'_, GixEngine>,
+    watchers: State<'_, watcher::RepoWatchers>,
+) -> Result<(), String> {
+    let workdir = engine.workdir_path(&repo).map_err(|e| e.to_string())?;
+    let common = engine.git_common_dir(&repo).map_err(|e| e.to_string())?;
+    watcher::watch(&watchers, repo, workdir, common, app)
+}
+
+/// Stop watching `repo` (idempotent). Async because dropping the watcher handle
+/// joins its debounce thread — keep that off the main thread so a tab switch
+/// never stalls the UI.
+#[tauri::command]
+async fn unwatch_repo(
+    repo: RepoId,
+    watchers: State<'_, watcher::RepoWatchers>,
+) -> Result<(), String> {
+    watcher::unwatch(&watchers, &repo);
+    Ok(())
 }
 
 /// Pull (fetch + integrate) from `remote`/`branch`, or the configured upstream.
@@ -1262,15 +1304,17 @@ pub struct Settings {
     /// never here (ADR-0008). Owned by the `ai_*` commands.
     #[serde(default)]
     pub ai: lady_ai::AiConfig,
-    /// Repository family ids with AI explicitly enabled. Default off (ADR-0009).
+    /// Repository family ids with AI explicitly DISABLED. AI is on by default;
+    /// this is the opt-out list. Remote sends still require per-provider consent
+    /// (ADR-0009).
     #[serde(default)]
-    pub ai_repos: Vec<String>,
+    pub ai_disabled_repos: Vec<String>,
     /// Global defaults for the overridable settings (sign / ff / base / ai model).
     #[serde(default)]
     pub defaults: RepoSettings,
     /// Repository-family overrides keyed by common git directory path (same key
-    /// as `ai_repos`). A field left `None` inherits from `defaults`, then the
-    /// built-in fallback.
+    /// as `ai_disabled_repos`). A field left `None` inherits from `defaults`,
+    /// then the built-in fallback.
     #[serde(default)]
     pub repo_overrides: BTreeMap<String, RepoSettings>,
     /// Registered GitHub accounts (metadata only; PATs live in the keychain under
@@ -1294,18 +1338,42 @@ fn settings_file() -> Result<std::path::PathBuf, String> {
 pub(crate) fn load_settings_inner() -> Settings {
     settings_file()
         .ok()
-        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|p| load_settings_from(&p))
+        .unwrap_or_default()
+}
+
+fn load_settings_from(path: &std::path::Path) -> Settings {
+    std::fs::read_to_string(path)
+        .ok()
         .and_then(|s| toml::from_str(&s).ok())
         .unwrap_or_default()
 }
 
-pub(crate) fn write_settings(settings: &Settings) -> Result<(), String> {
-    let path = settings_file()?;
+fn write_settings_to(path: &std::path::Path, settings: &Settings) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let body = toml::to_string_pretty(settings).map_err(|e| e.to_string())?;
-    std::fs::write(&path, body).map_err(|e| e.to_string())
+    std::fs::write(path, body).map_err(|e| e.to_string())
+}
+
+pub(crate) fn update_settings_inner(
+    f: impl FnOnce(&mut Settings) -> Result<(), String>,
+) -> Result<(), String> {
+    let path = settings_file()?;
+    update_settings_at_path(&path, f)
+}
+
+fn update_settings_at_path(
+    path: &std::path::Path,
+    f: impl FnOnce(&mut Settings) -> Result<(), String>,
+) -> Result<(), String> {
+    let _guard = SETTINGS_WRITE_LOCK
+        .lock()
+        .map_err(|_| "settings lock poisoned".to_string())?;
+    let mut settings = load_settings_from(path);
+    f(&mut settings)?;
+    write_settings_to(path, &settings)
 }
 
 #[tauri::command]
@@ -1315,24 +1383,26 @@ fn load_settings() -> Result<Settings, String> {
 
 #[tauri::command]
 fn save_settings(mut settings: Settings) -> Result<(), String> {
-    // The license is owned by the licensing commands and the AI config/toggle by
-    // the ai_* commands; preserve whatever is on disk so a recents/commands save
-    // can never clobber them (ADR-0007/0008/0009).
-    let on_disk = load_settings_inner();
-    settings.license = on_disk.license;
-    settings.ai = on_disk.ai;
-    settings.ai_repos = on_disk.ai_repos;
-    // Owned by the repo_settings / set_*_override / set_global_defaults commands.
-    settings.defaults = on_disk.defaults;
-    settings.repo_overrides = on_disk.repo_overrides;
-    // Owned by the github account commands and the auth-suggest flow.
-    settings.github_accounts = on_disk.github_accounts;
-    settings.auth_suggest_dismissed = on_disk.auth_suggest_dismissed;
-    write_settings(&settings)
+    update_settings_inner(|on_disk| {
+        // The license is owned by the licensing commands and the AI
+        // config/toggle by the ai_* commands; preserve whatever is on disk so a
+        // recents/commands save can never clobber them (ADR-0007/0008/0009).
+        settings.license = on_disk.license.clone();
+        settings.ai = on_disk.ai.clone();
+        settings.ai_disabled_repos = on_disk.ai_disabled_repos.clone();
+        // Owned by the repo_settings / set_*_override / set_global_defaults commands.
+        settings.defaults = on_disk.defaults.clone();
+        settings.repo_overrides = on_disk.repo_overrides.clone();
+        // Owned by the github account commands and the auth-suggest flow.
+        settings.github_accounts = on_disk.github_accounts.clone();
+        settings.auth_suggest_dismissed = on_disk.auth_suggest_dismissed.clone();
+        *on_disk = settings;
+        Ok(())
+    })
 }
 
 /// Resolve a repo's family id — the repository-scoped key used by
-/// `repo_overrides` and `ai_repos`, so linked worktrees share settings.
+/// `repo_overrides` and `ai_disabled_repos`, so linked worktrees share settings.
 pub(crate) fn repo_settings_key(repo: &RepoId, engine: &GixEngine) -> Result<String, String> {
     Ok(engine
         .repository_family_id(repo)
@@ -1410,16 +1480,18 @@ fn set_repo_override(
     engine: State<GixEngine>,
 ) -> Result<(), String> {
     let key = repo_settings_key(&repo, &engine)?;
-    let mut s = load_settings_inner();
-    if settings == RepoSettings::default() {
-        s.repo_overrides.remove(&key);
-    } else {
-        if let Ok(legacy_key) = legacy_repo_settings_key(&repo, &engine) {
-            s.repo_overrides.remove(&legacy_key);
+    let legacy_key = legacy_repo_settings_key(&repo, &engine).ok();
+    update_settings_inner(|s| {
+        if settings == RepoSettings::default() {
+            s.repo_overrides.remove(&key);
+        } else {
+            if let Some(legacy_key) = &legacy_key {
+                s.repo_overrides.remove(legacy_key);
+            }
+            s.repo_overrides.insert(key, settings);
         }
-        s.repo_overrides.insert(key, settings);
-    }
-    write_settings(&s)
+        Ok(())
+    })
 }
 
 /// The global defaults block (no repo needed — drives Settings with no repo open).
@@ -1431,9 +1503,10 @@ fn global_defaults() -> Result<RepoSettings, String> {
 /// Replace the global defaults block.
 #[tauri::command]
 fn set_global_defaults(settings: RepoSettings) -> Result<(), String> {
-    let mut s = load_settings_inner();
-    s.defaults = settings;
-    write_settings(&s)
+    update_settings_inner(|s| {
+        s.defaults = settings;
+        Ok(())
+    })
 }
 
 /// Read the repo's local git identity (`.git/config`).
@@ -1580,10 +1653,11 @@ async fn add_github_account(
         email,
         known_owners,
     };
-    let mut s = load_settings_inner();
-    s.github_accounts.retain(|a| a.id != id);
-    s.github_accounts.push(account.clone());
-    write_settings(&s)?;
+    update_settings_inner(|s| {
+        s.github_accounts.retain(|a| a.id != id);
+        s.github_accounts.push(account.clone());
+        Ok(())
+    })?;
     Ok(account)
 }
 
@@ -1595,14 +1669,15 @@ fn remove_github_account(id: String, hosting: State<Hosting>) -> Result<(), Stri
         .store
         .delete(&lady_hosting::github_account_token_key(&id))
         .map_err(|e| e.to_string())?;
-    let mut s = load_settings_inner();
-    s.github_accounts.retain(|a| a.id != id);
-    for over in s.repo_overrides.values_mut() {
-        if matches!(&over.auth, Some(RepoAuth::Account(a)) if a == &id) {
-            over.auth = None;
+    update_settings_inner(|s| {
+        s.github_accounts.retain(|a| a.id != id);
+        for over in s.repo_overrides.values_mut() {
+            if matches!(&over.auth, Some(RepoAuth::Account(a)) if a == &id) {
+                over.auth = None;
+            }
         }
-    }
-    write_settings(&s)
+        Ok(())
+    })
 }
 
 /// A suggested account for a repo plus a short human reason.
@@ -1661,15 +1736,19 @@ fn assign_repo_account(
     engine: State<GixEngine>,
 ) -> Result<(), String> {
     let key = repo_settings_key(&repo, &engine)?;
-    let mut s = load_settings_inner();
-    let account = s
-        .github_accounts
-        .iter()
-        .find(|a| a.id == account_id)
-        .cloned()
-        .ok_or_else(|| "Unknown GitHub account.".to_string())?;
-    s.repo_overrides.entry(key).or_default().auth = Some(RepoAuth::Account(account_id));
-    write_settings(&s)?;
+    let mut account = None;
+    update_settings_inner(|s| {
+        let found = s
+            .github_accounts
+            .iter()
+            .find(|a| a.id == account_id)
+            .cloned()
+            .ok_or_else(|| "Unknown GitHub account.".to_string())?;
+        s.repo_overrides.entry(key).or_default().auth = Some(RepoAuth::Account(account_id));
+        account = Some(found);
+        Ok(())
+    })?;
+    let account = account.expect("account set by update_settings_inner");
     if !account.name.is_empty() || !account.email.is_empty() {
         engine
             .repo_identity_set(&repo, &account.name, &account.email)
@@ -1683,11 +1762,12 @@ fn assign_repo_account(
 #[tauri::command]
 fn dismiss_repo_account_suggestion(repo: RepoId, engine: State<GixEngine>) -> Result<(), String> {
     let key = repo_settings_key(&repo, &engine)?;
-    let mut s = load_settings_inner();
-    if !s.auth_suggest_dismissed.iter().any(|d| d == &key) {
-        s.auth_suggest_dismissed.push(key);
-    }
-    write_settings(&s)
+    update_settings_inner(|s| {
+        if !s.auth_suggest_dismissed.iter().any(|d| d == &key) {
+            s.auth_suggest_dismissed.push(key);
+        }
+        Ok(())
+    })
 }
 
 /// Parse a credential-helper argv tail (`--account <id> <op>`) into the account
@@ -2388,9 +2468,10 @@ fn license_activate(key: String) -> Result<lady_license::LicenseStatus, String> 
     let key = key.trim().to_string();
     // Verify before persisting; surface the precise rejection reason.
     lady_license::verify_embedded(&key, now_secs()).map_err(|e| e.to_string())?;
-    let mut settings = load_settings_inner();
-    settings.license = Some(key);
-    write_settings(&settings)?;
+    update_settings_inner(|settings| {
+        settings.license = Some(key);
+        Ok(())
+    })?;
     license_status()
 }
 
@@ -2416,6 +2497,7 @@ pub fn run() {
             self_hosted: Vec::new(),
         })
         .manage(ai::AiState::new())
+        .manage(watcher::RepoWatchers::new())
         .invoke_handler(tauri::generate_handler![
             app_info,
             open_repo,
@@ -2448,6 +2530,8 @@ pub fn run() {
             reset,
             fetch,
             fetch_background,
+            watch_repo,
+            unwatch_repo,
             pull,
             push,
             delete_remote_ref,
@@ -2713,27 +2797,27 @@ mod tests {
     }
 
     #[test]
-    fn settings_round_trip_preserves_ai_repos() {
+    fn settings_round_trip_preserves_ai_disabled_repos() {
         let mut s = Settings::default();
-        s.ai_repos.push("/repo/enabled".to_string());
+        s.ai_disabled_repos.push("/repo/disabled".to_string());
         s.ai.active = Some(lady_ai::ProviderKind::OpenAi);
 
         let toml = toml::to_string_pretty(&s).expect("serialize settings");
         let mut back: Settings = toml::from_str(&toml).expect("deserialize settings");
 
-        // Simulate ai_set_config: replace ai config but preserve ai_repos.
+        // Simulate ai_set_config: replace ai config but preserve the opt-out list.
         let consented = back.ai.consented.clone();
-        let ai_repos = back.ai_repos.clone();
+        let ai_disabled_repos = back.ai_disabled_repos.clone();
         let repo_overrides = back.repo_overrides.clone();
         back.ai = lady_ai::AiConfig::default();
         back.ai.consented = consented;
-        back.ai_repos = ai_repos;
+        back.ai_disabled_repos = ai_disabled_repos;
         back.repo_overrides = repo_overrides;
 
         let toml2 = toml::to_string_pretty(&back).expect("serialize settings");
         let back2: Settings = toml::from_str(&toml2).expect("deserialize settings");
 
-        assert_eq!(back2.ai_repos, vec!["/repo/enabled"]);
+        assert_eq!(back2.ai_disabled_repos, vec!["/repo/disabled"]);
         assert_eq!(back2.ai.active, None, "ai config was replaced");
     }
 
@@ -2743,6 +2827,54 @@ mod tests {
         let s: Settings = toml::from_str("recent = []\n").expect("deserialize legacy settings");
         assert_eq!(s.defaults, RepoSettings::default());
         assert!(s.repo_overrides.is_empty());
+    }
+
+    #[test]
+    fn settings_update_helper_preserves_unrelated_sections() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("settings.toml");
+
+        update_settings_at_path(&path, |settings| {
+            settings.github_accounts.push(GitHubAccount {
+                id: "acct".to_string(),
+                login: "acct".to_string(),
+                name: "A User".to_string(),
+                email: "a@example.test".to_string(),
+                known_owners: vec!["org".to_string()],
+            });
+            settings.defaults.sign = Some(true);
+            Ok(())
+        })
+        .expect("first update");
+
+        update_settings_at_path(&path, |settings| {
+            settings.recent.push(RecentRepo {
+                path: "/repo/one".to_string(),
+                group: Some("work".to_string()),
+                family_id: Some("family".to_string()),
+                family_name: Some("Repo".to_string()),
+            });
+            settings.repo_overrides.insert(
+                "family".to_string(),
+                RepoSettings {
+                    ff: Some(FfMode::Only),
+                    ..Default::default()
+                },
+            );
+            Ok(())
+        })
+        .expect("second update");
+
+        let back = load_settings_from(&path);
+        assert_eq!(back.github_accounts.len(), 1);
+        assert_eq!(back.github_accounts[0].login, "acct");
+        assert_eq!(back.defaults.sign, Some(true));
+        assert_eq!(back.recent.len(), 1);
+        assert_eq!(back.recent[0].path, "/repo/one");
+        assert_eq!(
+            back.repo_overrides.get("family").and_then(|s| s.ff),
+            Some(FfMode::Only)
+        );
     }
 
     fn rev(dir: &Path, r: &str) -> String {

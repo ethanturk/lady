@@ -188,6 +188,26 @@ export async function pullCurrent(repo: RepoId): Promise<ActionResult> {
   }
 }
 
+/** Fetch a single `remote` (updates its remote-tracking refs). */
+export async function fetchRemote(repo: RepoId, remote: string): Promise<ActionResult> {
+  try {
+    await invoke("fetch", { repo, remote });
+    return { ok: true, message: `Fetched ${remote}.` };
+  } catch (e) {
+    return { ok: false, message: String(e) };
+  }
+}
+
+/** Pull `remote`/`branch` into the checked-out branch (fetch + integrate). */
+export async function pullRemote(repo: RepoId, remote: string, branch: string): Promise<ActionResult> {
+  try {
+    await invoke("pull", { repo, remote, branch });
+    return { ok: true, message: `Pulled ${remote}/${branch}.` };
+  } catch (e) {
+    return { ok: false, message: String(e) };
+  }
+}
+
 /** Create a worktree for `branch` at a user-picked directory. */
 export async function addWorktreeFor(repo: RepoId, branch: string, dir: string): Promise<ActionResult> {
   try {

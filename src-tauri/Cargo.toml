@@ -37,6 +37,11 @@ toml = { workspace = true }
 # script), so gate on the real target_os instead — equivalent to `cfg(desktop)`.
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
+# Filesystem watcher for the live repo refresh (desktop only; mobile falls back
+# to interval polling). The "mini" debouncer coalesces editor/git churn into one
+# signal without the full debouncer's recursive file-id pre-scan (which stats
+# every file under the worktree — seconds on a repo with node_modules).
+notify-debouncer-mini = "0.4"
 
 [dev-dependencies]
 tempfile = { workspace = true }

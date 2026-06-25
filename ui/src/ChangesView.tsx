@@ -17,7 +17,9 @@ const KIND_BADGE: Record<ChangeKind, { label: string; bg: string; fg: string }> 
   Modified: { label: "M", bg: "var(--badge-m)", fg: "var(--on-badge)" },
   Deleted: { label: "D", bg: "var(--badge-d)", fg: "var(--on-badge)" },
   Renamed: { label: "R", bg: "var(--badge-r)", fg: "var(--on-badge)" },
-  Untracked: { label: "?", bg: "var(--tx4)", fg: "var(--on-badge)" },
+  // Untracked files are new files; show them as an Add (A), matching staged
+  // adds. The staged/unstaged distinction is already conveyed by their list.
+  Untracked: { label: "A", bg: "var(--badge-a)", fg: "var(--on-badge)" },
   Conflicted: { label: "!", bg: "var(--danger)", fg: "var(--on-accent)" },
 };
 
@@ -100,7 +102,7 @@ const FilePathLabel: Component<{ path: string; oldPath?: string | null; leaf?: s
           <Show when={parts().dir}>
             <span style={{ ...pathPrefixStyle, flex: "1 1 auto" }}>{parts().dir}</span>
           </Show>
-          <span style={{ "flex-shrink": 0, overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>
+          <span style={{ "flex-shrink": 0, overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap", "padding-left": parts().dir ? "3px" : "0" }}>
             {parts().base}
           </span>
         </>

@@ -28,5 +28,17 @@ export default defineConfig({
     target: "chrome105",
     minify: "esbuild",
     sourcemap: false,
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            {
+              name: "vendor",
+              test: /node_modules/,
+            },
+          ],
+        },
+      },
+    },
   },
 });

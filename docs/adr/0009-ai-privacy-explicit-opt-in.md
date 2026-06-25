@@ -3,7 +3,7 @@
 Lady never sends repository code to a remote AI provider without explicit, informed consent.
 
 - **First-use consent, per provider.** The first AI action that would call a remote provider shows which provider/model will receive data and that code/diffs leave the machine. No silent default to cloud.
-- **Per-repo AI toggle, default off until configured.** A sensitive repository can stay AI-off entirely.
+- **Per-repo AI toggle, on by default, opt-out per repo.** AI features are enabled by default, but a sensitive repository can be turned AI-off entirely via the per-repo toggle. This toggle gates *all* AI for the repo (local and remote); it is independent of, and weaker than, the remote-consent gate below — enabling a repo never by itself sends code anywhere.
 - **Local path is first-class.** Ollama is surfaced prominently as the "never leaves your machine" option.
 - **Secret-redaction pass before any remote send** (entropy + regex scan for obvious credentials). This is **best-effort, not a guarantee** — it reduces accidental leakage, it does not make sending code safe by itself, and the UI must not imply otherwise.
 - **Minimization.** Token-budgeting / diff-truncation limits payload size; prompts and responses containing code are **not logged** by default.
