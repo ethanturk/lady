@@ -33,6 +33,11 @@ allow = [
     # in lady-hosting). CDLA-Permissive-2.0 is a permissive data license with no
     # copyleft on our code. ADR-0004 / ADR-0006 (hosting over rustls).
     "CDLA-Permissive-2.0",
+    # notify (filesystem watcher pulled in by the live repo-refresh feature in
+    # src-tauri/src/watcher.rs). CC0-1.0 is a public-domain dedication — the most
+    # permissive option, no copyleft, no attribution requirement. Does NOT weaken
+    # the commercial/closed-source posture. ADR-0004.
+    "CC0-1.0",
 ]
 confidence-threshold = 0.8
 

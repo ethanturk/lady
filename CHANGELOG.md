@@ -1,8 +1,18 @@
 # Changelog
 
 All notable changes to Lady. Format follows [Keep a Changelog](https://keepachangelog.com).
-The current shipped app/UI release is `v0.0.10`; later semantic version sections
+The current shipped app/UI release is `v0.0.11`; later semantic version sections
 below are roadmap history, not published release tags.
+
+## [0.0.11] — Responsive UI during git operations
+
+### Changed
+- Moved 22 blocking Tauri commands off the main thread by making them `async`,
+  so the UI no longer freezes while a command runs. Covers network operations
+  (clone, fetch, pull, push, submodule update/init/sync), repository-size-bound
+  reads (commit-graph walk, diff, blame, file history, status, signature
+  verification, reflog), and the mutating/custom commands (custom command run,
+  merge, cherry-pick, revert, rebase).
 
 ## [0.0.10] — Settings organization
 

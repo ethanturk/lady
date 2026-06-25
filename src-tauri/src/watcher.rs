@@ -59,7 +59,8 @@ pub fn unwatch(watchers: &RepoWatchers, repo: &RepoId) {
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn is_relevant(p: &std::path::Path) -> bool {
     let s = p.to_string_lossy();
-    const IGNORE_FRAGMENTS: [&str; 4] = ["/.git/objects", "/.git/lfs", "/node_modules/", "/target/"];
+    const IGNORE_FRAGMENTS: [&str; 4] =
+        ["/.git/objects", "/.git/lfs", "/node_modules/", "/target/"];
     if IGNORE_FRAGMENTS.iter().any(|frag| s.contains(frag)) {
         return false;
     }
