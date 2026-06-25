@@ -576,6 +576,7 @@ const Sidebar: Component<SidebarProps> = (props) => {
         "border-radius": "6px",
         "font-size": "13px",
         color: "var(--tx2)",
+        cursor: "pointer",
         "user-select": "none",
         background: isShown() ? accentFill : "transparent",
         "box-shadow": isShown() ? "inset 2px 0 0 var(--accent)" : "none",

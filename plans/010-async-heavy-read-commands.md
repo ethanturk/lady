@@ -6,7 +6,7 @@
 > report — do not improvise. When done, update the status row for this plan
 > in `plans/README.md`.
 >
-> **Drift check (run first)**: `git diff --stat 9666d42..HEAD -- src-tauri/src/lib.rs`
+> **Drift check (run first)**: `git diff --stat 6340849..HEAD -- src-tauri/src/lib.rs`
 > If `src-tauri/src/lib.rs` changed since this plan was written, compare the
 > "Current state" excerpts against the live code before proceeding; on a
 > mismatch, treat it as a STOP condition.
@@ -18,7 +18,7 @@
 - **Risk**: LOW
 - **Depends on**: none (independent of 009; shares the same conversion pattern)
 - **Category**: perf
-- **Planned at**: commit `9666d42`, 2026-06-25
+- **Planned at**: commit `6340849`, 2026-06-25
 
 ## Why this matters
 
@@ -126,7 +126,7 @@ read commands.
         engine: State<GixEngine>,
     ) -> Result<Vec<lady_proto::SignatureStatus>, String> {
     ```
-  - `reflog` (`:594-...`):
+  - `reflog` (`:592-...`):
     ```rust
     #[tauri::command]
     fn reflog(
@@ -191,7 +191,7 @@ Convert in `src-tauri/src/lib.rs`: `walk_log` (`:61`), `walk_log_graph` (`:103`)
 ### Step 2: Convert the blame/history/status/signature/reflog commands
 
 Convert: `blame` (`:217`), `file_history` (`:230`), `status` (`:252`),
-`signature_statuses` (`:408`), `reflog` (`:594` — confirm the line with the
+`signature_statuses` (`:408`), `reflog` (`:592` — confirm the line with the
 drift-check grep below; it sits just before `bisect_start`).
 
 **Verify**: `cargo build -p lady-app` → exit 0.
@@ -239,7 +239,7 @@ ALL must hold:
 
 Stop and report back (do not improvise) if:
 
-- The drift check shows `src-tauri/src/lib.rs` changed since `9666d42` and a
+- The drift check shows `src-tauri/src/lib.rs` changed since `6340849` and a
   target command no longer matches its excerpt.
 - The build fails with an error not resolved by adding a missing `'_` to a
   `State` param (e.g. a body holds a non-`Send` value, or an engine method is

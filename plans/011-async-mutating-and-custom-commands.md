@@ -6,7 +6,7 @@
 > report — do not improvise. When done, update the status row for this plan
 > in `plans/README.md`.
 >
-> **Drift check (run first)**: `git diff --stat 9666d42..HEAD -- src-tauri/src/lib.rs`
+> **Drift check (run first)**: `git diff --stat 6340849..HEAD -- src-tauri/src/lib.rs`
 > If `src-tauri/src/lib.rs` changed since this plan was written, compare the
 > "Current state" excerpts against the live code before proceeding; on a
 > mismatch, treat it as a STOP condition.
@@ -18,7 +18,7 @@
 - **Risk**: LOW
 - **Depends on**: none (independent of 009 and 010; same conversion pattern)
 - **Category**: perf
-- **Planned at**: commit `9666d42`, 2026-06-25
+- **Planned at**: commit `6340849`, 2026-06-25
 
 ## Why this matters
 
@@ -90,7 +90,7 @@ the mutating and custom-command handlers.
         engine: State<GixEngine>,
     ) -> Result<ApplyOutcome, String> {
     ```
-  - `revert` (`:1124-...`):
+  - `revert` (`:1125-...`):
     ```rust
     #[tauri::command]
     fn revert(repo: RepoId, oid: String, engine: State<GixEngine>) -> Result<ApplyOutcome, String> {
@@ -161,7 +161,7 @@ Convert `run_custom_command` (`:645`) → `async fn`, `engine: State<'_, GixEngi
 
 ### Step 2: Convert the integration/history commands
 
-Convert `merge` (`:1086`), `cherry_pick` (`:1114`), `revert` (`:1124`),
+Convert `merge` (`:1086`), `cherry_pick` (`:1114`), `revert` (`:1125`),
 `rebase` (`:1137`) the same way.
 
 **Verify**: `cargo build -p lady-app` → exit 0.
@@ -210,7 +210,7 @@ ALL must hold:
 
 Stop and report back (do not improvise) if:
 
-- The drift check shows `src-tauri/src/lib.rs` changed since `9666d42` and a
+- The drift check shows `src-tauri/src/lib.rs` changed since `6340849` and a
   target command no longer matches its excerpt.
 - The build fails with an error not resolved by adding a missing `'_` to a
   `State` param (non-`Send` value held across the body, or a `!Send` engine
