@@ -67,7 +67,6 @@ const Row: Component<{ item: Exclude<MenuEntry, "divider">; onClose: () => void 
           gap: "10px",
           padding: "7px 11px",
           border: "none",
-          background: "transparent",
           "border-radius": "6px",
           color: props.item.danger ? "var(--badge-d)" : "var(--tx)",
           opacity: props.item.disabled ? 0.4 : 1,

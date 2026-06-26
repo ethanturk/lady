@@ -1,8 +1,16 @@
 # Changelog
 
 All notable changes to Lady. Format follows [Keep a Changelog](https://keepachangelog.com).
-The current shipped app/UI release is `v0.0.12`; later semantic version sections
+The current shipped app/UI release is `v0.0.13`; later semantic version sections
 below are roadmap history, not published release tags.
+
+## [0.0.13] — Context menu hover affordance
+
+### Fixed
+- Context menu rows now show a hover background tint. The row button set an
+  inline `background: transparent`, which beat the `.hov:hover` class rule and
+  suppressed the tint; the inline override is dropped and `.hov` carries a
+  transparent base instead. Disabled rows stay flat on hover.
 
 ## [0.0.12] — Pre-commit hook error dialog & diverged-pull reconcile
 

@@ -228,10 +228,14 @@ body {
 /* Inline styles can't express :hover, so hoverable rows/buttons opt in with
    class="hov" (background tint) and tab/text rows use the variants below. */
 .hov {
+  background: transparent;
   transition: background 0.08s ease;
 }
 .hov:hover {
   background: var(--hov);
+}
+.hov:disabled:hover {
+  background: transparent;
 }
 .tab-inactive:hover {
   color: var(--tx) !important;
