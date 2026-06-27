@@ -53,7 +53,7 @@ pub fn detect_conventional(recent: &[String]) -> bool {
         Regex::new(
             r"(?i)^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]*\))?!?: ",
         )
-        .expect("valid regex")
+        .expect("regex pattern must be valid (programming error if this panics)")
     });
     if recent.is_empty() {
         return false;
@@ -75,7 +75,10 @@ pub fn commit_style(recent: &[String]) -> CommitStyle {
 /// Count tokens with tiktoken's `cl100k_base` (a good cross-provider proxy).
 pub fn count_tokens(text: &str) -> usize {
     static BPE: OnceLock<tiktoken_rs::CoreBPE> = OnceLock::new();
-    let bpe = BPE.get_or_init(|| tiktoken_rs::cl100k_base().expect("load cl100k_base"));
+    let bpe = BPE.get_or_init(|| {
+        tiktoken_rs::cl100k_base()
+            .expect("tiktoken cl100k_base must load (programming error if this panics)")
+    });
     bpe.encode_ordinary(text).len()
 }
 
@@ -168,7 +171,7 @@ fn secret_patterns() -> &'static [Regex] {
             r#"(?i)(password|passwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token|bearer)([\"']?\s*[:=]\s*[\"']?)[^\s\"']{6,}"#,
         ]
         .iter()
-        .map(|p| Regex::new(p).expect("valid secret regex"))
+        .map(|p| Regex::new(p).expect("secret regex pattern must be valid (programming error if this panics)"))
         .collect()
     })
 }

@@ -1821,7 +1821,7 @@ fn assign_repo_account(
         account = Some(found);
         Ok(())
     })?;
-    let account = account.expect("account set by update_settings_inner");
+    let account = account.ok_or_else(|| "internal error: account not set".to_string())?;
     if !account.name.is_empty() || !account.email.is_empty() {
         engine
             .repo_identity_set(&repo, &account.name, &account.email)

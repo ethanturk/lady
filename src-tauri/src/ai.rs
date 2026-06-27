@@ -35,13 +35,16 @@ impl AiState {
         let tok = CancelToken::new();
         self.cancels
             .lock()
-            .expect("cancels lock")
+            .unwrap_or_else(|e| e.into_inner())
             .insert(req_id.to_string(), tok.clone());
         tok
     }
 
     fn unregister(&self, req_id: &str) {
-        self.cancels.lock().expect("cancels lock").remove(req_id);
+        self.cancels
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(req_id);
     }
 }
 
@@ -191,7 +194,12 @@ pub async fn ai_list_models(ai: State<'_, AiState>) -> Result<Vec<String>, Strin
 /// Cancel an in-flight streaming completion by its request id.
 #[tauri::command]
 pub fn ai_cancel(req_id: String, ai: State<'_, AiState>) -> Result<(), String> {
-    if let Some(tok) = ai.cancels.lock().expect("cancels lock").get(&req_id) {
+    if let Some(tok) = ai
+        .cancels
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&req_id)
+    {
         tok.cancel();
     }
     Ok(())

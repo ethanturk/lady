@@ -45,7 +45,7 @@ maintenance work, unless product discovery is more urgent.
 | 013 | Modularize the Tauri backend | P2 | L | - | DONE (region comments implemented) |
 | 014 | Add GitEngine integration tests | P2 | L | - | DONE |
 | 015 | Fix integration test flakiness | P1 | S | - | TODO |
-| 016 | Replace unwrap/expect with proper error handling | P2 | M | - | TODO |
+| 016 | Replace unwrap/expect with proper error handling | P2 | M | - | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).

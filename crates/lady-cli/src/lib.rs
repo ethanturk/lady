@@ -22,10 +22,10 @@ pub fn report(path: &Path) -> lady_git::Result<String> {
     let mut out = String::new();
 
     let refs = engine.list_refs(&repo)?;
-    writeln!(out, "Refs ({}):", refs.len()).expect("write to String is infallible");
+    let _ = writeln!(out, "Refs ({}):", refs.len());
     for r in &refs {
-        writeln!(out, "  {:?} {} -> {}", r.kind, r.name, r.target.as_str())
-            .expect("write to String is infallible");
+        let _ = writeln!(out, "  {:?} {} -> {}", r.kind, r.name, r.target.as_str());
+        // infallible
     }
 
     let commits = engine.walk_log(
@@ -35,9 +35,9 @@ pub fn report(path: &Path) -> lady_git::Result<String> {
             limit: LOG_LIMIT,
         },
     )?;
-    writeln!(out, "\nCommits (first {LOG_LIMIT}):").expect("write to String is infallible");
+    let _ = writeln!(out, "\nCommits (first {LOG_LIMIT}):"); // infallible
     for c in &commits {
-        writeln!(out, "  {} {}", c.oid.as_str(), c.summary).expect("write to String is infallible");
+        let _ = writeln!(out, "  {} {}", c.oid.as_str(), c.summary); // infallible
     }
 
     Ok(out)

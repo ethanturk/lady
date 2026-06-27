@@ -161,7 +161,8 @@ pub fn evaluate_embedded(license: Option<&str>, trial_started: i64, now: i64) ->
 /// in this repository.
 pub fn sign(payload: &LicensePayload, signing_key: &ed25519_dalek::SigningKey) -> String {
     use ed25519_dalek::Signer;
-    let payload_bytes = serde_json::to_vec(payload).expect("serialize payload");
+    let payload_bytes =
+        serde_json::to_vec(payload).expect("serialize payload to Vec<u8> is infallible");
     let signature = signing_key.sign(&payload_bytes);
     format!(
         "{}.{}",

@@ -615,10 +615,7 @@ impl GixEngine {
     /// this engine. The stored [`gix::ThreadSafeRepository`] is cloned into a
     /// per-call thread-local repo (cheap; shares the underlying object store).
     fn repo(&self, id: &RepoId) -> Result<gix::Repository> {
-        let guard = self
-            .repos
-            .lock()
-            .expect("GixEngine repo registry mutex poisoned");
+        let guard = self.repos.lock().unwrap_or_else(|e| e.into_inner());
         let shared = guard
             .get(id)
             .ok_or_else(|| Error::UnknownRepo(id.clone()))?;
@@ -884,7 +881,7 @@ pub(crate) fn run_git_stdin(workdir: &Path, args: &[&str], input: &[u8]) -> Resu
     child
         .stdin
         .take()
-        .expect("git stdin was piped")
+        .ok_or_else(|| Error::Git("git process has no stdin".into()))?
         .write_all(input)
         .map_err(|e| Error::Git(format!("failed to write to git stdin: {e}")))?;
     let out = child
@@ -1077,7 +1074,7 @@ impl GitEngine for GixEngine {
         let id = RepoId::from(repo.git_dir().display().to_string());
         self.repos
             .lock()
-            .expect("GixEngine repo registry mutex poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .insert(id.clone(), repo.into_sync());
         Ok(id)
     }

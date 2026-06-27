@@ -40,10 +40,7 @@ fn test_worktree_create_and_list() {
         .list_worktrees(&repo_id)
         .expect("list_worktrees failed");
 
-    assert!(
-        !worktrees.is_empty(),
-        "Expected at least 1 worktree"
-    );
+    assert!(!worktrees.is_empty(), "Expected at least 1 worktree");
 
     cleanup(worktree_path);
     cleanup(dir);

@@ -48,7 +48,7 @@ pub fn unwatch(watchers: &RepoWatchers, repo: &RepoId) {
     watchers
         .inner
         .lock()
-        .expect("RepoWatchers mutex poisoned")
+        .unwrap_or_else(|e| e.into_inner())
         .remove(repo);
 }
 
@@ -119,7 +119,7 @@ pub fn watch(
     watchers
         .inner
         .lock()
-        .expect("RepoWatchers mutex poisoned")
+        .unwrap_or_else(|e| e.into_inner())
         .insert(repo, debouncer);
     Ok(())
 }
