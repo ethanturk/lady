@@ -184,6 +184,10 @@ async fn walk_log_graph(
     })
 }
 
+// ============================================================================
+// Diff & Blame Commands
+// ============================================================================
+
 #[tauri::command]
 async fn diff(
     repo: RepoId,
@@ -238,6 +242,10 @@ async fn file_history(
 ) -> Result<Vec<CommitMeta>, String> {
     engine.file_history(&repo, &path).map_err(|e| e.to_string())
 }
+
+// ============================================================================
+// Working Tree Commands
+// ============================================================================
 
 /// Whether a repo's worktree has uncommitted changes (drives the tab star).
 #[tauri::command]
@@ -392,6 +400,10 @@ fn discard_untracked(
         .map_err(|e| e.to_string())
 }
 
+// ============================================================================
+// Commit Commands
+// ============================================================================
+
 /// Commit the staged changes, or amend the tip when `amend` is set. Returns the
 /// new commit Oid.
 #[tauri::command]
@@ -419,6 +431,10 @@ async fn signature_statuses(
         .signature_statuses(&repo, &oids)
         .map_err(|e| e.to_string())
 }
+
+// ============================================================================
+// Worktree Commands
+// ============================================================================
 
 /// List the repository's worktrees (PH3-006).
 #[tauri::command]
@@ -537,6 +553,10 @@ fn deinit_submodule(repo: RepoId, path: String, engine: State<GixEngine>) -> Res
         .map_err(|e| e.to_string())
 }
 
+// ============================================================================
+// Flow Commands (git-flow integration)
+// ============================================================================
+
 /// Read the persisted git-flow config (PH4-008).
 #[tauri::command]
 fn flow_config(repo: RepoId, engine: State<GixEngine>) -> Result<lady_proto::FlowConfig, String> {
@@ -579,6 +599,10 @@ fn flow_finish(
         .map_err(|e| e.to_string())
 }
 
+// ============================================================================
+// LFS Commands (Git Large File Storage)
+// ============================================================================
+
 /// Git LFS status for a repo: availability, tracked patterns, files (PH4-007).
 #[tauri::command]
 fn lfs_status(repo: RepoId, engine: State<GixEngine>) -> Result<lady_proto::LfsStatus, String> {
@@ -590,6 +614,10 @@ fn lfs_status(repo: RepoId, engine: State<GixEngine>) -> Result<lady_proto::LfsS
 fn lfs_track(repo: RepoId, pattern: String, engine: State<GixEngine>) -> Result<(), String> {
     engine.lfs_track(&repo, &pattern).map_err(|e| e.to_string())
 }
+
+// ============================================================================
+// Reflog & Bisect Commands
+// ============================================================================
 
 /// The reflog for `refname` (default HEAD), newest first (PH3-007).
 #[tauri::command]
@@ -642,6 +670,10 @@ fn bisect_state(repo: RepoId, engine: State<GixEngine>) -> Result<lady_proto::Bi
 fn parse_placeholders(template: String) -> Vec<lady_proto::Placeholder> {
     lady_git::custom::parse_placeholders(&template)
 }
+
+// ============================================================================
+// Custom Commands & External Tools
+// ============================================================================
 
 /// Run a custom command: substitute `values` into `template` to build a safe
 /// argv, then execute it against the repo. Returns stdout/stderr/exit code.
@@ -696,6 +728,10 @@ fn recent_messages(
         .recent_messages(&repo, limit)
         .map_err(|e| e.to_string())
 }
+
+// ============================================================================
+// Branch & Tag Commands
+// ============================================================================
 
 /// Create branch `name` at `start_point` (or HEAD when omitted).
 #[tauri::command]
@@ -770,6 +806,10 @@ fn move_tag(
         .move_tag(&repo, &name, &target)
         .map_err(|e| e.to_string())
 }
+
+// ============================================================================
+// Remote & Clone Commands
+// ============================================================================
 
 #[tauri::command]
 fn reset(
@@ -1098,6 +1138,10 @@ fn stash_pop(repo: RepoId, index: usize, engine: State<GixEngine>) -> Result<(),
 fn stash_drop(repo: RepoId, index: usize, engine: State<GixEngine>) -> Result<(), String> {
     engine.stash_drop(&repo, index).map_err(|e| e.to_string())
 }
+
+// ============================================================================
+// Merge, Rebase & Integration Commands
+// ============================================================================
 
 #[tauri::command]
 async fn merge(
@@ -1515,6 +1559,10 @@ fn set_repo_override(
     })
 }
 
+// ============================================================================
+// Settings & Identity Commands
+// ============================================================================
+
 /// The global defaults block (no repo needed — drives Settings with no repo open).
 #[tauri::command]
 fn global_defaults() -> Result<RepoSettings, String> {
@@ -1646,6 +1694,10 @@ fn https_account_git_auth(account_id: &str, login: &str) -> GitAuth {
 fn list_github_accounts() -> Result<Vec<GitHubAccount>, String> {
     Ok(load_settings_inner().github_accounts)
 }
+
+// ============================================================================
+// Hosting & Authentication Commands (GitHub, GitLab, etc.)
+// ============================================================================
 
 /// Register (or update) a GitHub account: validate the PAT, learn the login,
 /// store the token in the keychain under `github-token:<login>`, and persist the
@@ -2435,6 +2487,10 @@ fn add_to_gitignore(
         .map_err(|e| e.to_string())
 }
 
+// ============================================================================
+// Licensing Commands
+// ============================================================================
+
 // ── Licensing gate — PH3-013 (ADR-0007: client-side speed bump, NOT DRM) ────────
 
 /// Current Unix time in seconds.
@@ -2671,6 +2727,9 @@ pub fn run() {
             ai::ai_pr_description,
             ai::ai_changelog,
             ai::ai_stash_note,
+            // ============================================================================
+            // Updater Commands (Desktop Only)
+            // ============================================================================
             #[cfg(desktop)]
             updater::check_for_updates,
             #[cfg(desktop)]

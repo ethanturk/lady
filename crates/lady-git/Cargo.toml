@@ -25,3 +25,7 @@ bench = false
 [[bench]]
 name = "repo_ops"
 harness = false
+
+[[test]]
+name = "integration"
+path = "tests/integration/mod.rs"

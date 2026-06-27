@@ -8,7 +8,8 @@ export type ChangesLayout = "list" | "tree";
 
 const CHANGES_KEY = "lady-changes-layout";
 
-const stored = localStorage.getItem(CHANGES_KEY);
+const isTestEnv = typeof window === "undefined" || !window.localStorage;
+const stored = isTestEnv ? null : localStorage.getItem(CHANGES_KEY);
 const [changesLayout, setChangesLayoutSignal] = createSignal<ChangesLayout>(
   stored === "tree" ? "tree" : "list",
 );
@@ -18,7 +19,7 @@ export { changesLayout };
 /** Set how the Local Changes file lists render: flat list or directory tree. */
 export function setChangesLayout(v: ChangesLayout): void {
   setChangesLayoutSignal(v);
-  localStorage.setItem(CHANGES_KEY, v);
+  if (!isTestEnv) localStorage.setItem(CHANGES_KEY, v);
 }
 
 // ── Diff line wrapping ───────────────────────────────────────────────────────
@@ -26,7 +27,7 @@ export function setChangesLayout(v: ChangesLayout): void {
 // When on, lines wrap to the viewport so nothing is clipped horizontally.
 const WRAP_KEY = "lady-diff-wrap";
 const [wrapDiff, setWrapDiffSignal] = createSignal<boolean>(
-  localStorage.getItem(WRAP_KEY) === "1",
+  isTestEnv ? false : localStorage.getItem(WRAP_KEY) === "1",
 );
 
 export { wrapDiff };
@@ -34,7 +35,7 @@ export { wrapDiff };
 /** Toggle forced line-wrapping in diffs (persisted). */
 export function setWrapDiff(v: boolean): void {
   setWrapDiffSignal(v);
-  localStorage.setItem(WRAP_KEY, v ? "1" : "0");
+  if (!isTestEnv) localStorage.setItem(WRAP_KEY, v ? "1" : "0");
 }
 
 // ── Auto-update check on launch ──────────────────────────────────────────────
@@ -43,7 +44,7 @@ export function setWrapDiff(v: boolean): void {
 // explicit user click — the check is the only thing automated here.
 const AUTO_UPDATE_KEY = "lady-auto-update-check";
 const [autoUpdateCheck, setAutoUpdateCheckSignal] = createSignal<boolean>(
-  localStorage.getItem(AUTO_UPDATE_KEY) !== "0",
+  isTestEnv ? true : localStorage.getItem(AUTO_UPDATE_KEY) !== "0",
 );
 
 export { autoUpdateCheck };
@@ -51,14 +52,14 @@ export { autoUpdateCheck };
 /** Toggle the launch-time check for new releases (persisted). */
 export function setAutoUpdateCheck(v: boolean): void {
   setAutoUpdateCheckSignal(v);
-  localStorage.setItem(AUTO_UPDATE_KEY, v ? "1" : "0");
+  if (!isTestEnv) localStorage.setItem(AUTO_UPDATE_KEY, v ? "1" : "0");
 }
 
 // ── Resizable Staged pane height (Local Changes) ─────────────────────────────
 const STAGED_H_KEY = "lady-staged-height";
-const storedH = Number(localStorage.getItem(STAGED_H_KEY));
+const storedH = isTestEnv ? null : Number(localStorage.getItem(STAGED_H_KEY));
 const [stagedHeight, setStagedHeightSignal] = createSignal<number>(
-  Number.isFinite(storedH) && storedH > 0 ? storedH : 260,
+  storedH != null && Number.isFinite(storedH) && storedH > 0 ? storedH : 260,
 );
 
 export { stagedHeight };
@@ -71,11 +72,11 @@ export function setStagedHeight(px: number): void {
 
 // ── Adjustable pane / dialog widths (px) ─────────────────────────────────────
 function widthPref(key: string, fallback: number) {
-  const stored = Number(localStorage.getItem(key));
-  const [get, set] = createSignal<number>(Number.isFinite(stored) && stored > 0 ? stored : fallback);
+  const stored = isTestEnv ? null : Number(localStorage.getItem(key));
+  const [get, set] = createSignal<number>(stored != null && Number.isFinite(stored) && stored > 0 ? stored : fallback);
   const setter = (px: number) => {
     set(px);
-    localStorage.setItem(key, String(Math.round(px)));
+    if (!isTestEnv) localStorage.setItem(key, String(Math.round(px)));
   };
   return [get, setter] as const;
 }
@@ -108,7 +109,7 @@ const asStep = (v: string | null): SizeStep => (SIZE_STEPS.includes(v as SizeSte
 const TEXT_KEY = "lady-text-size";
 const PAD_KEY = "lady-ui-padding";
 
-const [textSize, setTextSizeSignal] = createSignal<SizeStep>(asStep(localStorage.getItem(TEXT_KEY)));
+const [textSize, setTextSizeSignal] = createSignal<SizeStep>(asStep(isTestEnv ? null : localStorage.getItem(TEXT_KEY)));
 const [uiPadding, setUiPaddingSignal] = createSignal<SizeStep>(asStep(localStorage.getItem(PAD_KEY)));
 
 export { textSize, uiPadding };
@@ -117,9 +118,11 @@ export { textSize, uiPadding };
 // and the --pad-scale variable (padding) globally. Applied at module load and
 // on every change.
 function applyText(v: SizeStep): void {
+  if (isTestEnv) return;
   document.documentElement.setAttribute("data-text", v);
 }
 function applyPad(v: SizeStep): void {
+  if (isTestEnv) return;
   document.documentElement.setAttribute("data-pad", v);
 }
 applyText(textSize());
@@ -128,14 +131,14 @@ applyPad(uiPadding());
 /** Set the global text size (root zoom): smaller / default / larger / largest. */
 export function setTextSize(v: SizeStep): void {
   setTextSizeSignal(v);
-  localStorage.setItem(TEXT_KEY, v);
+  if (!isTestEnv) localStorage.setItem(TEXT_KEY, v);
   applyText(v);
 }
 
 /** Set the global UI padding density via the --pad-scale variable. */
 export function setUiPadding(v: SizeStep): void {
   setUiPaddingSignal(v);
-  localStorage.setItem(PAD_KEY, v);
+  if (!isTestEnv) localStorage.setItem(PAD_KEY, v);
   applyPad(v);
 }
 
@@ -156,16 +159,18 @@ const prefersDark = () =>
   window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
 
 function applyTheme(mode: ThemeMode): void {
+  if (isTestEnv) return;
   const resolved = mode === "system" ? (prefersDark() ? "dark" : "light") : mode;
   document.documentElement.setAttribute("data-theme", resolved);
 }
 function applyAccent(a: Accent): void {
+  if (isTestEnv) return;
   if (a === "default") document.documentElement.removeAttribute("data-accent");
   else document.documentElement.setAttribute("data-accent", a);
 }
 
-const storedMode = (localStorage.getItem(THEME_KEY) as ThemeMode) || "system";
-const storedAccent = (localStorage.getItem(ACCENT_KEY) as Accent) || "default";
+const storedMode = (isTestEnv ? null : localStorage.getItem(THEME_KEY)) as ThemeMode || "system";
+const storedAccent = (isTestEnv ? null : localStorage.getItem(ACCENT_KEY)) as Accent || "default";
 const [themeMode, setThemeModeSignal] = createSignal<ThemeMode>(
   THEME_MODES.includes(storedMode) ? storedMode : "system",
 );
@@ -189,14 +194,14 @@ if (window.matchMedia) {
 /** Set the color scheme: follow OS, force dark, or force light. */
 export function setThemeMode(v: ThemeMode): void {
   setThemeModeSignal(v);
-  localStorage.setItem(THEME_KEY, v);
+  if (!isTestEnv) localStorage.setItem(THEME_KEY, v);
   applyTheme(v);
 }
 
 /** Set the accent color (themes `--accent` everywhere via a root attribute). */
 export function setAccent(v: Accent): void {
   setAccentSignal(v);
-  localStorage.setItem(ACCENT_KEY, v);
+  if (!isTestEnv) localStorage.setItem(ACCENT_KEY, v);
   applyAccent(v);
 }
 
@@ -259,7 +264,7 @@ if (typeof window !== "undefined") {
   // First run with no stored padding AND a coarse pointer → default padding to
   // "l" so the existing ps(...) density grows tap targets, reusing the
   // user-overridable density system instead of hard CSS overrides.
-  if (localStorage.getItem(PAD_KEY) === null && (coarseMq?.matches ?? false)) {
+  if (!isTestEnv && localStorage.getItem(PAD_KEY) === null && (coarseMq?.matches ?? false)) {
     setUiPadding("l");
   }
 }
