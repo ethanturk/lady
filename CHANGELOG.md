@@ -1,8 +1,25 @@
 # Changelog
 
 All notable changes to Lady. Format follows [Keep a Changelog](https://keepachangelog.com).
-The current shipped app/UI release is `v0.0.13`; later semantic version sections
+The current shipped app/UI release is `v0.0.14`; later semantic version sections
 below are roadmap history, not published release tags.
+
+## [0.0.14] — Error handling polish & integration tests
+
+### Changed
+- Replaced all 22 production `unwrap()/expect()` calls with proper error handling:
+  - Mutex poisoning recovery using `unwrap_or_else(|e| e.into_inner())`
+  - Git process errors propagate with context
+  - Infallible operations have enhanced panic messages
+  - All verification gates pass
+
+### Added
+- 9 integration tests in `crates/lady-git/tests/integration/` covering:
+  - Basic repo operations (init, status, commit, log, diff)
+  - Branch creation and fast-forward merges
+  - Merge conflict detection
+  - Worktree management
+  - Gix vs system git consistency
 
 ## [0.0.13] — Context menu hover affordance
 
