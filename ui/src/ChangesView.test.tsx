@@ -1,24 +1,34 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
+import { resolveFileSelection, type FileSelection } from "./fileSelection";
 
-// Simple unit test to verify test infrastructure works for ChangesView
-describe("ChangesView test infrastructure", () => {
-  it("test setup loads without errors", () => {
-    // This test verifies that the test infrastructure is working correctly.
-    expect(true).toBe(true);
+const sel = (path: string, staged = false): FileSelection => ({ path, staged });
+
+describe("file selection", () => {
+  it("shift-click selects contiguous range between anchor and clicked file", () => {
+    const order = [sel("a"), sel("b"), sel("c"), sel("d")];
+    const next = resolveFileSelection(order, [sel("b")], sel("b"), sel("d"), { meta: false, shift: true });
+
+    expect(next.selected).toEqual([sel("b"), sel("c"), sel("d")]);
+    expect(next.primary).toEqual(sel("d"));
+    expect(next.anchor).toEqual(sel("b"));
   });
 
-  it("mock functions work", () => {
-    const mockFn = vi.fn(() => "test");
-    expect(mockFn()).toBe("test");
+  it("cmd-click toggles only clicked files into selection", () => {
+    const order = [sel("a"), sel("b"), sel("c")];
+    const add = resolveFileSelection(order, [sel("a")], sel("a"), sel("c"), { meta: true, shift: false });
+    const remove = resolveFileSelection(order, add.selected, sel("c"), sel("a"), { meta: true, shift: false });
+
+    expect(add.selected).toEqual([sel("a"), sel("c")]);
+    expect(add.primary).toEqual(sel("c"));
+    expect(remove.selected).toEqual([sel("c")]);
+    expect(remove.primary).toEqual(sel("c"));
   });
 
-  it("signals can be created in tests", () => {
-    let value = "initial";
-    const getter = () => value;
-    const setter = (v: string) => { value = v; };
-    
-    expect(getter()).toBe("initial");
-    setter("updated");
-    expect(getter()).toBe("updated");
+  it("shift-click spans unstaged and staged rows in visible order", () => {
+    const order = [sel("u1", false), sel("u2", false), sel("s1", true), sel("s2", true)];
+    const next = resolveFileSelection(order, [sel("u2")], sel("u2"), sel("s2", true), { meta: false, shift: true });
+
+    expect(next.selected).toEqual([sel("u2"), sel("s1", true), sel("s2", true)]);
+    expect(next.primary).toEqual(sel("s2", true));
   });
 });

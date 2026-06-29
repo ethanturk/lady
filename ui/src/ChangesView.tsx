@@ -10,6 +10,7 @@ import { changesColWidth, changesLayout, hideResizers, isNarrow, setChangesColWi
 import { effectiveSign, repoSettings } from "./repoSettings";
 import type { ActionResult } from "./branchActions";
 import { copyPath, discardChanges, ignore, openFile, revealFile, saveAsPatch, stashFiles } from "./fileActions";
+import { resolveFileSelection, sameSelection, selectionKey, type FileSelection as Selection } from "./fileSelection";
 
 /** A 17px colored status badge for a file's change kind (design tokens). */
 const KIND_BADGE: Record<ChangeKind, { label: string; bg: string; fg: string }> = {
@@ -113,12 +114,6 @@ const FilePathLabel: Component<{ path: string; oldPath?: string | null; leaf?: s
   );
 };
 
-/** Which file + side the diff pane is showing. */
-interface Selection {
-  path: string;
-  staged: boolean;
-}
-
 interface ChangesViewProps {
   repoId: RepoId;
   /** Bump to force a status reload after an external mutation. */
@@ -160,6 +155,8 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
   const [wt, setWt] = createSignal<WorkingTree | null>(null);
   const [err, setErr] = createSignal<string | null>(null);
   const [selected, setSelected] = createSignal<Selection | null>(null);
+  const [selectedFiles, setSelectedFiles] = createSignal<Selection[]>([]);
+  const [selectionAnchor, setSelectionAnchor] = createSignal<Selection | null>(null);
   const [subject, setSubject] = createSignal("");
   const [body, setBody] = createSignal("");
   const [amend, setAmend] = createSignal(false);
@@ -244,7 +241,14 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
     if (!s) return null;
     return { kind: s.staged ? "IndexVsHead" : "WorkingVsIndex", value: s.path };
   };
+  const replaceSelection = (entries: Selection[], primary: Selection | null, anchor: Selection | null = primary) => {
+    setSelectedFiles(entries);
+    setSelected(primary);
+    setSelectionAnchor(anchor);
+  };
   const isSelected = (path: string, staged: boolean) =>
+    selectedFiles().some((sel) => sel.path === path && sel.staged === staged);
+  const isPrimary = (path: string, staged: boolean) =>
     selected()?.path === path && selected()?.staged === staged;
 
   createEffect(() => {
@@ -261,6 +265,26 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
     repoSettings(repo)
       .then((r) => setSign(effectiveSign(r)))
       .catch(() => {});
+  });
+
+  createEffect(() => {
+    const available = new Set([
+      ...unstagedAll().map((f) => selectionKey({ path: f.path, staged: false })),
+      ...(wt()?.staged ?? []).map((f) => selectionKey({ path: f.path, staged: true })),
+    ]);
+    const current = selectedFiles();
+    const next = current.filter((sel) => available.has(selectionKey(sel)));
+    if (next.length !== current.length || next.some((sel, i) => !sameSelection(sel, current[i]))) {
+      setSelectedFiles(next);
+    }
+    const primary = selected();
+    if (primary && !available.has(selectionKey(primary))) {
+      setSelected(next[next.length - 1] ?? null);
+    }
+    const anchor = selectionAnchor();
+    if (anchor && !available.has(selectionKey(anchor))) {
+      setSelectionAnchor(null);
+    }
   });
 
   const afterMutation = (clearErr = true) => {
@@ -280,13 +304,21 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
     const list = fromStaged ? (wt()?.staged ?? []) : unstagedAll();
     const idx = list.findIndex((f) => f.path === path);
     const nextFile = list[idx + 1] ?? list[idx - 1] ?? null;
-    setSelected(nextFile ? { path: nextFile.path, staged: fromStaged } : null);
+    replaceSelection(
+      nextFile ? [{ path: nextFile.path, staged: fromStaged }] : [],
+      nextFile ? { path: nextFile.path, staged: fromStaged } : null,
+    );
+  };
+
+  const toggleStagePaths = (paths: string[], fromStaged: boolean, focus?: Selection | null) => {
+    if (paths.length === 0) return;
+    if (focus && paths.includes(focus.path)) advanceSelection(focus.path, fromStaged);
+    fromStaged ? unstage(paths) : stage(paths);
   };
 
   // Stage/unstage a single file, advancing the selection to the next one.
   const stageOne = (path: string, fromStaged: boolean) => {
-    advanceSelection(path, fromStaged);
-    fromStaged ? unstage([path]) : stage([path]);
+    toggleStagePaths([path], fromStaged, { path, staged: fromStaged });
   };
 
   const stage = (paths: string[]) => {
@@ -333,7 +365,9 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
   // Menu for a single file row. `staged` controls the Stage/Unstage verb.
   const fileMenuItems = (f: FileStatus, staged: boolean): MenuEntry[] => {
     const path = f.path;
+    const picked = actionPathsForFile(path, staged);
     const all = staged ? allStagedPaths() : allUnstagedPaths();
+    const multi = picked.length > 1;
     return [
       { label: "Open", run: () => runAction(openFile(props.repoId, path)) },
       { label: "Show in Finder", run: () => runAction(revealFile(props.repoId, path)) },
@@ -343,14 +377,14 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
       { label: "Explain changes", run: () => props.onExplain?.({ kind: "path", path }, `Explain ${path}`) },
       "divider",
       staged
-        ? { label: "Unstage", shortcut: "⌘S", run: async () => stageOne(path, true) }
-        : { label: "Stage", shortcut: "⌘S", run: async () => stageOne(path, false) },
-      { label: "Discard Changes…", shortcut: "⇧⌘D", disabled: f.kind === "Untracked", run: () => runAction(discardChanges(props.repoId, [path])) },
+        ? { label: multi ? `Unstage ${picked.length} Files` : "Unstage", shortcut: "⌘S", run: async () => toggleStagePaths(picked, true, { path, staged: true }) }
+        : { label: multi ? `Stage ${picked.length} Files` : "Stage", shortcut: "⌘S", run: async () => toggleStagePaths(picked, false, { path, staged: false }) },
+      { label: multi ? `Discard ${picked.length} Files…` : "Discard Changes…", shortcut: "⇧⌘D", disabled: !multi && f.kind === "Untracked", run: () => runAction(discardChanges(props.repoId, picked)) },
       { label: "Stage All", shortcut: "⌥⌘S", run: async () => stage(all) },
       "divider",
-      { label: "Ignore", run: () => runAction(ignore(props.repoId, [path])) },
-      { label: "Stash 1 File…", run: () => runAction(stashFiles(props.repoId, [path])) },
-      { label: "Save as Patch…", run: () => runAction(saveAsPatch(props.repoId, [path])) },
+      { label: multi ? `Ignore ${picked.length} Files` : "Ignore", run: () => runAction(ignore(props.repoId, picked)) },
+      { label: multi ? `Stash ${picked.length} Files…` : "Stash 1 File…", run: () => runAction(stashFiles(props.repoId, picked)) },
+      { label: multi ? `Save ${picked.length} Files as Patch…` : "Save as Patch…", run: () => runAction(saveAsPatch(props.repoId, picked)) },
       { label: "Copy Path", shortcut: "⌘C", run: () => runAction(copyPath(path)) },
     ];
   };
@@ -382,7 +416,9 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
 
   const openFileMenu = (e: MouseEvent, f: FileStatus, staged: boolean) => {
     e.preventDefault();
-    setSelected({ path: f.path, staged });
+    if (!isSelected(f.path, staged)) {
+      replaceSelection([{ path: f.path, staged }], { path: f.path, staged });
+    }
     setMenu({ x: e.clientX, y: e.clientY, items: fileMenuItems(f, staged) });
   };
   const openFolderMenu = (e: MouseEvent, prefix: string, staged: boolean) => {
@@ -396,11 +432,12 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
   const onColumnKeyDown = (e: KeyboardEvent) => {
     const s = selected();
     if (!s) return;
+    const paths = actionPathsForFile(s.path, s.staged);
     // Enter (no modifier) stages the unstaged file (or unstages a staged one)
     // and advances to the next file in the list.
     if (e.key === "Enter" && !e.metaKey && !e.ctrlKey && !e.altKey) {
       e.preventDefault();
-      stageOne(s.path, s.staged);
+      toggleStagePaths(paths, s.staged, s);
       return;
     }
     const mod = e.metaKey || e.ctrlKey;
@@ -411,10 +448,10 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
       s.staged ? unstage(allStagedPaths()) : stage(allUnstagedPaths());
     } else if (k === "s") {
       e.preventDefault();
-      stageOne(s.path, s.staged);
+      toggleStagePaths(paths, s.staged, s);
     } else if (k === "d" && e.shiftKey) {
       e.preventDefault();
-      runAction(discardChanges(props.repoId, [s.path]));
+      runAction(discardChanges(props.repoId, paths));
     } else if (k === "d") {
       e.preventDefault();
       externalDiff(s.path);
@@ -560,7 +597,7 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
   const fileRow = (f: FileStatus, staged: boolean, indent = 0, leaf?: string) => (
     <div
       class="hov"
-      onClick={() => setSelected({ path: f.path, staged })}
+      onClick={(e) => handleFileClick(f.path, staged, e)}
       onContextMenu={(e) => openFileMenu(e, f, staged)}
       style={{
         position: "relative",
@@ -573,7 +610,7 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
         "font-size": "12.5px",
         color: "var(--tx2)",
         background: isSelected(f.path, staged) ? accentFill : "transparent",
-        "box-shadow": isSelected(f.path, staged) ? "inset 2px 0 0 var(--accent)" : "none",
+        "box-shadow": isPrimary(f.path, staged) ? "inset 2px 0 0 var(--accent)" : "none",
       }}
     >
       <Badge kind={f.kind} />
@@ -582,7 +619,7 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
         style={{ ...subBtn, padding: "2px 8px", "font-size": "11px" }}
         onClick={(e) => {
           e.stopPropagation();
-          stageOne(f.path, staged);
+          toggleStagePaths(actionPathsForFile(f.path, staged), staged, { path: f.path, staged });
         }}
       >
         {staged ? "Unstage" : "Stage"}
@@ -636,6 +673,36 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
       }
       return true;
     });
+  };
+
+  const visibleFileSelections = (files: FileStatus[], staged: boolean): Selection[] =>
+    changesLayout() === "tree"
+      ? visibleNodes(files, staged)
+          .filter((node): node is Extract<TreeNode, { type: "file" }> => node.type === "file")
+          .map((node) => ({ path: node.file.path, staged }))
+      : files.map((f) => ({ path: f.path, staged }));
+
+  const selectableFiles = (): Selection[] => [
+    ...visibleFileSelections(unstagedAll(), false),
+    ...visibleFileSelections(wt()?.staged ?? [], true),
+  ];
+
+  const selectedPathsForBucket = (staged: boolean): string[] =>
+    selectedFiles()
+      .filter((sel) => sel.staged === staged)
+      .map((sel) => sel.path);
+
+  const actionPathsForFile = (path: string, staged: boolean): string[] => {
+    const bucket = selectedPathsForBucket(staged);
+    return isSelected(path, staged) && bucket.length > 1 ? bucket : [path];
+  };
+
+  const handleFileClick = (path: string, staged: boolean, e: MouseEvent) => {
+    const next = resolveFileSelection(selectableFiles(), selectedFiles(), selectionAnchor(), { path, staged }, {
+      meta: e.metaKey || e.ctrlKey,
+      shift: e.shiftKey,
+    });
+    replaceSelection(next.selected, next.primary, next.anchor);
   };
 
   // Render a bucket as a flat list or a directory tree, per the user's setting.

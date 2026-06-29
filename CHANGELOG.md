@@ -1,8 +1,23 @@
 # Changelog
 
 All notable changes to Lady. Format follows [Keep a Changelog](https://keepachangelog.com).
-The current shipped app/UI release is `v0.0.14`; later semantic version sections
+The current shipped app/UI release is `v0.0.15`; later semantic version sections
 below are roadmap history, not published release tags.
+
+## [0.0.15] — File multi-select in Local Changes
+
+### Added
+- Shift-click in Local Changes now selects contiguous file ranges across the
+  visible unstaged/staged list order.
+- Cmd/Ctrl-click now toggles individual files into multi-selection without
+  expanding the range.
+
+### Changed
+- Stage/Unstage actions now operate on the current file multi-selection within
+  the active staged/unstaged bucket, including keyboard shortcuts and file-row
+  buttons.
+- File-row context menus now use the current multi-selection when right-clicking
+  a selected row, enabling bulk discard/ignore/stash/patch actions.
 
 ## [0.0.14] — Error handling polish & integration tests
 
