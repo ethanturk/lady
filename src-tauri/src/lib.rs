@@ -407,16 +407,29 @@ fn discard_untracked(
 /// Commit the staged changes, or amend the tip when `amend` is set. Returns the
 /// new commit Oid.
 #[tauri::command]
-fn commit(
+async fn commit(
     repo: RepoId,
     message: String,
     amend: bool,
     sign: bool,
-    engine: State<GixEngine>,
+    app: tauri::AppHandle,
 ) -> Result<Oid, String> {
-    engine
-        .commit(&repo, &message, &CommitOpts { amend, sign })
-        .map_err(|e| e.to_string())
+    use tauri::{Emitter, Manager};
+    // Run the (potentially slow) commit + pre-commit hooks on a blocking thread
+    // so the UI stays responsive; relay each hook output line to the frontend
+    // over `commit-progress` for live feedback.
+    tauri::async_runtime::spawn_blocking(move || {
+        let engine = app.state::<GixEngine>();
+        let emit_app = app.clone();
+        let mut on_line = move |line: &str| {
+            let _ = emit_app.emit("commit-progress", line.to_string());
+        };
+        engine
+            .commit_streaming(&repo, &message, &CommitOpts { amend, sign }, &mut on_line)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("commit task failed: {e}"))?
 }
 
 /// Signature verification status for each commit oid (PH3-005 badge data).

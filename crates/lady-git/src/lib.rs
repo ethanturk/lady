@@ -637,6 +637,36 @@ impl GixEngine {
         self.workdir(id)
     }
 
+    /// Commit the staged changes (or amend the tip), streaming each line of the
+    /// pre-commit hooks' stdout to `on_line` as it arrives so a slow hook gives
+    /// live UI feedback instead of freezing the app. Returns the new commit's
+    /// [`Oid`]. The trait [`GitEngine::commit`] is this with a no-op sink.
+    pub fn commit_streaming(
+        &self,
+        repo: &RepoId,
+        message: &str,
+        opts: &CommitOpts,
+        on_line: &mut dyn FnMut(&str),
+    ) -> Result<Oid> {
+        let wd = self.workdir(repo)?;
+        // Pass the message via stdin (`-F -`) so arbitrary text — newlines,
+        // quotes, leading dashes — survives without shell quoting. `--amend`
+        // rewrites the tip; signing config is inherited, never overridden.
+        let mut args: Vec<&str> = vec!["commit", "-F", "-"];
+        if opts.amend {
+            args.push("--amend");
+        }
+        // Force a signature when asked; otherwise inherit `commit.gpgsign`.
+        if opts.sign {
+            args.push("-S");
+        }
+        run_git_stdin_streaming(&wd, &args, message.as_bytes(), on_line)?;
+        // The new tip is the committed Oid.
+        let out = run_git(&wd, &["rev-parse", "HEAD"])?;
+        let oid = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        Ok(Oid::from(oid))
+    }
+
     /// The common git directory (`.git`, or the shared dir for linked
     /// worktrees) for `id`. Watchers observe this for ref/index/HEAD changes
     /// that live outside a linked worktree's own directory.
@@ -904,6 +934,94 @@ pub(crate) fn run_git_stdin(workdir: &Path, args: &[&str], input: &[u8]) -> Resu
         }
         return Err(Error::Git(if msg.is_empty() {
             format!("git {args:?} failed ({})", out.status)
+        } else {
+            msg
+        }));
+    }
+    Ok(())
+}
+
+/// Run system `git` in `workdir`, feeding `input` to its stdin and streaming
+/// each stdout line to `on_line` as it arrives. Used for `git commit`, whose
+/// pre-commit hooks (the pre-commit framework, husky, …) write their live
+/// progress report to stdout — relaying it line-by-line lets the UI show what
+/// a hook is doing instead of freezing until it finishes.
+///
+/// stderr (git's own notes) is drained on a background thread and combined with
+/// the collected stdout on a non-zero exit, so a hook failure still surfaces the
+/// full report verbatim — exactly like [`run_git_stdin`] (ADR-0003).
+pub(crate) fn run_git_stdin_streaming(
+    workdir: &Path,
+    args: &[&str],
+    input: &[u8],
+    on_line: &mut dyn FnMut(&str),
+) -> Result<()> {
+    use std::io::{BufRead, BufReader, Write};
+    use std::process::Stdio;
+
+    let mut cmd = Command::new("git");
+    cmd.current_dir(workdir).args(args);
+    make_noninteractive(&mut cmd);
+    let mut child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| Error::Git(format!("failed to run git: {e}")))?;
+    // Write the message, then drop stdin to close it so git proceeds.
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| Error::Git("git process has no stdin".into()))?
+        .write_all(input)
+        .map_err(|e| Error::Git(format!("failed to write to git stdin: {e}")))?;
+
+    // Drain stderr on its own thread so a full stdout pipe can't deadlock it
+    // (and vice versa); keep a copy for the error message.
+    let stderr = child.stderr.take();
+    let stderr_handle = std::thread::spawn(move || {
+        let mut buf = String::new();
+        if let Some(stderr) = stderr {
+            for line in BufReader::new(stderr)
+                .lines()
+                .map_while(std::result::Result::ok)
+            {
+                buf.push_str(&line);
+                buf.push('\n');
+            }
+        }
+        buf
+    });
+
+    // Stream stdout line-by-line (the hook framework's live report).
+    let mut stdout_collected = String::new();
+    if let Some(stdout) = child.stdout.take() {
+        for line in BufReader::new(stdout)
+            .lines()
+            .map_while(std::result::Result::ok)
+        {
+            on_line(&line);
+            stdout_collected.push_str(&line);
+            stdout_collected.push('\n');
+        }
+    }
+
+    let status = child
+        .wait()
+        .map_err(|e| Error::Git(format!("failed to wait on git: {e}")))?;
+    let stderr_collected = stderr_handle.join().unwrap_or_default();
+    if !status.success() {
+        let mut msg = stderr_collected.trim().to_string();
+        let report = stdout_collected.trim();
+        if !report.is_empty() {
+            msg = if msg.is_empty() {
+                report.to_string()
+            } else {
+                format!("{report}\n{msg}")
+            };
+        }
+        return Err(Error::Git(if msg.is_empty() {
+            format!("git {args:?} failed ({status})")
         } else {
             msg
         }));
@@ -1434,23 +1552,8 @@ impl GitEngine for GixEngine {
     }
 
     fn commit(&self, repo: &RepoId, message: &str, opts: &CommitOpts) -> Result<Oid> {
-        let wd = self.workdir(repo)?;
-        // Pass the message via stdin (`-F -`) so arbitrary text — newlines,
-        // quotes, leading dashes — survives without shell quoting. `--amend`
-        // rewrites the tip; signing config is inherited, never overridden.
-        let mut args: Vec<&str> = vec!["commit", "-F", "-"];
-        if opts.amend {
-            args.push("--amend");
-        }
-        // Force a signature when asked; otherwise inherit `commit.gpgsign`.
-        if opts.sign {
-            args.push("-S");
-        }
-        run_git_stdin(&wd, &args, message.as_bytes())?;
-        // The new tip is the committed Oid.
-        let out = run_git(&wd, &["rev-parse", "HEAD"])?;
-        let oid = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        Ok(Oid::from(oid))
+        // Non-streaming callers (tests, internal flows) get a no-op sink.
+        self.commit_streaming(repo, message, opts, &mut |_| {})
     }
 
     fn recent_messages(&self, repo: &RepoId, limit: usize) -> Result<Vec<String>> {

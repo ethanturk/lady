@@ -1,8 +1,18 @@
 # Changelog
 
 All notable changes to Lady. Format follows [Keep a Changelog](https://keepachangelog.com).
-The current shipped app/UI release is `v0.0.15`; later semantic version sections
+The current shipped app/UI release is `v0.0.16`; later semantic version sections
 below are roadmap history, not published release tags.
+
+## [0.0.16] — Non-blocking commit hooks
+
+### Changed
+- Commits now run on a background thread, so the UI stays responsive while
+  pre-commit hooks execute instead of freezing until they finish.
+
+### Added
+- Live commit feedback: a spinner and the latest pre-commit hook output line
+  stream into the composer while a commit is in progress.
 
 ## [0.0.15] — File multi-select in Local Changes
 

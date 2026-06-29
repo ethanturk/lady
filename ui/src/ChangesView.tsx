@@ -1,6 +1,7 @@
 import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import type { Component, JSX } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type { AheadBehind, ChangeKind, DiffSpec, FileStatus, RepoId, WorkingTree } from "./commands";
 import DiffView from "./DiffView";
 import ContextMenu from "./ContextMenu";
@@ -168,6 +169,11 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
   // AI commit-message generation (PH5-006).
   const [aiBusy, setAiBusy] = createSignal(false);
   const [aiReq, setAiReq] = createSignal<string | null>(null);
+  // Commit + pre-commit hooks run on a backend thread; `committing` disables
+  // the button and `hookLines` collects the streamed hook output for live
+  // feedback while it runs.
+  const [committing, setCommitting] = createSignal(false);
+  const [hookLines, setHookLines] = createSignal<string[]>([]);
 
   const message = () => {
     const b = body().trim();
@@ -537,8 +543,14 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
   });
 
   const doCommit = async (push: boolean) => {
-    if (!canCommit()) return;
+    if (!canCommit() || committing()) return;
     setErr(null);
+    setHookLines([]);
+    setCommitting(true);
+    // Each line the backend relays from the pre-commit hooks' stdout.
+    const unlisten = await listen<string>("commit-progress", (e) => {
+      setHookLines((prev) => [...prev, e.payload]);
+    });
     try {
       await invoke<string>("commit", { repo: props.repoId, message: message(), amend: amend(), sign: sign() });
       // A clean commit clears any lingering hook failure from a prior attempt.
@@ -561,6 +573,10 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
       } else {
         setErr(msg);
       }
+    } finally {
+      unlisten();
+      setCommitting(false);
+      setHookLines([]);
     }
   };
 
@@ -869,6 +885,14 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
           value={body()}
           onInput={(e) => setBody(e.currentTarget.value)}
         />
+        <Show when={committing()}>
+          <div style={{ display: "flex", "align-items": "center", gap: "8px", "font-size": "12px", color: "var(--tx2)", "min-height": "16px" }}>
+            <span class="spin" style={{ display: "inline-block", width: "12px", height: "12px", border: "2px solid var(--bd)", "border-top-color": "var(--accent)", "border-radius": "50%" }} />
+            <span style={{ "white-space": "nowrap", overflow: "hidden", "text-overflow": "ellipsis" }}>
+              {hookLines().length > 0 ? hookLines()[hookLines().length - 1] : "Running pre-commit hooks…"}
+            </span>
+          </div>
+        </Show>
         <div style={{ display: "flex", "align-items": "center", gap: "12px", "flex-wrap": "wrap", "margin-top": "2px" }}>
           <label style={{ display: "flex", "align-items": "center", gap: "6px", "font-size": "12.5px", color: "var(--tx2)" }}>
             <input type="checkbox" checked={amend()} onChange={toggleAmend} />
@@ -910,20 +934,21 @@ const ChangesView: Component<ChangesViewProps> = (props) => {
           <span style={{ flex: "1" }} />
           <button
             style={{
-              background: canCommit() ? "var(--accent)" : "var(--btn)",
-              color: canCommit() ? "var(--on-accent-strong)" : "var(--tx3)",
+              background: canCommit() && !committing() ? "var(--accent)" : "var(--btn)",
+              color: canCommit() && !committing() ? "var(--on-accent-strong)" : "var(--tx3)",
               border: "none",
               "border-radius": "7px",
               padding: "8px 22px",
               "font-size": "12.5px",
               "font-weight": 600,
-              cursor: canCommit() ? "pointer" : "not-allowed",
+              cursor: canCommit() && !committing() ? "pointer" : "not-allowed",
             }}
-            disabled={!canCommit()}
+            disabled={!canCommit() || committing()}
             onClick={() => doCommit(shiftHeld())}
             title={shiftHeld() ? "Commit and push to the remote" : "Hold Shift to commit and push"}
           >
             {(() => {
+              if (committing()) return "Committing…";
               const verb = amend() ? "Amend" : stagedCount() > 0 ? `Commit (${stagedCount()})` : "Commit";
               return shiftHeld() ? `${verb} + Push` : verb;
             })()}

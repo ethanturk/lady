@@ -391,6 +391,14 @@ select:focus-visible {
   to { transform: translateX(0); }
 }
 
+/* Spinner for in-flight operations (commit hooks, ChangesView). */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.spin {
+  animation: spin 0.7s linear infinite;
+}
+
 /* ── Touch / coarse-pointer affordances (mobile + tablets) ─────────────────── */
 /* On touch devices grow the scrollbar and the tap targets in menus and the
    sidebar nav. Scoped to menu/nav controls so the tiny inline Stage/Unstage
