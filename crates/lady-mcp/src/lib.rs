@@ -8,13 +8,10 @@
 
 use std::sync::Arc;
 
-use std::future::Future;
-
 use lady_git::{GitEngine, GixEngine, GraphQuery};
 use lady_proto::{Oid, RepoId};
-use rmcp::handler::server::tool::Parameters;
-use rmcp::handler::server::wrapper::Json;
-use rmcp::model::{ErrorData, ServerCapabilities, ServerInfo};
+use rmcp::handler::server::wrapper::Parameters;
+use rmcp::model::{CallToolResult, ErrorData, ServerCapabilities, ServerInfo};
 use rmcp::{tool, tool_handler, tool_router, ServerHandler};
 use serde::{Deserialize, Serialize};
 
@@ -75,6 +72,12 @@ fn err(msg: impl std::fmt::Display) -> ErrorData {
     ErrorData::internal_error(msg.to_string(), None)
 }
 
+fn structured(value: impl Serialize) -> Result<CallToolResult, ErrorData> {
+    serde_json::to_value(value)
+        .map(CallToolResult::structured)
+        .map_err(err)
+}
+
 const DEFAULT_LIMIT: usize = 50;
 
 #[tool_router]
@@ -100,67 +103,62 @@ impl LadyMcp {
     }
 
     #[tool(description = "Get the working-tree status (staged/unstaged/untracked).")]
-    async fn get_status(&self) -> Result<Json<lady_proto::WorkingTree>, ErrorData> {
-        self.engine.status(&self.repo).map(Json).map_err(err)
+    async fn get_status(&self) -> Result<CallToolResult, ErrorData> {
+        structured(self.engine.status(&self.repo).map_err(err)?)
     }
 
     #[tool(description = "Get the diff of a commit against its first parent.")]
     async fn get_diff(
         &self,
         Parameters(DiffParams { commit }): Parameters<DiffParams>,
-    ) -> Result<Json<Vec<lady_proto::FileDiff>>, ErrorData> {
-        self.engine
-            .diff_commit(&self.repo, &Oid(commit))
-            .map(Json)
-            .map_err(err)
+    ) -> Result<CallToolResult, ErrorData> {
+        structured(
+            self.engine
+                .diff_commit(&self.repo, &Oid(commit))
+                .map_err(err)?,
+        )
     }
 
     #[tool(description = "List recent commits (newest first).")]
     async fn get_log(
         &self,
         Parameters(LogParams { limit }): Parameters<LogParams>,
-    ) -> Result<Json<Vec<CommitRecord>>, ErrorData> {
+    ) -> Result<CallToolResult, ErrorData> {
         let limit = if limit == 0 { DEFAULT_LIMIT } else { limit };
         let commits = self
             .engine
             .walk_log(&self.repo, GraphQuery { start: None, limit })
             .map_err(err)?;
-        Ok(Json(commits.iter().map(to_record).collect()))
+        structured(commits.iter().map(to_record).collect::<Vec<_>>())
     }
 
     #[tool(description = "Read a file's contents at a revision.")]
     async fn get_file_at(
         &self,
         Parameters(FileAtParams { rev, path }): Parameters<FileAtParams>,
-    ) -> Result<Json<Option<String>>, ErrorData> {
-        self.engine
-            .file_at(&self.repo, &rev, &path)
-            .map(Json)
-            .map_err(err)
+    ) -> Result<CallToolResult, ErrorData> {
+        structured(self.engine.file_at(&self.repo, &rev, &path).map_err(err)?)
     }
 
     #[tool(description = "Blame a file (per-line last-touching commit).")]
     async fn blame(
         &self,
         Parameters(BlameParams { path }): Parameters<BlameParams>,
-    ) -> Result<Json<lady_proto::Blame>, ErrorData> {
-        self.engine
-            .blame(&self.repo, &path, None)
-            .map(Json)
-            .map_err(err)
+    ) -> Result<CallToolResult, ErrorData> {
+        structured(self.engine.blame(&self.repo, &path, None).map_err(err)?)
     }
 
     #[tool(description = "Find commits whose summary contains a query (case-insensitive).")]
     async fn search_commits(
         &self,
         Parameters(SearchParams { query, limit }): Parameters<SearchParams>,
-    ) -> Result<Json<Vec<CommitRecord>>, ErrorData> {
+    ) -> Result<CallToolResult, ErrorData> {
         let limit = if limit == 0 { DEFAULT_LIMIT } else { limit };
         let commits = self
             .engine
             .search_commits(&self.repo, &query, limit)
             .map_err(err)?;
-        Ok(Json(commits.iter().map(to_record).collect()))
+        structured(commits.iter().map(to_record).collect::<Vec<_>>())
     }
 }
 
@@ -185,25 +183,20 @@ fn to_record(c: &lady_proto::CommitMeta) -> CommitRecord {
     }
 }
 
-#[tool_handler]
+#[tool_handler(router = self.tool_router)]
 impl ServerHandler for LadyMcp {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            instructions: Some(
-                "Read-only access to a Git repository via Lady: status, diff, log, \
-                 file-at-rev, blame, and commit search. No mutating operations."
-                    .to_string(),
-            ),
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            ..Default::default()
-        }
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
+            "Read-only access to a Git repository via Lady: status, diff, log, \
+                 file-at-rev, blame, and commit search. No mutating operations.",
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rmcp::model::CallToolRequestParam;
+    use rmcp::model::CallToolRequestParams;
     use rmcp::serve_client;
     use rmcp::service::serve_server;
     use std::path::Path;
@@ -270,10 +263,10 @@ mod tests {
 
             // Call get_log — returns the three fixture commits.
             let result = client
-                .call_tool(CallToolRequestParam {
-                    name: "get_log".into(),
-                    arguments: serde_json::json!({ "limit": 10 }).as_object().cloned(),
-                })
+                .call_tool(
+                    CallToolRequestParams::new("get_log")
+                        .with_arguments(rmcp::model::object(serde_json::json!({ "limit": 10 }))),
+                )
                 .await
                 .expect("call get_log");
             let json = serde_json::to_string(&result.content).expect("serialize content");

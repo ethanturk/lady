@@ -57,5 +57,5 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 wiremock = "0.6"
 tiktoken-rs = "0.6"
 regex = "1"
-rmcp = { version = "0.2", features = ["server", "client", "macros", "transport-io"] }
-schemars = "0.8"
+rmcp = { version = "1.4", features = ["server", "client", "macros", "transport-io"] }
+schemars = "1"

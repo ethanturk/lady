@@ -15,6 +15,7 @@ type Panel = "local" | "remote" | "tags" | "stashes" | "prs" | "issues";
 /** Scale a px padding by the global density step (--pad-scale). */
 const ps = (px: number) => `calc(${px}px * var(--pad-scale))`;
 const treePad = (base: number, depth: number) => ps(base + depth * 14);
+const naturalRefNameCompare = new Intl.Collator(undefined, { numeric: true }).compare;
 
 interface RefTreeNode {
   name: string;
@@ -379,7 +380,11 @@ const Sidebar: Component<SidebarProps> = (props) => {
       .sort((a, b) => a.name.localeCompare(b.name));
   const branches = createMemo(() => byKind("Branch"));
   const remotes = createMemo(() => byKind("Remote"));
-  const tags = createMemo(() => byKind("Tag"));
+  const tags = createMemo(() =>
+    props.refs
+      .filter((r) => r.kind === "Tag" && r.name.toLowerCase().includes(filter().toLowerCase()))
+      .sort((a, b) => naturalRefNameCompare(a.name, b.name))
+  );
   const branchTreeNodes = createMemo(() => branchTree(branches()));
   const remoteTreeNodes = createMemo(() => branchTree(remotes()));
   const isCurrent = (r: RefInfo) => r.kind === "Branch" && r.name === headBranch();
