@@ -1,8 +1,18 @@
 # Changelog
 
 All notable changes to Lady. Format follows [Keep a Changelog](https://keepachangelog.com).
-The current shipped app/UI release is `v0.0.17`; later semantic version sections
+The current shipped app/UI release is `v0.0.18`; later semantic version sections
 below are roadmap history, not published release tags.
+
+## [0.0.18] — No more index.lock races
+
+### Fixed
+- Eliminated the intermittent "Unable to create '.git/index.lock': File exists"
+  error. Lady's background status polling (driven by the filesystem watcher) no
+  longer takes the optional index lock (`GIT_OPTIONAL_LOCKS=0`), and Lady's own
+  index-touching git commands are now serialized per worktree, so they can no
+  longer collide with each other. Network operations (fetch/push/clone) are
+  unaffected and never block status.
 
 ## [0.0.17] — Finish merges from the conflict resolver
 

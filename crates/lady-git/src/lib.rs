@@ -816,10 +816,39 @@ fn make_noninteractive(cmd: &mut Command) {
     cmd.env("GIT_TERMINAL_PROMPT", "0");
     // Git Credential Manager (if it is the configured helper): do not pop UI.
     cmd.env("GCM_INTERACTIVE", "never");
+    // Never take *optional* locks. Read-only pollers (`git status`, diff, …) take
+    // `index.lock` only to rewrite the refreshed stat cache; Lady polls status on
+    // every filesystem-watcher tick, so that optional write races real mutations
+    // and yields "Unable to create '.git/index.lock': File exists". This is git's
+    // purpose-built switch for editors/TUIs that poll — mandatory locks (commit,
+    // add, …) are unaffected, so correctness is unchanged.
+    cmd.env("GIT_OPTIONAL_LOCKS", "0");
+}
+
+/// A process-wide, per-worktree mutex serialising Lady's own index-touching git
+/// shell-outs so two of *our* mutations (or a mutation and a watcher-triggered
+/// op) never fight over `.git/index.lock`. Keyed by worktree path; long network
+/// streamers (fetch/push/clone) deliberately bypass it — they take ref/FETCH_HEAD
+/// locks, not the index lock, and must not block status while they run. This
+/// cannot prevent an *external* git (your terminal/editor) from colliding;
+/// `GIT_OPTIONAL_LOCKS=0` above is what shrinks that window.
+fn repo_lock(workdir: &Path) -> std::sync::Arc<Mutex<()>> {
+    use std::collections::HashMap;
+    use std::sync::{Arc, OnceLock};
+    static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
+    let map = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = map.lock().unwrap_or_else(|e| e.into_inner());
+    Arc::clone(
+        guard
+            .entry(workdir.to_path_buf())
+            .or_insert_with(|| Arc::new(Mutex::new(()))),
+    )
 }
 
 /// Run system `git` and return the raw output without mapping non-zero exits.
 fn run_git_raw(workdir: &Path, args: &[&str]) -> Result<std::process::Output> {
+    let lock = repo_lock(workdir);
+    let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
     let mut cmd = Command::new("git");
     cmd.current_dir(workdir).args(args);
     make_noninteractive(&mut cmd);
@@ -835,6 +864,8 @@ fn run_git_env_raw(
     args: &[&str],
     envs: &[(&str, &str)],
 ) -> Result<std::process::Output> {
+    let lock = repo_lock(workdir);
+    let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
     let mut cmd = Command::new("git");
     cmd.current_dir(workdir).args(args);
     make_noninteractive(&mut cmd);
@@ -907,6 +938,8 @@ pub(crate) fn run_git_stdin(workdir: &Path, args: &[&str], input: &[u8]) -> Resu
     use std::io::Write;
     use std::process::Stdio;
 
+    let lock = repo_lock(workdir);
+    let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
     let mut cmd = Command::new("git");
     cmd.current_dir(workdir).args(args);
     make_noninteractive(&mut cmd);
@@ -967,6 +1000,8 @@ pub(crate) fn run_git_stdin_streaming(
     use std::io::{BufRead, BufReader, Write};
     use std::process::Stdio;
 
+    let lock = repo_lock(workdir);
+    let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
     let mut cmd = Command::new("git");
     cmd.current_dir(workdir).args(args);
     make_noninteractive(&mut cmd);
@@ -5267,6 +5302,51 @@ mod tests {
             engine.conflict_state(&id).expect("state after finish"),
             ConflictState::None
         );
+    }
+
+    /// Many concurrent status polls (as the filesystem watcher drives) running
+    /// alongside a stream of commits must never fail on `.git/index.lock` — the
+    /// per-worktree serialisation + `GIT_OPTIONAL_LOCKS=0` guarantee it. Without
+    /// them this races and intermittently returns the "File exists" lock error.
+    #[test]
+    fn concurrent_status_polls_and_commits_never_hit_index_lock() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let dir = fixture_repo();
+        let engine = Arc::new(GixEngine::new());
+        let id = engine.open(dir.path()).expect("open the fixture repo");
+
+        let mut handles = Vec::new();
+        // Status pollers, mimicking watcher-driven refreshes.
+        for _ in 0..6 {
+            let engine = Arc::clone(&engine);
+            let id = id.clone();
+            handles.push(thread::spawn(move || {
+                for _ in 0..40 {
+                    engine.status(&id).expect("status must not fail on a lock");
+                }
+            }));
+        }
+        // A concurrent stream of stage + commit mutations.
+        let p = dir.path().to_path_buf();
+        let engine_c = Arc::clone(&engine);
+        let id_c = id.clone();
+        handles.push(thread::spawn(move || {
+            for i in 0..20 {
+                std::fs::write(p.join("file1.txt"), format!("v{i}\n")).expect("write");
+                engine_c
+                    .stage_paths(&id_c, &["file1.txt".to_string()])
+                    .expect("stage must not fail on a lock");
+                engine_c
+                    .commit(&id_c, &format!("commit {i}"), &CommitOpts::default())
+                    .expect("commit must not fail on a lock");
+            }
+        }));
+
+        for h in handles {
+            h.join().expect("worker thread panicked");
+        }
     }
 
     // ── Interactive rebase (PH3-003) ──────────────────────────────────────────
