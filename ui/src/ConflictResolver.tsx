@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { cancelAi, isConsentError, runAiStream } from "./ai";
 import { conflictCombinedHeight, hideResizers, isNarrow, setConflictCombinedHeight } from "./prefs";
 import type {
+  ApplyOutcome,
   ConflictRegion,
   ConflictState,
   ParsedConflict,
@@ -537,6 +538,31 @@ const ConflictResolver: Component<{
       });
   };
 
+  // Finish a merge / cherry-pick / revert: creates the merge commit (or runs
+  // the sequencer's `--continue`) once every conflict is resolved. Rebase uses
+  // its own continue/skip controls above.
+  const finishOp = () => {
+    if (busy()) return;
+    setErr(null);
+    setBusy(true);
+    invoke<ApplyOutcome>("conflict_continue", { repo: props.repoId })
+      .then((outcome) => {
+        setBusy(false);
+        if (outcome.kind === "Applied") {
+          // conflictState flips to None on refresh, which closes this overlay.
+          props.onChanged();
+        } else {
+          // Conflicts still remain — reload the file list and keep resolving.
+          props.onChanged();
+          setErr("Resolve every conflicted file before finishing.");
+        }
+      })
+      .catch((e) => {
+        setErr(String(e));
+        setBusy(false);
+      });
+  };
+
   const abort = () => {
     setErr(null);
     setBusy(true);
@@ -854,6 +880,10 @@ const ConflictResolver: Component<{
             container so the columns stay aligned and scroll together. */}
         <div style={{ flex: "1", "min-height": "0", position: "relative", display: "flex" }}>
         <div ref={scrollHost} style={{ flex: "1", "min-height": "0", overflow: "auto", position: "relative" }}>
+          {/* Sizer: grows to the widest line so the host scrolls sideways to
+              show full lines, but never narrower than the viewport so short
+              content still fills the width (mirrors DiffView's no-wrap scroll). */}
+          <div style={{ width: "max-content", "min-width": "100%" }}>
           {/* Sticky column headers. */}
           <div
             style={{
@@ -887,6 +917,7 @@ const ConflictResolver: Component<{
                 )
               }
             </For>
+          </div>
           </div>
         </div>
 
@@ -1085,7 +1116,25 @@ const ConflictResolver: Component<{
             In {props.conflictState.toLowerCase()}
           </span>
           <span style={{ flex: "1" }} />
-          <Show when={props.conflictState === "Rebase"}>
+          <Show
+            when={props.conflictState === "Rebase"}
+            fallback={
+              <button
+                style={{ ...headerBtn, background: paths().length === 0 ? "var(--success)" : "var(--border)", color: paths().length === 0 ? "var(--on-accent)" : "var(--fg-muted)", "border-color": paths().length === 0 ? "var(--success)" : "var(--border)" }}
+                disabled={busy() || paths().length > 0}
+                title={
+                  paths().length > 0
+                    ? `Resolve all ${paths().length} conflicted file(s) before finishing`
+                    : props.conflictState === "Merge"
+                    ? "Create the merge commit (Merge branch … message)"
+                    : `Continue the ${opLabel()} and record the resolution`
+                }
+                onClick={finishOp}
+              >
+                {props.conflictState === "Merge" ? "Finish merge" : `Continue ${opLabel()}`}
+              </button>
+            }
+          >
             <button style={headerBtn} disabled={busy()} onClick={() => runRebaseStep("rebase_continue")}>
               Continue rebase
             </button>

@@ -1,8 +1,19 @@
 # Changelog
 
 All notable changes to Lady. Format follows [Keep a Changelog](https://keepachangelog.com).
-The current shipped app/UI release is `v0.0.16`; later semantic version sections
+The current shipped app/UI release is `v0.0.17`; later semantic version sections
 below are roadmap history, not published release tags.
+
+## [0.0.17] — Finish merges from the conflict resolver
+
+### Fixed
+- After resolving every conflict in a merge, cherry-pick, or revert, the
+  resolver now offers a "Finish merge" / "Continue cherry-pick" / "Continue
+  revert" action. Previously the only option was Abandon, leaving no way to
+  complete the operation. Finishing a merge creates the standard two-parent
+  merge commit using git's prepared message.
+- The conflict resolver's Theirs/Ours panes now scroll horizontally to show
+  full long lines instead of clipping them.
 
 ## [0.0.16] — Non-blocking commit hooks
 

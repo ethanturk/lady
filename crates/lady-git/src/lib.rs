@@ -398,6 +398,14 @@ pub trait GitEngine: Send + Sync {
     /// Abort an in-progress cherry-pick or revert sequencer.
     fn sequencer_abort(&self, repo: &RepoId) -> Result<()>;
 
+    /// Finish an in-progress merge, cherry-pick, or revert once every conflict
+    /// has been resolved and staged: creates the merge commit (`git commit
+    /// --no-edit`) or runs the sequencer's `--continue`. Returns
+    /// [`ApplyOutcome::Applied`] with the new HEAD, or [`ApplyOutcome::Conflicts`]
+    /// when conflicted files still remain. Rebase has its own
+    /// [`GitEngine::rebase_continue`]; calling this mid-rebase is an error.
+    fn sequencer_continue(&self, repo: &RepoId) -> Result<ApplyOutcome>;
+
     /// Rebase `branch` onto `onto` using non-interactive system git. On
     /// conflict, leaves the repository mid-rebase and reports conflicted paths.
     fn rebase(&self, repo: &RepoId, branch: &str, onto: &str) -> Result<RebaseOutcome>;
@@ -2090,6 +2098,41 @@ impl GitEngine for GixEngine {
             return Ok(());
         }
         run_git(&wd, &["revert", "--abort"]).map(|_| ())
+    }
+
+    fn sequencer_continue(&self, repo: &RepoId) -> Result<ApplyOutcome> {
+        let wd = self.workdir(repo)?;
+        // Refuse to finish while any file is still conflicted — git would reject
+        // the commit anyway; report the paths so the UI keeps the user resolving.
+        let conflicts = conflict_paths(&self.status(repo)?);
+        if !conflicts.is_empty() {
+            return Ok(ApplyOutcome::Conflicts(conflicts));
+        }
+        match self.conflict_state(repo)? {
+            // Finish the merge by committing the staged result with the prepared
+            // MERGE_MSG (no editor) — yields the two-parent merge commit.
+            ConflictState::Merge => {
+                let args = ["commit", "--no-edit"];
+                let out = run_git_raw(&wd, &args)?;
+                sequencer_outcome(&wd, &self.status(repo)?, &args, &out)
+            }
+            // `--continue` records the staged resolution; `GIT_EDITOR=true`
+            // accepts the prepared message without opening an editor.
+            ConflictState::CherryPick => {
+                let args = ["cherry-pick", "--continue"];
+                let out = run_git_env_raw(&wd, &args, &[("GIT_EDITOR", "true")])?;
+                sequencer_outcome(&wd, &self.status(repo)?, &args, &out)
+            }
+            ConflictState::Revert => {
+                let args = ["revert", "--continue"];
+                let out = run_git_env_raw(&wd, &args, &[("GIT_EDITOR", "true")])?;
+                sequencer_outcome(&wd, &self.status(repo)?, &args, &out)
+            }
+            ConflictState::Rebase => Err(Error::Git(
+                "a rebase is in progress — use Continue rebase".into(),
+            )),
+            ConflictState::None => Err(Error::Git("no operation in progress".into())),
+        }
     }
 
     fn rebase(&self, repo: &RepoId, branch: &str, onto: &str) -> Result<RebaseOutcome> {
@@ -5148,6 +5191,79 @@ mod tests {
         engine.conflict_abort(&id).expect("conflict abort");
         assert_eq!(
             engine.conflict_state(&id).expect("state after abort"),
+            ConflictState::None
+        );
+    }
+
+    /// After resolving every conflicted file in a merge, `sequencer_continue`
+    /// finishes it: creates the two-parent merge commit (with git's prepared
+    /// MERGE_MSG) and clears the mid-merge state.
+    #[test]
+    fn sequencer_continue_finishes_a_resolved_merge() {
+        let dir = fixture_repo();
+        let p = dir.path();
+        let engine = GixEngine::new();
+        let id = engine.open(p).expect("open the fixture repo");
+
+        // side and main edit file1.txt differently → conflict on merge.
+        engine.create_branch(&id, "side", None).expect("branch");
+        engine.checkout(&id, "side", false).expect("checkout side");
+        std::fs::write(p.join("file1.txt"), "their side\n").expect("write side");
+        engine
+            .stage_paths(&id, &["file1.txt".to_string()])
+            .expect("stage side");
+        let side_head = engine
+            .commit(&id, "side edit", &CommitOpts::default())
+            .expect("commit side");
+
+        engine.checkout(&id, "main", false).expect("checkout main");
+        std::fs::write(p.join("file1.txt"), "our side\n").expect("write main");
+        engine
+            .stage_paths(&id, &["file1.txt".to_string()])
+            .expect("stage main");
+        let main_head = engine
+            .commit(&id, "main edit", &CommitOpts::default())
+            .expect("commit main");
+
+        let outcome = engine
+            .merge(&id, "side", &MergeOpts::default())
+            .expect("conflicting merge");
+        assert_eq!(
+            outcome,
+            MergeOutcome::Conflicts(vec!["file1.txt".to_string()])
+        );
+
+        // While conflicts remain, continue refuses and reports them.
+        assert_eq!(
+            engine.sequencer_continue(&id).expect("continue with conflicts"),
+            ApplyOutcome::Conflicts(vec!["file1.txt".to_string()])
+        );
+
+        // Resolve and stage, then finish the merge.
+        engine.take_ours(&id, "file1.txt").expect("take ours");
+        engine
+            .mark_resolved(&id, "file1.txt")
+            .expect("mark resolved");
+
+        let ApplyOutcome::Applied(merge_oid) = engine
+            .sequencer_continue(&id)
+            .expect("finish the merge")
+        else {
+            panic!("expected the merge to be applied");
+        };
+
+        // HEAD is the merge commit, with main and side as its two parents.
+        assert_eq!(head_oid(p).expect("head"), merge_oid);
+        let parents =
+            run_git(p, &["rev-list", "--parents", "-n", "1", "HEAD"]).expect("rev-list parents");
+        let line = String::from_utf8_lossy(&parents.stdout);
+        assert!(
+            line.contains(main_head.as_str()) && line.contains(side_head.as_str()),
+            "merge commit should have both parents: {line}"
+        );
+        // The mid-merge state is cleared.
+        assert_eq!(
+            engine.conflict_state(&id).expect("state after finish"),
             ConflictState::None
         );
     }

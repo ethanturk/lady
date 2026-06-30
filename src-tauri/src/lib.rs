@@ -1307,6 +1307,16 @@ fn conflict_abort(repo: RepoId, engine: State<GixEngine>) -> Result<(), String> 
     engine.conflict_abort(&repo).map_err(|e| e.to_string())
 }
 
+/// Finish an in-progress merge / cherry-pick / revert once all conflicts are
+/// resolved (creates the merge commit or runs the sequencer's `--continue`).
+#[tauri::command]
+fn conflict_continue(
+    repo: RepoId,
+    engine: State<GixEngine>,
+) -> Result<lady_proto::ApplyOutcome, String> {
+    engine.sequencer_continue(&repo).map_err(|e| e.to_string())
+}
+
 /// Run an interactive rebase onto `onto` driven by `plan` (PH3-003).
 #[tauri::command]
 fn rebase_interactive(
@@ -2649,6 +2659,7 @@ pub fn run() {
             mark_resolved,
             conflict_state,
             conflict_abort,
+            conflict_continue,
             rebase_interactive,
             rebase_continue,
             rebase_skip,
