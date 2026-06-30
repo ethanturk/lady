@@ -5235,7 +5235,9 @@ mod tests {
 
         // While conflicts remain, continue refuses and reports them.
         assert_eq!(
-            engine.sequencer_continue(&id).expect("continue with conflicts"),
+            engine
+                .sequencer_continue(&id)
+                .expect("continue with conflicts"),
             ApplyOutcome::Conflicts(vec!["file1.txt".to_string()])
         );
 
@@ -5245,9 +5247,8 @@ mod tests {
             .mark_resolved(&id, "file1.txt")
             .expect("mark resolved");
 
-        let ApplyOutcome::Applied(merge_oid) = engine
-            .sequencer_continue(&id)
-            .expect("finish the merge")
+        let ApplyOutcome::Applied(merge_oid) =
+            engine.sequencer_continue(&id).expect("finish the merge")
         else {
             panic!("expected the merge to be applied");
         };
