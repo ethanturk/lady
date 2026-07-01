@@ -1,8 +1,17 @@
 # Changelog
 
 All notable changes to Lady. Format follows [Keep a Changelog](https://keepachangelog.com).
-The current shipped app/UI release is `v0.0.18`; later semantic version sections
+The current shipped app/UI release is `v0.0.19`; later semantic version sections
 below are roadmap history, not published release tags.
+
+## [0.0.19] — Sidebar and diff bundle polish
+
+### Fixed
+- The Issues and Pull Requests sidebar panels now check hosting connection status
+  before listing forge items, so unconfigured Azure DevOps repositories show the
+  Settings prompt without repeatedly hitting the forge API.
+- Diff syntax highlighting now imports only the supported Highlight.js languages,
+  shrinking the vendor bundle and removing Vite's large chunk warning.
 
 ## [0.0.18] — No more index.lock races
 

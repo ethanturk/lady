@@ -1,7 +1,8 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import type { Component, JSX } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
-import type { AheadBehind, ForgeItem, RefInfo, RepoId, RepositoryFamily, StashEntry, Worktree } from "./commands";
+import { FORGE_LABEL } from "./commands";
+import type { AheadBehind, ForgeItem, HostingInfo, RefInfo, RepoId, RepositoryFamily, StashEntry, Worktree } from "./commands";
 import ContextMenu from "./ContextMenu";
 import type { MenuEntry } from "./ContextMenu";
 import { IconChanges, IconCheck, IconChevron, IconCommits, IconBranch, IconMore, IconPlus, IconSearch } from "./icons";
@@ -447,6 +448,14 @@ const Sidebar: Component<SidebarProps> = (props) => {
   const [prLoading, setPrLoading] = createSignal(false);
   const [issueLoading, setIssueLoading] = createSignal(false);
 
+  const ensureForgeConnected = async (repo: RepoId): Promise<string | null> => {
+    const status = await invoke<HostingInfo>("hosting_status", { repo });
+    if (!status.kind) return "No supported forge remote found on this repository.";
+    if (!status.connected) return `Not connected to ${FORGE_LABEL[status.kind]} — connect in Settings first.`;
+    if (!status.slug) return `Could not parse a ${FORGE_LABEL[status.kind]} repository from the remotes.`;
+    return null;
+  };
+
   createEffect(() => {
     const repo = props.repoId;
     void props.refreshNonce;
@@ -462,7 +471,8 @@ const Sidebar: Component<SidebarProps> = (props) => {
     if (open.has("prs")) {
       setPrLoading(true);
       setPrErr(null);
-      invoke<ForgeItem[]>("list_pull_requests", { repo })
+      ensureForgeConnected(repo)
+        .then((err) => (err ? Promise.reject(err) : invoke<ForgeItem[]>("list_pull_requests", { repo })))
         .then(setPrs)
         .catch((e) => { setPrs([]); setPrErr(String(e)); })
         .finally(() => setPrLoading(false));
@@ -470,7 +480,8 @@ const Sidebar: Component<SidebarProps> = (props) => {
     if (open.has("issues")) {
       setIssueLoading(true);
       setIssueErr(null);
-      invoke<ForgeItem[]>("list_issues", { repo })
+      ensureForgeConnected(repo)
+        .then((err) => (err ? Promise.reject(err) : invoke<ForgeItem[]>("list_issues", { repo })))
         .then(setIssues)
         .catch((e) => { setIssues([]); setIssueErr(String(e)); })
         .finally(() => setIssueLoading(false));
