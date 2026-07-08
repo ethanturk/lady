@@ -1,0 +1,10 @@
+#!/bin/sh
+# Pre-push: block pushes that would fail CI's formatting gate.
+# Enable locally with: git config core.hooksPath .githooks
+set -e
+
+echo "pre-push: cargo fmt --all -- --check"
+if ! cargo fmt --all -- --check; then
+	echo "pre-push: rustfmt found unformatted code. Run 'cargo fmt --all' and re-push." >&2
+	exit 1
+fi
