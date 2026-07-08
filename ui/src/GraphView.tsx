@@ -192,14 +192,25 @@ const GraphView: Component<{
     canvasEl.style.height = `${h}px`;
   };
 
+  // Resize the canvas bitmap ONLY when its dimensions change (graph width grows
+  // as more lanes load, or the viewport height changes). Assigning canvas.width/
+  // height reallocates and clears the backing bitmap, so doing it per scroll frame
+  // is what made the graph janky. Resizing clears the canvas, so redraw here too.
   createEffect(() => {
-    const st = scrollTop();
-    const vh = viewportH();
-    const allRows = rows();
-    const rh = rowHeight();
     graphW();
+    viewportH();
     if (!canvasEl) return;
     resizeCanvas();
+    drawGraph(canvasEl, rows(), scrollTop(), viewportH(), rowHeight());
+  });
+
+  // Redraw on scroll (and as rows load) without touching the canvas size.
+  createEffect(() => {
+    const st = scrollTop();
+    const allRows = rows();
+    const rh = rowHeight();
+    const vh = viewportH();
+    if (!canvasEl) return;
     drawGraph(canvasEl, allRows, st, vh, rh);
   });
 
