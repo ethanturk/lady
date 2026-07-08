@@ -760,22 +760,22 @@ impl GixEngine {
         }))
     }
 
-    /// Parse a `git bisect` command's output into a [`BisectState`]: detect the
-    /// "first bad commit" verdict, else the current commit + steps estimate.
+    /// Parse a `git bisect` command's output into a [`BisectState`].
+    /// Detect the converged first-bad commit, else return current commit + estimate.
     fn parse_bisect(&self, workdir: &Path, out: &std::process::Output) -> Result<BisectState> {
         let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
         text.push_str(&String::from_utf8_lossy(&out.stderr));
 
-        // Converged: "<sha> is the first bad commit".
-        if let Some(line) = text.lines().find(|l| l.contains("is the first bad commit")) {
-            if let Some(sha) = line.split_whitespace().next() {
-                let oid = Oid::from(sha.to_string());
-                return Ok(BisectState {
-                    current_oid: Some(oid.clone()),
-                    remaining_steps_estimate: 0,
-                    suspected: Some(oid),
-                });
-            }
+        // Prefer command output first; if localization/format changes hide that phrase,
+        // fall back to `git bisect log`, which has stable machine-readable lines.
+        if let Some(oid) =
+            parse_first_bad_oid(&text).or_else(|| bisect_log_first_bad(workdir).ok().flatten())
+        {
+            return Ok(BisectState {
+                current_oid: Some(oid.clone()),
+                remaining_steps_estimate: 0,
+                suspected: Some(oid),
+            });
         }
 
         // Still bisecting: HEAD is the commit under test; estimate is the
@@ -2994,6 +2994,30 @@ fn num_after(text: &str, marker: &str) -> Option<usize> {
         .take_while(|c| c.is_ascii_digit())
         .collect();
     digits.parse().ok()
+}
+
+fn is_obj_id(s: &str) -> bool {
+    (s.len() == 40 || s.len() == 64) && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn parse_first_bad_oid(text: &str) -> Option<Oid> {
+    text.lines()
+        .find(|line| line.contains("first bad commit"))
+        .and_then(|line| {
+            line.split_whitespace().find_map(|token| {
+                let token = token.trim_matches(|c: char| !c.is_ascii_hexdigit());
+                if is_obj_id(token) {
+                    Some(Oid::from(token))
+                } else {
+                    None
+                }
+            })
+        })
+}
+
+fn bisect_log_first_bad(workdir: &Path) -> Result<Option<Oid>> {
+    let out = run_git(workdir, &["bisect", "log"])?;
+    Ok(parse_first_bad_oid(&String::from_utf8_lossy(&out.stdout)))
 }
 
 /// Parse `git worktree list --porcelain` into [`Worktree`]s. Blocks are
@@ -5695,12 +5719,15 @@ mod tests {
         let mut guard = 0;
         while state.suspected.is_none() {
             guard += 1;
-            assert!(guard < 20, "bisect should converge quickly");
-            let mark = if p.join("bug.txt").exists() {
-                "bad"
-            } else {
-                "good"
-            };
+            assert!(guard < 20, "bisect should converge quickly; state={state:?}");
+            // Judge the commit git actually checked out for this step by reading
+            // bug.txt from that commit's tree, not from the working directory.
+            // The working tree reflects a git-bisect checkout that may not have
+            // materialized on disk yet, which could yield a stale verdict, send
+            // bisect down the wrong half, and stall convergence on slower CI.
+            let tested = state.current_oid.clone().expect("commit under test");
+            let has_bug = !git_out(p, &["ls-tree", tested.as_str(), "bug.txt"]).is_empty();
+            let mark = if has_bug { "bad" } else { "good" };
             state = engine.bisect_mark(&id, mark).expect("bisect mark");
         }
 
