@@ -5717,18 +5717,34 @@ mod tests {
         // Drive bisect: mark bad when bug.txt is present at the tested commit.
         let mut state = engine.bisect_start(&id, &bad, &good).expect("bisect start");
         let mut guard = 0;
+        let mut last_tested: Option<Oid> = None;
         while state.suspected.is_none() {
             guard += 1;
-            assert!(
-                guard < 20,
-                "bisect should converge quickly; state={state:?}"
-            );
+            if guard >= 20 {
+                // Dump ground truth so a CI stall we can't reproduce locally is
+                // diagnosable from the log rather than guessed at.
+                let ver = git_out(p, &["--version"]);
+                let blog = git_out(p, &["bisect", "log"]);
+                let head = git_out(p, &["rev-parse", "HEAD"]);
+                panic!(
+                    "bisect did not converge in {guard} marks; state={state:?}\n\
+                     git={ver} HEAD={head}\nbisect log:\n{blog}"
+                );
+            }
             // Judge the commit git actually checked out for this step by reading
-            // bug.txt from that commit's tree, not from the working directory.
-            // The working tree reflects a git-bisect checkout that may not have
-            // materialized on disk yet, which could yield a stale verdict, send
-            // bisect down the wrong half, and stall convergence on slower CI.
+            // bug.txt from that commit's tree, not from the working directory —
+            // the working tree reflects a git-bisect checkout that may not have
+            // materialized yet, which could yield a stale verdict.
             let tested = state.current_oid.clone().expect("commit under test");
+            // Under CI load, git bisect's own checkout can leave HEAD on the same
+            // commit as the previous step (its optional stat-cache refresh is
+            // suppressed by GIT_OPTIONAL_LOCKS=0). Re-marking an unchanged commit
+            // would spin to the guard, so force a clean checkout of the intended
+            // commit — the test's raw `git` refreshes the index — before retrying.
+            if last_tested.as_ref() == Some(&tested) {
+                git(p, &["checkout", "-q", tested.as_str()]);
+            }
+            last_tested = Some(tested.clone());
             let has_bug = !git_out(p, &["ls-tree", tested.as_str(), "bug.txt"]).is_empty();
             let mark = if has_bug { "bad" } else { "good" };
             state = engine.bisect_mark(&id, mark).expect("bisect mark");
