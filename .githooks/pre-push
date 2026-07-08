@@ -3,6 +3,15 @@
 # Enable locally with: git config core.hooksPath .githooks
 set -e
 
+# GUI-/desktop-launched git runs with a minimal PATH that omits ~/.cargo/bin,
+# so `cargo` is not found. Add the standard cargo bin dir before looking.
+export PATH="$HOME/.cargo/bin:$PATH"
+
+if ! command -v cargo >/dev/null 2>&1; then
+	echo "pre-push: cargo not on PATH; skipping rustfmt check." >&2
+	exit 0
+fi
+
 echo "pre-push: cargo fmt --all -- --check"
 if ! cargo fmt --all -- --check; then
 	echo "pre-push: rustfmt found unformatted code. Run 'cargo fmt --all' and re-push." >&2
