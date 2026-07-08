@@ -5,6 +5,8 @@
 //! gix-backed implementation arrives in US-006.
 
 use std::collections::HashMap;
+use std::env;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
@@ -23,11 +25,39 @@ use lady_proto::{
 /// Whether `git-lfs` is installed and usable (`git lfs version`). Free function
 /// because availability is independent of any repository (PH4-007).
 pub fn lfs_available() -> bool {
-    Command::new("git")
+    git_command()
         .args(["lfs", "version"])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+const GUI_LAUNCH_PATH_DIRS: &[&str] = &[
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+];
+
+fn git_child_path_from(current: &OsStr) -> Option<OsString> {
+    let mut paths: Vec<PathBuf> = env::split_paths(current).collect();
+    for dir in GUI_LAUNCH_PATH_DIRS {
+        let path = PathBuf::from(dir);
+        if !paths.iter().any(|existing| existing == &path) {
+            paths.push(path);
+        }
+    }
+    env::join_paths(paths).ok()
+}
+
+fn git_command() -> Command {
+    let mut cmd = Command::new("git");
+    if let Some(path) = git_child_path_from(&env::var_os("PATH").unwrap_or_default()) {
+        cmd.env("PATH", path);
+    }
+    cmd
 }
 
 /// Errors surfaced by a [`GitEngine`].
@@ -849,7 +879,7 @@ fn repo_lock(workdir: &Path) -> std::sync::Arc<Mutex<()>> {
 fn run_git_raw(workdir: &Path, args: &[&str]) -> Result<std::process::Output> {
     let lock = repo_lock(workdir);
     let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
-    let mut cmd = Command::new("git");
+    let mut cmd = git_command();
     cmd.current_dir(workdir).args(args);
     make_noninteractive(&mut cmd);
     cmd.output()
@@ -866,7 +896,7 @@ fn run_git_env_raw(
 ) -> Result<std::process::Output> {
     let lock = repo_lock(workdir);
     let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
-    let mut cmd = Command::new("git");
+    let mut cmd = git_command();
     cmd.current_dir(workdir).args(args);
     make_noninteractive(&mut cmd);
     for (k, v) in envs {
@@ -940,7 +970,7 @@ pub(crate) fn run_git_stdin(workdir: &Path, args: &[&str], input: &[u8]) -> Resu
 
     let lock = repo_lock(workdir);
     let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
-    let mut cmd = Command::new("git");
+    let mut cmd = git_command();
     cmd.current_dir(workdir).args(args);
     make_noninteractive(&mut cmd);
     let mut child = cmd
@@ -1002,7 +1032,7 @@ pub(crate) fn run_git_stdin_streaming(
 
     let lock = repo_lock(workdir);
     let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
-    let mut cmd = Command::new("git");
+    let mut cmd = git_command();
     cmd.current_dir(workdir).args(args);
     make_noninteractive(&mut cmd);
     let mut child = cmd
@@ -1086,7 +1116,7 @@ pub(crate) fn run_git_streaming(
     use std::io::{BufRead, BufReader};
     use std::process::Stdio;
 
-    let mut cmd = Command::new("git");
+    let mut cmd = git_command();
     cmd.current_dir(workdir);
     make_noninteractive(&mut cmd);
     // Per-invocation auth overrides as leading `-c k=v` flags before the
@@ -3345,7 +3375,7 @@ struct BlobDiff {
 /// index, `"HEAD:path"` for the tip). Returns `None` when the path is absent
 /// on that side (cat-file exits non-zero).
 fn cat_blob(workdir: &Path, rev_path: &str) -> Option<Vec<u8>> {
-    let out = Command::new("git")
+    let out = git_command()
         .current_dir(workdir)
         .args(["cat-file", "blob", rev_path])
         .output()
@@ -3517,6 +3547,23 @@ mod tests {
         assert_eq!(diff.kind, FileDiffKind::Modified);
         assert!(diff.has_null_bytes);
         assert!(!diff.hunks.is_empty());
+    }
+
+    #[test]
+    fn git_child_path_adds_common_macos_install_dirs() {
+        let path = git_child_path_from(OsStr::new("/usr/bin:/bin")).expect("join path");
+        let dirs: Vec<PathBuf> = env::split_paths(&path).collect();
+
+        assert_eq!(dirs[0], PathBuf::from("/usr/bin"));
+        assert_eq!(dirs[1], PathBuf::from("/bin"));
+        assert!(
+            dirs.contains(&PathBuf::from("/opt/homebrew/bin")),
+            "Apple Silicon Homebrew git-lfs must stay visible to GUI-launched git hooks: {dirs:?}"
+        );
+        assert!(
+            dirs.contains(&PathBuf::from("/usr/local/bin")),
+            "Intel Homebrew git-lfs must stay visible to GUI-launched git hooks: {dirs:?}"
+        );
     }
 
     /// Run `git` in `dir`, asserting success. System git is permitted for

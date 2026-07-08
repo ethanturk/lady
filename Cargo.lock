@@ -3132,7 +3132,7 @@ dependencies = [
 
 [[package]]
 name = "lady-app"
-version = "0.0.20"
+version = "0.0.21"
 dependencies = [
  "base64 0.22.1",
  "directories",

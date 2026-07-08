@@ -70,6 +70,15 @@ const splitPath = (path: string) => {
   return idx === -1 ? { dir: "", base: path } : { dir: path.slice(0, idx + 1), base: path.slice(idx + 1) };
 };
 
+/**
+ * Wrap a string in a Unicode LTR isolate (U+2066 … U+2069) so it renders
+ * left-to-right even inside a `direction: rtl` box. The rtl box is only used to
+ * pin the truncation ellipsis to the left (showing the path's tail); without
+ * this isolate the bidi algorithm reorders neutral boundary chars, e.g.
+ * `.githooks/` would display as `/githooks.`.
+ */
+export const ltrIsolate = (s: string) => `\u2066${s}\u2069`;
+
 const pathLabelBase: JSX.CSSProperties = {
   flex: "1",
   display: "flex",
@@ -98,11 +107,11 @@ const FilePathLabel: Component<{ path: string; oldPath?: string | null; leaf?: s
       <Show when={props.leaf} fallback={
         <>
           <Show when={props.oldPath}>
-            <span style={{ ...pathPrefixStyle, flex: "0 1 35%", "max-width": "35%" }}>{props.oldPath}</span>
+            <span style={{ ...pathPrefixStyle, flex: "0 1 35%", "max-width": "35%" }}>{ltrIsolate(props.oldPath!)}</span>
             <span style={{ color: "var(--tx3)", "flex-shrink": 0 }}>&nbsp;→&nbsp;</span>
           </Show>
           <Show when={parts().dir}>
-            <span style={{ ...pathPrefixStyle, flex: "1 1 auto" }}>{parts().dir}</span>
+            <span style={{ ...pathPrefixStyle, flex: "1 1 auto" }}>{ltrIsolate(parts().dir)}</span>
           </Show>
           <span style={{ "flex-shrink": 0, overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap", "padding-left": parts().dir ? "3px" : "0" }}>
             {parts().base}
