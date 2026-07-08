@@ -3553,8 +3553,8 @@ mod tests {
     fn git_child_path_adds_common_macos_install_dirs() {
         // Build the seed PATH with the platform separator (`;` on Windows,
         // `:` elsewhere) so split_paths round-trips regardless of CI host.
-        let seed = env::join_paths([PathBuf::from("/usr/bin"), PathBuf::from("/bin")])
-            .expect("seed path");
+        let seed =
+            env::join_paths([PathBuf::from("/usr/bin"), PathBuf::from("/bin")]).expect("seed path");
         let path = git_child_path_from(&seed).expect("join path");
         let dirs: Vec<PathBuf> = env::split_paths(&path).collect();
 
