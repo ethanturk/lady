@@ -5719,7 +5719,10 @@ mod tests {
         let mut guard = 0;
         while state.suspected.is_none() {
             guard += 1;
-            assert!(guard < 20, "bisect should converge quickly; state={state:?}");
+            assert!(
+                guard < 20,
+                "bisect should converge quickly; state={state:?}"
+            );
             // Judge the commit git actually checked out for this step by reading
             // bug.txt from that commit's tree, not from the working directory.
             // The working tree reflects a git-bisect checkout that may not have
