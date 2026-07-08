@@ -1,8 +1,19 @@
 # Changelog
 
 All notable changes to Lady. Format follows [Keep a Changelog](https://keepachangelog.com).
-The current shipped app/UI release is `v0.0.19`; later semantic version sections
+The current shipped app/UI release is `v0.0.20`; later semantic version sections
 below are roadmap history, not published release tags.
+
+## [0.0.20] — Scroll performance
+
+### Fixed
+- The commit graph no longer stutters while scrolling. Its canvas was being
+  reallocated and redrawn on every scroll frame; resizing now happens only when
+  the canvas dimensions change, with a lighter redraw on scroll.
+- Large and many-file diffs no longer drag when scrolling. The diff view now
+  virtualizes at the file level, mounting each file's DOM (and its syntax
+  highlighting) only while it is near the viewport and holding its place with a
+  sized placeholder otherwise.
 
 ## [0.0.19] — Sidebar and diff bundle polish
 
