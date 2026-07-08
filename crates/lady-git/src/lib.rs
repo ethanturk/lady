@@ -3002,6 +3002,11 @@ fn is_obj_id(s: &str) -> bool {
 
 fn parse_first_bad_oid(text: &str) -> Option<Oid> {
     text.lines()
+        // git >= 2.55 quotes the bisect term: "first 'bad' commit" (both in the
+        // porcelain and in `git bisect log`). Strip quotes before matching so the
+        // phrase is recognised across git versions; otherwise convergence is
+        // never detected and a bisect loop never terminates.
+        .map(|line| line.replace('\'', ""))
         .find(|line| line.contains("first bad commit"))
         .and_then(|line| {
             line.split_whitespace().find_map(|token| {
@@ -5690,6 +5695,31 @@ mod tests {
     }
 
     #[test]
+    fn parse_first_bad_oid_tolerates_quoted_term() {
+        let sha = "19778ac42925e809321d4a6d605be7e51984aa8d";
+        // Legacy phrasing (git < 2.55).
+        assert_eq!(
+            parse_first_bad_oid(&format!("{sha} is the first bad commit")),
+            Some(Oid::from(sha))
+        );
+        // git >= 2.55 quotes the bisect term.
+        assert_eq!(
+            parse_first_bad_oid(&format!("{sha} is the first 'bad' commit")),
+            Some(Oid::from(sha))
+        );
+        // `git bisect log` comment form (sha bracketed, quoted term).
+        assert_eq!(
+            parse_first_bad_oid(&format!("# first 'bad' commit: [{sha}] c4")),
+            Some(Oid::from(sha))
+        );
+        // Still-bisecting output has no first-bad line.
+        assert_eq!(
+            parse_first_bad_oid("Bisecting: 0 revisions left to test after this"),
+            None
+        );
+    }
+
+    #[test]
     fn scripted_bisect_converges_to_the_known_bad_commit() {
         let dir = fixture_repo();
         let p = dir.path();
@@ -5717,34 +5747,17 @@ mod tests {
         // Drive bisect: mark bad when bug.txt is present at the tested commit.
         let mut state = engine.bisect_start(&id, &bad, &good).expect("bisect start");
         let mut guard = 0;
-        let mut last_tested: Option<Oid> = None;
         while state.suspected.is_none() {
             guard += 1;
-            if guard >= 20 {
-                // Dump ground truth so a CI stall we can't reproduce locally is
-                // diagnosable from the log rather than guessed at.
-                let ver = git_out(p, &["--version"]);
-                let blog = git_out(p, &["bisect", "log"]);
-                let head = git_out(p, &["rev-parse", "HEAD"]);
-                panic!(
-                    "bisect did not converge in {guard} marks; state={state:?}\n\
-                     git={ver} HEAD={head}\nbisect log:\n{blog}"
-                );
-            }
+            assert!(
+                guard < 20,
+                "bisect should converge quickly; state={state:?}"
+            );
             // Judge the commit git actually checked out for this step by reading
             // bug.txt from that commit's tree, not from the working directory —
             // the working tree reflects a git-bisect checkout that may not have
             // materialized yet, which could yield a stale verdict.
             let tested = state.current_oid.clone().expect("commit under test");
-            // Under CI load, git bisect's own checkout can leave HEAD on the same
-            // commit as the previous step (its optional stat-cache refresh is
-            // suppressed by GIT_OPTIONAL_LOCKS=0). Re-marking an unchanged commit
-            // would spin to the guard, so force a clean checkout of the intended
-            // commit — the test's raw `git` refreshes the index — before retrying.
-            if last_tested.as_ref() == Some(&tested) {
-                git(p, &["checkout", "-q", tested.as_str()]);
-            }
-            last_tested = Some(tested.clone());
             let has_bug = !git_out(p, &["ls-tree", tested.as_str(), "bug.txt"]).is_empty();
             let mark = if has_bug { "bad" } else { "good" };
             state = engine.bisect_mark(&id, mark).expect("bisect mark");
