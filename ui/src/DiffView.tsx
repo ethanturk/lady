@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import type { Component, JSX } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import hljs from "highlight.js/lib/core";
@@ -622,6 +622,75 @@ const FileBlock: Component<{
   );
 };
 
+// Height (px) a FileBlock occupies below its box (its margin-bottom). Placeholder
+// spacers add it so the scroll height matches a mounted file exactly.
+const FILE_GAP = 16;
+const LINE_H = 21;
+
+/**
+ * Cheap height estimate for an unmounted file, derived from the diff data (no
+ * layout). Keeps the scrollbar roughly correct before a file has ever been
+ * measured, so placeholders don't collapse the scroll range on a large diff.
+ */
+function estimateFileHeight(file: DisplayFileDiff): number {
+  const header = 34;
+  if (file.kind === "Image") return header + 340 + FILE_GAP;
+  if (file.kind === "Binary") return header + 40 + FILE_GAP;
+  if (file.hunks.length === 0) return header + 24 + FILE_GAP;
+  let body = 0;
+  for (const h of file.hunks) body += 26 + h.lines.length * LINE_H;
+  return header + body + FILE_GAP;
+}
+
+/**
+ * File-level virtualization. Each file renders only while it (or an 800px margin
+ * around it) intersects the diff scroller; off-screen files collapse to a
+ * placeholder holding their last-measured (or estimated) height. This keeps the
+ * mounted DOM — and the per-line syntax highlighting — proportional to what's on
+ * screen instead of the whole diff, which is what made large diffs scroll-drag.
+ * The outer wrapper is always mounted, so scroll-to-file offsets stay valid.
+ */
+const VirtualFile: Component<{
+  scrollRoot: () => HTMLElement | undefined;
+  estimate: number;
+  registerEl: (el: HTMLDivElement) => void;
+  children: JSX.Element;
+}> = (props) => {
+  const [visible, setVisible] = createSignal(false);
+  const [measured, setMeasured] = createSignal<number | null>(null);
+  let wrap!: HTMLDivElement;
+
+  onMount(() => {
+    props.registerEl(wrap);
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) setVisible(e.isIntersecting);
+      },
+      { root: props.scrollRoot() ?? null, rootMargin: "800px 0px" },
+    );
+    io.observe(wrap);
+    // Track the mounted content's real height so the placeholder holds the exact
+    // space when it unmounts (covers collapse, wrap toggle, and image loads).
+    const ro = new ResizeObserver(() => {
+      if (!visible() || !wrap) return;
+      const h = wrap.getBoundingClientRect().height;
+      if (h > 0) setMeasured(h);
+    });
+    ro.observe(wrap);
+    onCleanup(() => {
+      io.disconnect();
+      ro.disconnect();
+    });
+  });
+
+  const spacerH = () => measured() ?? props.estimate;
+  return (
+    <div ref={wrap} style={visible() ? undefined : { height: `${spacerH()}px` }}>
+      <Show when={visible()}>{props.children}</Show>
+    </div>
+  );
+};
+
 /** Segmented Unified | Split control (design diff header). */
 const Segmented: Component<{ mode: Mode; onMode: (m: Mode) => void }> = (props) => {
   const cell = (m: Mode, label: string, first: boolean) => {
@@ -784,7 +853,11 @@ const DiffView: Component<{
         </Show>
         <For each={files()}>
           {(file) => (
-            <div ref={(el) => { if (!fileEls.has(file.path)) fileEls.set(file.path, el); }}>
+            <VirtualFile
+              scrollRoot={() => scrollEl}
+              estimate={estimateFileHeight(file)}
+              registerEl={(el) => { if (!fileEls.has(file.path)) fileEls.set(file.path, el); }}
+            >
               <FileBlock
                 file={file}
                 mode={mode()}
@@ -799,7 +872,7 @@ const DiffView: Component<{
                 onExternalDiff={props.files && !props.commit && !props.spec ? undefined : externalDiff}
                 onExplainHunk={props.onExplainHunk}
               />
-            </div>
+            </VirtualFile>
           )}
         </For>
       </div>
